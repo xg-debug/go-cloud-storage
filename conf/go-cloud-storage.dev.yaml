@@ -1,0 +1,39 @@
+# config/config.yaml
+Server:
+  port: 8080
+  env: dev
+  storagePath: E:/go_work/go-cloud-storage/upload
+
+Database:
+  host: localhost
+  port: 3306
+  user: root
+  password: 167219
+  dbname: file-store
+  maxOpenConns: 100
+  maxIdleConns: 20
+  connMaxLifetime: 1h
+  connMaxIdleTime: 10m
+  logLevel: info  # silent, error, warn, info
+
+Redis:
+  enabled: true
+  host: 192.168.101.129
+  port: 6379
+  password: 167219
+  db: 0
+  poolSize: 10
+
+# 阿里云oss配置
+AliyunOss:
+  Host: https://go-cloud-storage.oss-cn-beijing.aliyuncs.com     # 阿里云OSS资源外网访问地址
+  Bucket: go-cloud-storage                               # 阿里云OSS bucket名称
+  Endpoint: oss-cn-beijing.aliyuncs.com               # 阿里云OSS Endpoint
+  AccessId: LTAI5tP54sHsb4GjStgaREtU                  # 阿里云OSS accessID
+  AccessSecret: dSZjpIkRuErcmfrQU5c9UcznmqkyDC        # 阿里云OSS accessKey
+
+# QQ登录配置
+QQ:
+  appID: 102795535
+  redirectURI: 
+  appKey: vhDYiiW5nGXbZIm0
