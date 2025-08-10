@@ -88,7 +88,7 @@ export const downloadFile = (fileId) => {
 // 删除文件
 export const deleteFile = (fileId) => {
     return request({
-        url: '/file/${fileId}',
+        url: `/file/${fileId}`,
         method: 'delete'
     })
 }

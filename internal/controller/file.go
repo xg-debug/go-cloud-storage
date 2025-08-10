@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"fmt"
 	"github.com/gin-gonic/gin"
 	"go-cloud-storage/internal/services"
 	"go-cloud-storage/utils"
@@ -118,6 +119,7 @@ func (c *FileController) Rename(ctx *gin.Context) {
 
 func (c *FileController) Delete(ctx *gin.Context) {
 	fileId := ctx.Param("fileId")
+	fmt.Println("要删除的文件ID：" + fileId)
 	userId, exists := ctx.Get("userId")
 	if !exists {
 		utils.Fail(ctx, http.StatusInternalServerError, "未登录")

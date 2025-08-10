@@ -120,7 +120,7 @@
             <el-table-column label="操作" min-width="180" align="center">
                 <template #default="{ row }">
                     <el-button size="small" type="text" @click="handleRename(row)">重命名</el-button>
-                    <el-button size="small" type="text" @click="handleDeleteWithConfirm(row)">删除</el-button>
+                    <el-button size="small" type="text" @click="openDeleteDialog(row)">删除</el-button>
                     <el-dropdown>
                         <el-button size="small" type="text">
                             更多<el-icon><ArrowDown /></el-icon>
@@ -137,20 +137,20 @@
             </el-table-column>
         </el-table>
 
-        <!-- 网格视图删除确认弹窗 -->
+        <!-- 确定删除弹窗 -->
         <el-dialog
-            v-model="gridDeleteDialogVisible"
+            v-model="deleteDialogVisible"
             title="确定删除"
             width="400px"
-            :before-close="handleGridDeleteDialogClose"
+            :before-close="handleDeleteDialogClose"
         >
             <div class="delete-confirm-text">
-                <div>确定要删除所选的文件 <strong>{{ gridDeleteTarget.name }}</strong> 吗？</div>
+                <div>确定要删除所选的文件 <strong>{{ deleteTarget.name }}</strong> 吗？</div>
                 <div>删除的文件可在 10天 内通过回收站还原</div>
             </div>
             <template #footer>
-                <el-button @click="gridDeleteDialogVisible = false">取消</el-button>
-                <el-button type="primary" @click="confirmGridDelete" :loading="deleting">确定</el-button>
+                <el-button @click="deleteDialogVisible = false">取消</el-button>
+                <el-button type="primary" @click="confirmDelete" :loading="deleting">确定</el-button>
             </template>
         </el-dialog>
 
@@ -224,8 +224,9 @@ const newFolderTime = ref('')
 const renameDialogVisible = ref(false)
 const renameForm = ref({ id: null, name: '' })
 const hoveredId = ref(null)
-const gridDeleteDialogVisible = ref(false)
-const gridDeleteTarget = ref({})
+
+const deleteDialogVisible = ref(false)
+const deleteTarget = ref({})
 const deleting = ref(false)
 let tempFolderId = null
 let hoverTimeout = null
@@ -409,30 +410,32 @@ const confirmRename = async () => {
 }
 
 // 网格视图删除 - 显示确认弹窗
-const handleGridDelete = (item) => {
-    gridDeleteTarget.value = item
-    gridDeleteDialogVisible.value = true
+const openDeleteDialog = (item) => {
+    deleteTarget.value = item
+    deleteDialogVisible.value = true
 }
 
 // 确认删除
-const confirmGridDelete = async () => {
+const confirmDelete = async () => {
     deleting.value = true
     try {
-        await deleteFile(gridDeleteTarget.value.id)
+        await deleteFile(deleteTarget.value.id)
         ElMessage.success('删除成功')
-        gridDeleteDialogVisible.value = false
+        deleteDialogVisible.value = false
         loadFiles()
     } catch (error) {
         ElMessage.error('删除失败')
     } finally {
         deleting.value = false
+        deleteTarget.value = {}
     }
 }
 
 // 关闭弹窗时清理
-const handleGridDeleteDialogClose = () => {
-    gridDeleteDialogVisible.value = false
-    gridDeleteTarget.value = {}
+const handleDeleteDialogClose = () => {
+    deleteDialogVisible.value = false
+    deleteTarget.value = {}
+    deleting.value = false
 }
 
 const onFileItemEnter = (id) => {
@@ -442,7 +445,7 @@ const onFileItemEnter = (id) => {
 
 const handleGridMenuCommand = (item, command) => {
     if (command === 'rename') handleRename(item)
-    else if (command === 'delete') handleGridDelete(item)
+    else if (command === 'delete') openDeleteDialog(item)
     else if (command === 'share') handleShare(item)
     else if (command === 'download') handleDownload(item)
 }

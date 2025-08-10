@@ -69,7 +69,7 @@ func SetUpRouter(db *gorm.DB, ossService *oss.OSSService) *gin.Engine {
 		file.POST("/list", fileCtrl.GetFiles)
 		file.POST("/create-folder", fileCtrl.CreateFolder)
 		file.POST("/upload", uploadCtrl.Upload)
-		file.DELETE("/delete", fileCtrl.Delete)
+		file.DELETE("/:fileId", fileCtrl.Delete)
 		file.POST("/rename", fileCtrl.Rename)
 		file.POST("/move")
 		file.GET("/info")
