@@ -23,8 +23,8 @@ func (c *ShareController) CreateShare(ctx *gin.Context) {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	userId, _ := ctx.Get("userId")
-	share.OwnerID = userId.(int)
+	userId := ctx.GetInt("userId")
+	share.OwnerID = userId
 
 	if err := c.shareService.CreateShare(&share); err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -35,8 +35,8 @@ func (c *ShareController) CreateShare(ctx *gin.Context) {
 
 // ListUserShares 获取用户分享列表
 func (c *ShareController) ListUserShares(ctx *gin.Context) {
-	userId, _ := ctx.Get("userId")
-	shares, err := c.shareService.GetUserShares(userId.(int))
+	userId := ctx.GetInt("userId")
+	shares, err := c.shareService.GetUserShares(userId)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -51,8 +51,8 @@ func (c *ShareController) DeleteShare(ctx *gin.Context) {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid share ID"})
 		return
 	}
-	userId, _ := ctx.Get("userId")
-	if err := c.shareService.DeleteShare(shareId, userId.(int)); err != nil {
+	userId := ctx.GetInt("userId")
+	if err := c.shareService.DeleteShare(shareId, userId); err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

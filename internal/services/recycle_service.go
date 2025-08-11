@@ -1,87 +1,78 @@
 package services
 
-//
-//import (
-//	"errors"
-//	"fmt"
-//	"go-cloud-storage/internal/models"
-//	"go-cloud-storage/internal/repositories"
-//	"log"
-//)
-//
-//type RecycleService interface {
-//	MoveToRecycle(file *models.File, userID int) error
-//	ListRecycleBin(userID int) ([]models.RecycleBin, error)
-//	RestoreFile(fileID string, userID int) error
-//	PermanentDelete(fileID string, userID int) error
-//	CleanExpiredRecycle() (int, error)
-//}
-//
-//type recycleService struct {
-//	recycleRepo repositories.RecycleRepository
-//	fileRepo    repositories.FileRepository
-//}
-//
-//func (s recycleService) MoveToRecycle(file *models.File, userId int) error {
-//	//record := &models.RecycleBin{
-//	//	FileId: file.Id,
-//	//	UserId: userId,
-//	//	Name
-//	//}
-//}
-//
-//func (s recycleService) ListRecycleBin(userID int) ([]models.RecycleBin, error) {
-//
-//	panic("implement me")
-//}
-//
-//func (s recycleService) RestoreFile(fileID string, userID int) error {
-//	// 1. 验证文件所有权
-//	record, err := s.recycleRepo.GetByFileId(fileID)
+import (
+	"go-cloud-storage/internal/models"
+	"go-cloud-storage/internal/repositories"
+)
+
+type RecycleService interface {
+	GetRecycleFiles(userId int) ([]models.RecycleBin, error)
+	DeleteOne(fileId string) error
+	DeleteSelected(fileIds []string) error
+	ClearRecycles(userId int) error
+	RestoreOne(fileId string) error
+	RestoreSelected(fileIds []string) error
+	RestoreAll(userId int) error
+	CleanExpiredItems() error
+}
+
+type recycleService struct {
+	recycleRepo repositories.RecycleRepository
+	fileRepo    repositories.FileRepository
+}
+
+func NewRecycleService(recycleRepo repositories.RecycleRepository, fileRepo repositories.FileRepository) RecycleService {
+	return &recycleService{
+		recycleRepo: recycleRepo,
+		fileRepo:    fileRepo,
+	}
+}
+
+// MoveToTrash 将文件移动到回收站
+//func (ts *recycleService) MoveToTrash(fileID string, userID int, originalPath string) error {
+//	// 标记文件为已删除
+//	err := ts.fileRepo.SoftDeleteFile(userID, fileID)
 //	if err != nil {
 //		return err
 //	}
 //
-//	if record.UserId != userID {
-//		return errors.New("unauthorized operation")
+//	// 添加到回收站记录
+//	recycleRecord := &models.RecycleBin{
+//		FileId:       fileID,
+//		UserId:       userID,
+//		OriginalPath: originalPath,
+//		DeletedAt:    time.Now(),
 //	}
 //
-//	// 2. 根据类型执行恢复
-//	if record.IsDir {
-//		// 恢复文件夹及其所有内容
-//		if err := s.fileRepo.RestoreFolder(fileID); err != nil {
-//			return fmt.Errorf("failed to restore folder: %w", err)
-//		}
-//	} else {
-//		// 恢复单个文件
-//		if err := s.fileRepo.RestoreFile(fileID); err != nil {
-//			return fmt.Errorf("failed to restore file: %w", err)
-//		}
-//	}
-//
-//	// 3. 更新存储配额（假设有配额服务）
-//	if err := s.quotaService.UpdateAfterRestore(userID, record.Size); err != nil {
-//		// 注意：这里需要权衡是否回滚，建议记录日志但继续
-//		log.Printf("quota update failed after restore: %v", err)
-//	}
-//
-//	// 4. 标记回收站记录为已恢复
-//	return s.recycleRepo.MarkAsRestored(fileID)
+//	return ts.recycleRepo.AddToRecycle(recycleRecord)
 //}
-//
-//func (r recycleService) PermanentDelete(fileID string, userID int) error {
-//
-//	panic("implement me")
-//}
-//
-//func (r recycleService) CleanExpiredRecycle() (int, error) {
-//
-//	panic("implement me")
-//}
-//
-//func NewRecycleService(recycleRepo repositories.RecycleRepository, fileRepo repositories.FileRepository) RecycleService {
-//	return &recycleService{
-//		recycleRepo: recycleRepo,
-//		fileRepo:    fileRepo,
-//	}
-//}
+
+func (s *recycleService) DeleteOne(fileId string) error {
+	return s.recycleRepo.DeleteOne(fileId)
+}
+func (s *recycleService) DeleteSelected(fileIds []string) error {
+	return s.recycleRepo.DeleteBatch(fileIds)
+}
+func (s *recycleService) ClearRecycles(userId int) error {
+	return s.recycleRepo.DeleteAll(userId)
+}
+func (s *recycleService) RestoreOne(fileId string) error {
+	return s.recycleRepo.RestoreOne(fileId)
+}
+func (s *recycleService) RestoreSelected(fileIds []string) error {
+	return s.recycleRepo.RestoreBatch(fileIds)
+}
+func (s *recycleService) RestoreAll(userId int) error {
+	return s.recycleRepo.RestoreAll(userId)
+}
+
+// GetRecycleFiles 获取用户的回收站项目
+func (s *recycleService) GetRecycleFiles(userId int) ([]models.RecycleBin, error) {
+	return s.recycleRepo.GetFiles(userId)
+}
+
+// CleanExpiredItems 清理过期的回收站项目
+func (s *recycleService) CleanExpiredItems() error {
+	_, err := s.recycleRepo.CleanExpiredRecords()
+	return err
+}

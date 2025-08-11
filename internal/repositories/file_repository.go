@@ -23,7 +23,6 @@ type FileRepository interface {
 	HardDeleteFile(fileId string) error
 	CheckDuplicateName(userId int, parentId, name string) (bool, error)
 	GetFilePath(userId int, fileId string) (string, error)
-	RestoreFile(userId int, fileId string) error
 	RestoreFolder(folderId string) error
 
 	CreateFolder(userId int, folderName string, parentId string) (*models.File, error)

@@ -138,12 +138,7 @@ func (c *LoginController) Register(ctx *gin.Context) {
 }
 
 func (c *LoginController) Logout(ctx *gin.Context) {
-	userId, exists := ctx.Get("userId")
-	if !exists {
-		fmt.Println("debug: xxxxxxx")
-		utils.Fail(ctx, http.StatusBadRequest, "用户未登录")
-		return
-	}
+	userId := ctx.GetInt("userId")
 	// 删除刷新令牌
 	refreshKey := fmt.Sprintf("user:%d:refresh_token", userId)
 	cache.GetClient().Del(ctx.Request.Context(), refreshKey)

@@ -13,7 +13,7 @@ type UploadController struct {
 	fileService services.FileService
 }
 
-//services.FileService 是接口, 本身就是引用类型，不需要加 *
+// services.FileService 是接口, 本身就是引用类型，不需要加 *
 
 func NewUploadController(oss *oss.OSSService, service services.FileService) *UploadController {
 	return &UploadController{ossService: oss, fileService: service}

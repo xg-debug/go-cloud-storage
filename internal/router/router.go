@@ -31,21 +31,20 @@ func SetUpRouter(db *gorm.DB, ossService *oss.OSSService) *gin.Engine {
 	userRepo := repositories.NewUserRepository(db)
 	shareRepo := repositories.NewShareRepository(db)
 	fileRepo := repositories.NewFileRepository(db)
+	recycleRepo := repositories.NewRecycleRepository(db)
 
 	// 初始化服务
 	userService := services.NewUserService(userRepo, fileRepo)
 	shareService := services.NewShareService(shareRepo)
 	fileService := services.NewFileService(fileRepo)
-
-	// 创建需要OSS服务的控制器
-	//shareCtrl := controller.NewShareController(ossService)
-	//uploadCtrl := controller.NewUploadController(ossService)
+	recycleService := services.NewRecycleService(recycleRepo, fileRepo)
 
 	loginCtrl := controller.NewLoginController(userService)
 	shareCtrl := controller.NewShareController(shareService)
 	fileCtrl := controller.NewFileController(fileService)
 	userCtrl := controller.NewUserController(userService)
 	uploadCtrl := controller.NewUploadController(ossService, fileService)
+	recycleCtrl := controller.NewRecycleController(recycleService)
 
 	ginServer.POST("/login", loginCtrl.Login)
 	ginServer.POST("/register", loginCtrl.Register)
@@ -75,11 +74,6 @@ func SetUpRouter(db *gorm.DB, ossService *oss.OSSService) *gin.Engine {
 		file.GET("/info")
 		file.GET("/preview")
 	}
-	folder := ginServer.Group("folder")
-	folder.Use(middleware.JWTAuthMiddleware())
-	{
-		folder.POST("/create", fileCtrl.CreateFolder)
-	}
 
 	shareGroup := ginServer.Group("/share")
 	shareGroup.Use(middleware.JWTAuthMiddleware())
@@ -87,6 +81,20 @@ func SetUpRouter(db *gorm.DB, ossService *oss.OSSService) *gin.Engine {
 		shareGroup.POST("/create", shareCtrl.CreateShare)
 		shareGroup.GET("/list", shareCtrl.ListUserShares)
 		shareGroup.DELETE("/:id", shareCtrl.ListUserShares)
+	}
+
+	recycle := ginServer.Group("recycle")
+	recycle.Use(middleware.JWTAuthMiddleware()) // 为路由组注册中间件
+	{
+		recycle.GET("", recycleCtrl.ListRecycleFiles)
+
+		recycle.DELETE("/:fileId", recycleCtrl.DeletePermanent)
+		recycle.DELETE("/batch", recycleCtrl.DeleteSelected)
+		recycle.DELETE("", recycleCtrl.ClearRecycleBin)
+
+		recycle.PUT("/:fileId/restore", recycleCtrl.RestoreFile)
+		recycle.PUT("/batch/restore", recycleCtrl.RestoreSelected)
+		recycle.PUT("/restore/all", recycleCtrl.RestoreAll)
 	}
 
 	return ginServer

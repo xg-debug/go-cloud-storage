@@ -8,12 +8,15 @@ import (
 
 // RecycleRepository 1.接口定义：在go中，接口本身就是引用类型，返回接口值已经包含了指向具体实现的指针
 type RecycleRepository interface {
-	AddToRecycle(record *models.RecycleBin) error
-	GetByUser(userId int) ([]models.RecycleBin, error)
-	GetByFileId(fileId string) (*models.RecycleBin, error)
-	PermanentDelete(fileId string) error
+	GetFiles(userId int) ([]models.RecycleBin, error)
+	DeleteOne(fileId string) error
+	DeleteBatch(fileIds []string) error
+	DeleteAll(userId int) error
+	RestoreOne(fileId string) error
+	RestoreBatch(fileIds []string) error
+	RestoreAll(userId int) error
+
 	CleanExpiredRecords() (int64, error)
-	MarkAsRestored(fileId string) error
 }
 
 /*
@@ -29,32 +32,89 @@ type recycleRepo struct {
 func NewRecycleRepository(db *gorm.DB) RecycleRepository {
 	return &recycleRepo{db: db}
 }
-
-func (r *recycleRepo) AddToRecycle(record *models.RecycleBin) error {
-	return r.db.Create(record).Error
+func (r *recycleRepo) GetFiles(userId int) ([]models.RecycleBin, error) {
+	var recycleFiles []models.RecycleBin
+	if err := r.db.Where("user_id = ?", userId).Find(&recycleFiles).Error; err != nil {
+		return nil, err
+	}
+	return recycleFiles, nil
 }
 
-func (r *recycleRepo) GetByUser(userId int) ([]models.RecycleBin, error) {
-	var records []models.RecycleBin
-	err := r.db.Where("user_id = ?", userId).Order("deleted_at DESC").Find(&records).Error
-	return records, err
+func (r *recycleRepo) DeleteOne(fileId string) error {
+	return r.DeleteBatch([]string{fileId})
 }
 
-func (r *recycleRepo) GetByFileId(fileId string) (*models.RecycleBin, error) {
-	var record models.RecycleBin
-	err := r.db.First(&record, "file_id = ?", fileId).Error
-	return &record, err
+func (r *recycleRepo) DeleteBatch(fileIds []string) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		// 1.删除回收站记录
+		if err := tx.Where("file_id IN ?", fileIds).Delete(&models.RecycleBin{}).Error; err != nil {
+			return err
+		}
+		// 2.删除文件表记录
+		if err := tx.Where("id IN ?", fileIds).Delete(&models.File{}).Error; err != nil {
+			return err
+		}
+		return nil
+	})
 }
 
-func (r *recycleRepo) PermanentDelete(fileId string) error {
-	return r.db.Where("file_id = ?", fileId).Delete(&models.RecycleBin{}).Error
+func (r *recycleRepo) DeleteAll(userId int) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		// 1.根据userId删除
+		if err := tx.Where("user_id = ?", userId).Delete(&models.RecycleBin{}).Error; err != nil {
+			return err
+		}
+		// 2.删除file表中该用户软删除的记录
+		if err := tx.Where("user_id = ? AND is_deleted = ?", userId, true).Delete(&models.File{}).Error; err != nil {
+			return err
+		}
+		return nil
+	})
+}
+
+func (r *recycleRepo) RestoreOne(fileId string) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		// 1.删除回收站的记录
+		if err := tx.Where("file_id = ?", fileId).Delete(&models.RecycleBin{}).Error; err != nil {
+			return err
+		}
+		// 2.修改file表中软删除的标志
+		if err := tx.Model(&models.File{}).Where("file_id = ?", fileId).Update("is_deleted", false).Error; err != nil {
+			return err
+		}
+		return nil
+	})
+}
+
+func (r *recycleRepo) RestoreBatch(fileIds []string) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		// 1.删除回收站的记录
+		if err := tx.Where("file_id IN ?", fileIds).Delete(&models.RecycleBin{}).Error; err != nil {
+			return err
+		}
+		// 2.修改file表中软删除的标志
+		if err := tx.Model(&models.File{}).Where("file_id IN ?", fileIds).Updates(map[string]interface{}{"is_deleted": false}).Error; err != nil {
+			return err
+		}
+		return nil
+	})
+}
+
+func (r *recycleRepo) RestoreAll(userId int) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		// 1.删除回收站的记录
+		if err := tx.Where("user_id = ?", userId).Delete(&models.RecycleBin{}).Error; err != nil {
+			return err
+		}
+		// 2.修改file表中软删除的标志
+		if err := tx.Model(&models.File{}).Where("user_id = ?", userId).Updates(map[string]interface{}{"is_deleted": false}).Error; err != nil {
+			return err
+		}
+		return nil
+	})
 }
 
 func (r *recycleRepo) CleanExpiredRecords() (int64, error) {
 	result := r.db.Where("expire_at < ?", time.Now()).Delete(&models.RecycleBin{})
 	return result.RowsAffected, result.Error
-}
-
-func (r *recycleRepo) MarkAsRestored(fileId string) error {
-	return r.db.Where("file_id = ?", fileId).Update("restored_at", time.Now()).Error
 }

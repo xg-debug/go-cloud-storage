@@ -1,7 +1,6 @@
 package controller
 
 import (
-	"fmt"
 	"github.com/gin-gonic/gin"
 	"go-cloud-storage/internal/services"
 	"go-cloud-storage/utils"
@@ -36,11 +35,7 @@ func (c *FileController) GetFiles(ctx *gin.Context) {
 		return
 	}
 	//fmt.Println("parentId = ", req.ParentId)
-	userId, ok := ctx.Get("userId")
-	if !ok {
-		utils.Fail(ctx, http.StatusBadRequest, "用户未登录")
-		return
-	}
+	userId := ctx.GetInt("userId")
 
 	if req.Page <= 0 {
 		req.Page = 1
@@ -48,7 +43,7 @@ func (c *FileController) GetFiles(ctx *gin.Context) {
 	if req.PageSize <= 0 {
 		req.PageSize = 20
 	}
-	files, total, err := c.fileService.GetFiles(ctx, userId.(int), req.ParentId, req.Page, req.PageSize)
+	files, total, err := c.fileService.GetFiles(ctx, userId, req.ParentId, req.Page, req.PageSize)
 	if err != nil {
 		utils.Fail(ctx, http.StatusInternalServerError, "查询文件列表失败")
 	}
@@ -61,11 +56,7 @@ func (c *FileController) CreateFolder(ctx *gin.Context) {
 		Name     string `json:"name" binding:"required"`
 		ParentId string `json:"parentId"`
 	}
-	userId, ok := ctx.Get("userId")
-	if !ok {
-		utils.Fail(ctx, http.StatusInternalServerError, "用户未登录")
-		return
-	}
+	userId := ctx.GetInt("userId")
 	if err := ctx.ShouldBindJSON(&req); err != nil {
 		utils.Fail(ctx, http.StatusBadRequest, "参数错误: "+err.Error())
 		return
@@ -75,7 +66,7 @@ func (c *FileController) CreateFolder(ctx *gin.Context) {
 		utils.Fail(ctx, http.StatusBadRequest, "文件夹名称不能为空")
 		return
 	}
-	folder, err := c.fileService.CreateFolder(userId.(int), req.Name, req.ParentId)
+	folder, err := c.fileService.CreateFolder(userId, req.Name, req.ParentId)
 	if err != nil {
 		utils.Fail(ctx, http.StatusInternalServerError, "创建文件夹失败")
 		return
@@ -108,8 +99,8 @@ func (c *FileController) Rename(ctx *gin.Context) {
 		utils.Fail(ctx, http.StatusBadRequest, "参数错误")
 		return
 	}
-	userId, _ := ctx.Get("userId")
-	err := c.fileService.Rename(userId.(int), req.FileId, req.NewName)
+	userId := ctx.GetInt("userId")
+	err := c.fileService.Rename(userId, req.FileId, req.NewName)
 	if err != nil {
 		utils.Fail(ctx, http.StatusBadRequest, err.Error())
 		return
@@ -119,13 +110,8 @@ func (c *FileController) Rename(ctx *gin.Context) {
 
 func (c *FileController) Delete(ctx *gin.Context) {
 	fileId := ctx.Param("fileId")
-	fmt.Println("要删除的文件ID：" + fileId)
-	userId, exists := ctx.Get("userId")
-	if !exists {
-		utils.Fail(ctx, http.StatusInternalServerError, "未登录")
-		return
-	}
-	err := c.fileService.Delete(fileId, userId.(int))
+	userId := ctx.GetInt("userId")
+	err := c.fileService.Delete(fileId, userId)
 	if err != nil {
 		utils.Fail(ctx, http.StatusInternalServerError, err.Error())
 		return

@@ -1,16 +1,5 @@
 import request from '@/utils/request'
 
-
-// 获取文件分类（按类型/标签/时间）
-export const getFileCategories = (categoryType) => {
-    return request.get('/file/categories', {params: {type: categoryType}})
-}
-
-// 删除分类
-export const delCategory = (id) => {
-    return request.delete('/file/categories/${id}')
-}
-
 // 获取分类下的文件列表
 export const getFilesByCategory = (categoryId) => {
     return request.get("/file/list/${categoryId}")

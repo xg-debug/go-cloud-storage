@@ -1,7 +1,6 @@
 package controller
 
 import (
-	"fmt"
 	"go-cloud-storage/internal/models/dto"
 	"go-cloud-storage/internal/services"
 	"go-cloud-storage/utils"
@@ -32,12 +31,8 @@ func NewUserController(service services.UserService) *UserController {
 
 // GetProfile 获取当前用户信息
 func (c *UserController) GetProfile(ctx *gin.Context) {
-	userId, exists := ctx.Get("userId")
-	if !exists {
-		utils.Fail(ctx, http.StatusBadRequest, "用户未登录")
-		return
-	}
-	profile, err := c.userService.GetProfile(userId.(int))
+	userId := ctx.GetInt("userId")
+	profile, err := c.userService.GetProfile(userId)
 	if err != nil {
 		utils.Fail(ctx, http.StatusNotFound, "用户不存在")
 	}
@@ -51,9 +46,8 @@ func (c *UserController) UpdateProfile(ctx *gin.Context) {
 		utils.Fail(ctx, http.StatusBadRequest, "参数错误")
 		return
 	}
-	fmt.Println(req.Username, req.Phone)
-	userId, _ := ctx.Get("userId")
-	err := c.userService.UpdateUserInfo(userId.(int), req.Username, req.Phone)
+	userId := ctx.GetInt("userId")
+	err := c.userService.UpdateUserInfo(userId, req.Username, req.Phone)
 	if err != nil {
 		utils.Fail(ctx, http.StatusInternalServerError, "更新用户信息失败")
 		return
@@ -68,12 +62,8 @@ func (c *UserController) UpdatePassword(ctx *gin.Context) {
 		utils.Fail(ctx, http.StatusBadRequest, "参数错误")
 		return
 	}
-	userId, exists := ctx.Get("userId")
-	if !exists {
-		utils.Fail(ctx, http.StatusBadRequest, "用户未登录")
-		return
-	}
-	err := c.userService.ChangePassword(userId.(int), req.OldPassword, req.NewPassword)
+	userId := ctx.GetInt("userId")
+	err := c.userService.ChangePassword(userId, req.OldPassword, req.NewPassword)
 	if err != nil {
 		utils.Fail(ctx, http.StatusInternalServerError, err.Error())
 		return
