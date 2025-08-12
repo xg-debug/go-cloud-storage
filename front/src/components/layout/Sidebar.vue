@@ -81,24 +81,6 @@
         </el-menu>
       </div>
     </nav>
-
-    <!-- 快捷标签 -->
-    <div class="quick-tags">
-      <div class="section-title">快捷访问</div>
-      <div class="tags-container">
-        <el-tag 
-          v-for="tag in quickTags" 
-          :key="tag.id" 
-          :type="tag.type" 
-          effect="plain" 
-          round 
-          class="quick-tag"
-          @click="handleTagClick(tag)"
-        >
-          {{ tag.name }}
-        </el-tag>
-      </div>
-    </div>
   </div>
 </template>
 

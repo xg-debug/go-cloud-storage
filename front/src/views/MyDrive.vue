@@ -195,7 +195,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { listFiles, createFolder, renameFile, deleteFile, previewFile, uploadFile } from '@/api/file'
-import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
+import { ElMessage, ElNotification } from 'element-plus'
 import {
     ArrowDown,
     MoreFilled,

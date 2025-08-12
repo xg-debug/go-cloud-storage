@@ -42,7 +42,7 @@
         >
             <el-table-column type="selection" width="55"/>
 
-            <el-table-column label="名称" min-width="280">
+            <el-table-column label="名称" min-width="260">
                 <template #default="{ row }">
                     <div class="file-name-cell" title="点击打开">
                         <el-icon
@@ -56,29 +56,36 @@
                 </template>
             </el-table-column>
 
-            <el-table-column
-                    prop="originalPath"
-                    label="原位置"
-                    min-width="200"
-                    show-overflow-tooltip
-            />
-
             <el-table-column prop="deletedDate" label="删除时间" width="160"/>
             <el-table-column prop="size" label="大小" width="120"/>
+            <el-table-column prop="timeTraining" label="有效时间" width="160"/>
 
-            <el-table-column label="操作" fixed="right" width="140">
+            <el-table-column label="操作" fixed="right" width="180">
                 <template #default="{ row }">
+                    <!-- 单个还原 -->
                     <el-button
-                            size="small"
-                            type="danger"
-                            text
-                            @click="openDeleteDialog(row)"
-                            title="彻底删除"
+                        size="small"
+                        type="primary"
+                        text
+                        @click="handleRestoreOne(row)"
+                        title="还原"
+                    >
+                        还原
+                    </el-button>
+
+                    <!-- 单个彻底删除 -->
+                    <el-button
+                        size="small"
+                        type="danger"
+                        text
+                        @click="openDeleteDialog(row)"
+                        title="彻底删除"
                     >
                         彻底删除
                     </el-button>
                 </template>
             </el-table-column>
+
         </el-table>
 
         <!-- 彻底删除弹窗 -->
@@ -100,90 +107,94 @@
 </template>
 
 <script setup>
-import {ref} from 'vue'
-import {Delete, Document, Folder, Refresh} from '@element-plus/icons-vue'
-import {ElMessage, ElMessageBox} from 'element-plus'
+import { ref, onMounted } from 'vue'
+import { Delete, Document, Folder, Refresh } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import {
+    loadSoftDeletedFiles,
+    deletePermanent,
+    clearRecycleBin,
+    restore,
+    restoreBatch,
+    restoreAll
+} from '@/api/recycle'
 
 const deleteDialogVisible = ref(false)
 const deleteTarget = ref({})
 const deleting = ref(false)
 
 const selectedItems = ref([])
-const trashItems = ref([
-    {
-        id: 1,
-        name: '旧版设计方案',
-        type: 'folder',
-        originalPath: '/设计资源/项目A',
-        deletedDate: '2025-08-03',
-        size: '-'
-    },
-    {
-        id: 2,
-        name: '测试数据.xlsx',
-        type: 'file',
-        originalPath: '/工作资料',
-        deletedDate: '2025-08-01',
-        size: '8.3 MB'
-    }
-    // 更多回收站数据...
-])
+const trashItems = ref([])
 
+// 1. 页面初始化加载回收站数据
+const fetchTrashItems = async () => {
+    try {
+        const res = await loadSoftDeletedFiles()
+        trashItems.value = res.data || []
+    } catch (error) {
+        ElMessage.error('加载回收站数据失败')
+    }
+}
+
+onMounted(() => {
+    fetchTrashItems()
+})
+
+// 多选变化
 const handleSelectionChange = (selection) => {
     selectedItems.value = selection
 }
 
-// 模拟打开文件/文件夹
+// 打开文件/文件夹
 const handleOpen = (item) => {
     ElMessage.info(`打开文件: ${item.name}`)
-    // 这里可以添加跳转或预览逻辑
 }
 
-// 确认清空回收站
-const handleEmptyTrash = () => {
-    ElMessageBox.confirm(
-        '确定要清空回收站吗？此操作不可恢复！',
-        '警告',
-        {
-            confirmButtonText: '清空',
-            cancelButtonText: '取消',
-            type: 'warning'
+// 清空回收站
+const handleEmptyTrash = async () => {
+    try {
+        await ElMessageBox.confirm(
+            '清空回收站后文件将无法恢复，是否继续？',
+            '提示',
+            { type: 'warning' }
+        )
+        await clearRecycleBin()
+        trashItems.value = []
+        selectedItems.value = []
+        ElMessage.success('回收站已清空')
+    } catch (error) {
+        if (error !== 'cancel') {
+            ElMessage.error('清空失败')
         }
-    )
-        .then(() => {
-            trashItems.value = []
-            selectedItems.value = []
-            ElMessage.success('回收站已清空')
-        })
-        .catch(() => {
-            ElMessage.info('已取消操作')
-        })
+    }
 }
 
-// 批量还原选中项
-const handleRestore = () => {
+// 批量还原
+const handleRestore = async () => {
     if (selectedItems.value.length === 0) return
-
-    ElMessageBox.confirm(
-        `确定还原选中的 ${selectedItems.value.length} 个文件吗？`,
-        '确认还原',
-        {
-            confirmButtonText: '还原',
-            cancelButtonText: '取消',
-            type: 'info'
-        }
-    )
-        .then(() => {
-            const restoredIds = selectedItems.value.map((item) => item.id)
-            trashItems.value = trashItems.value.filter((item) => !restoredIds.includes(item.id))
-            selectedItems.value = []
-            ElMessage.success('选中文件已还原')
-        })
-        .catch(() => {
-            ElMessage.info('已取消操作')
-        })
+    try {
+        const restoredIds = selectedItems.value.map((item) => item.id)
+        await restoreBatch(restoredIds)
+        trashItems.value = trashItems.value.filter((item) => !restoredIds.includes(item.id))
+        selectedItems.value = []
+        ElMessage.success('选中文件已还原')
+    } catch (error) {
+        ElMessage.error('还原失败')
+    }
 }
 
+// 单个还原
+const handleRestoreOne = async (row) => {
+    try {
+        await restore(row.id)
+        trashItems.value = trashItems.value.filter((item) => item.id !== row.id)
+        ElMessage.success(`已还原 ${row.name}`)
+    } catch (error) {
+        ElMessage.error('还原失败')
+    }
+}
+
+// 彻底删除 - 打开确认弹窗
 const openDeleteDialog = (row) => {
     deleteTarget.value = row
     deleteDialogVisible.value = true
@@ -193,10 +204,10 @@ const openDeleteDialog = (row) => {
 const confirmDelete = async () => {
     deleting.value = true
     try {
-        await deleteFile(deleteTarget.value.id)
+        await deletePermanent(deleteTarget.value.id)
         ElMessage.success('删除成功')
         deleteDialogVisible.value = false
-        loadSoftDeletedFiles()
+        fetchTrashItems()
     } catch (error) {
         ElMessage.error('删除失败')
     } finally {
@@ -205,13 +216,14 @@ const confirmDelete = async () => {
     }
 }
 
-// 关闭弹窗时清理
+// 关闭弹窗
 const handleDeleteDialogClose = () => {
     deleteDialogVisible.value = false
     deleteTarget.value = {}
     deleting.value = false
 }
 </script>
+
 
 <style scoped>
 .trash-container {

@@ -8,6 +8,7 @@ import (
 	"go-cloud-storage/internal/pkg/oss"
 	"go-cloud-storage/internal/repositories"
 	"go-cloud-storage/utils"
+	"gorm.io/gorm"
 	"time"
 )
 
@@ -30,11 +31,12 @@ type FileService interface {
 }
 
 type fileService struct {
+	db       *gorm.DB
 	fileRepo repositories.FileRepository
 }
 
-func NewFileService(repo repositories.FileRepository) FileService {
-	return &fileService{fileRepo: repo}
+func NewFileService(db *gorm.DB, repo repositories.FileRepository) FileService {
+	return &fileService{db: db, fileRepo: repo}
 }
 
 func (s *fileService) GetFiles(ctx context.Context, userId int, parentId string, page int, pageSize int) ([]FileItem, int64, error) {
@@ -109,15 +111,24 @@ func (s *fileService) Rename(userId int, fileId, newName string) error {
 }
 
 func (s *fileService) Delete(fileId string, userId int) error {
-	// 查询文件是否存在
-	file, err := s.fileRepo.GetFileById(fileId)
-	if err != nil {
-		return err
-	}
-	if file.UserId != userId {
-		return errors.New("无权限删除该文件")
-	}
-	return s.fileRepo.SoftDeleteFile(userId, fileId)
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		// 1.软删除文件
+		if err := s.fileRepo.SoftDeleteFile(tx, userId, fileId); err != nil {
+			return err
+		}
+		// 2.构造回收站记录
+		recycleEntry := &models.RecycleBin{
+			FileId:    fileId,
+			UserId:    userId,
+			DeletedAt: time.Now(),
+			ExpireAt:  time.Now().Add(10 * 24 * time.Hour),
+		}
+		if err := s.fileRepo.AddToRecycle(tx, recycleEntry); err != nil {
+			return err
+		}
+		// 如果到这里都没报错，事务会自动提交
+		return nil
+	})
 }
 
 func (s *fileService) CreateFromFileInfo(file *oss.FileInfo) error {

@@ -14,13 +14,20 @@ import (
 type FileRepository interface {
 	InitFolder(folder *models.File) error
 	GetFiles(ctx context.Context, userId int, parentId string, page int, pageSize int) ([]models.File, int64, error)
+
 	CreateFile(file *models.File) error
 	GetFileById(id string) (*models.File, error)
 	GetUserFileByID(userId int, fileId string) (*models.File, error)
 	UpdateFile(file *models.File, updateFields map[string]interface{}) error
 	UpdateFileNameById(fileId, newName string) error
-	SoftDeleteFile(userId int, fileId string) error
-	HardDeleteFile(fileId string) error
+
+	SoftDeleteFile(db *gorm.DB, userId int, fileId string) error
+	AddToRecycle(db *gorm.DB, recycleEntry *models.RecycleBin) error
+	DeletePermanent(db *gorm.DB, fileIds []string) error
+	DeleteByUserId(db *gorm.DB, userId int) error
+
+	MarkAsNotDeleted(db *gorm.DB, fileIds []string, userId *int) error
+
 	CheckDuplicateName(userId int, parentId, name string) (bool, error)
 	GetFilePath(userId int, fileId string) (string, error)
 	RestoreFolder(folderId string) error
@@ -30,8 +37,6 @@ type FileRepository interface {
 	FindByHash(hash string) (*models.File, error)
 	RenameFile(userId int, fileId, newName string) error
 	MoveFile(userId int, fileId, newParentId string) error
-	GetUserUsedStorage(userId int) (int64, error)
-	GetFileCount(userId int) (int64, error)
 }
 
 type fileRepo struct {
@@ -48,6 +53,7 @@ func (r *fileRepo) InitFolder(folder *models.File) error {
 
 // 基础文件操作方法
 
+// GetFiles 获取用户文件列表
 func (r *fileRepo) GetFiles(ctx context.Context, userId int, parentId string, page int, pageSize int) ([]models.File, int64, error) {
 	var files []models.File
 	var total int64
@@ -76,12 +82,6 @@ func (r *fileRepo) CreateFile(file *models.File) error {
 	return r.db.Create(file).Error
 }
 
-func (r *fileRepo) GetFilesByParentId(parentId string) ([]models.File, error) {
-	var files []models.File
-	err := r.db.Where("parent_id = ?", parentId).Find(&files).Error
-	return files, err
-}
-
 // GetFileById 根据id获取文件（包括软删除的文件）
 func (r *fileRepo) GetFileById(id string) (*models.File, error) {
 	var file models.File
@@ -106,17 +106,36 @@ func (r *fileRepo) UpdateFileNameById(fileId, newName string) error {
 }
 
 // SoftDeleteFile 软删除文件
-func (r *fileRepo) SoftDeleteFile(userId int, fileId string) error {
-	return r.db.Model(&models.File{}).
+func (r *fileRepo) SoftDeleteFile(db *gorm.DB, userId int, fileId string) error {
+	return db.Model(&models.File{}).
 		Where("id = ? AND user_id = ?", fileId, userId).
 		Updates(map[string]interface{}{
 			"is_deleted": 1,
 		}).Error
 }
 
-// HardDeleteFile 硬删除文件
-func (r *fileRepo) HardDeleteFile(fileId string) error {
-	return r.db.Where("id = ?", fileId).Delete(&models.File{}).Error
+func (r *fileRepo) DeletePermanent(db *gorm.DB, fileIds []string) error {
+	return db.Where("id IN ?", fileIds).Delete(&models.File{}).Error
+}
+
+func (r *fileRepo) DeleteByUserId(db *gorm.DB, userId int) error {
+	return db.Where("user_id = ? AND is_deleted = ?", userId, true).Delete(&models.File{}).Error
+}
+
+func (r *fileRepo) AddToRecycle(db *gorm.DB, recycleEntry *models.RecycleBin) error {
+	return db.Create(&recycleEntry).Error
+}
+
+// MarkAsNotDeleted 恢复文件（单个/多个） userId 传 nil 表示不限制用户
+func (r *fileRepo) MarkAsNotDeleted(db *gorm.DB, fileIds []string, userId *int) error {
+	query := db.Model(&models.File{})
+	if len(fileIds) > 0 {
+		query = query.Where("id IN ?", fileIds)
+	}
+	if userId != nil {
+		query = query.Where("user_id = ?", *userId)
+	}
+	return query.Updates(map[string]interface{}{"is_deleted": false}).Error
 }
 
 // CheckDuplicateName 检查同级目录下是否存在同名文件
@@ -134,12 +153,6 @@ func (r *fileRepo) GetFilePath(userId int, fileId string) (string, error) {
 	var path string
 	// 实现递归查询逻辑...
 	return path, nil
-}
-
-// RestoreFile 恢复软删除文件
-func (r *fileRepo) RestoreFile(userId int, fileId string) error {
-	return r.db.Model(&models.File{}).Where("id = ? AND user_id = ?", fileId, userId).
-		Update("is_deleted", false).Error
 }
 
 func (r *fileRepo) RestoreFolder(folderId string) error {
@@ -232,26 +245,4 @@ func (r *fileRepo) MoveFile(userId int, fileId, newParentId string) error {
 	return r.db.Model(&models.File{}).
 		Where("id = ? AND user_id = ?", fileId, userId).
 		Update("parent_id = ?", newParentId).Error
-}
-
-// 统计
-
-// GetUserUsedStorage 获取用户已用存储空间
-func (r *fileRepo) GetUserUsedStorage(userId int) (int64, error) {
-	var totalSize int64
-	err := r.db.Model(&models.File{}).
-		Where("user_id = ? AND is_deleted = ? AND is_dir = ?", userId, false, false).
-		Select("COLALESCE(SUM(size), 0)").
-		Scan(&totalSize).Error
-	return totalSize, err
-}
-
-// GetFileCount 获取用户文件数量
-func (r *fileRepo) GetFileCount(userId int) (int64, error) {
-	var count int64
-
-	err := r.db.Model(&models.File{}).
-		Where("user_id = ? AND is_deleted = ? AND is_dir = ?", userId, false, false).
-		Count(&count).Error
-	return count, err
 }

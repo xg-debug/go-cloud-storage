@@ -9,9 +9,9 @@ import (
 // RecycleRepository 1.接口定义：在go中，接口本身就是引用类型，返回接口值已经包含了指向具体实现的指针
 type RecycleRepository interface {
 	GetFiles(userId int) ([]models.RecycleBin, error)
-	DeleteOne(fileId string) error
-	DeleteBatch(fileIds []string) error
-	DeleteAll(userId int) error
+	DeleteOne(db *gorm.DB, fileId string) error
+	DeleteBatch(db *gorm.DB, fileIds []string) error
+	DeleteAll(db *gorm.DB, userId int) error
 	RestoreOne(fileId string) error
 	RestoreBatch(fileIds []string) error
 	RestoreAll(userId int) error
@@ -40,36 +40,16 @@ func (r *recycleRepo) GetFiles(userId int) ([]models.RecycleBin, error) {
 	return recycleFiles, nil
 }
 
-func (r *recycleRepo) DeleteOne(fileId string) error {
-	return r.DeleteBatch([]string{fileId})
+func (r *recycleRepo) DeleteOne(db *gorm.DB, fileId string) error {
+	return db.Where("file_id = ?", fileId).Delete(&models.RecycleBin{}).Error
 }
 
-func (r *recycleRepo) DeleteBatch(fileIds []string) error {
-	return r.db.Transaction(func(tx *gorm.DB) error {
-		// 1.删除回收站记录
-		if err := tx.Where("file_id IN ?", fileIds).Delete(&models.RecycleBin{}).Error; err != nil {
-			return err
-		}
-		// 2.删除文件表记录
-		if err := tx.Where("id IN ?", fileIds).Delete(&models.File{}).Error; err != nil {
-			return err
-		}
-		return nil
-	})
+func (r *recycleRepo) DeleteBatch(db *gorm.DB, fileIds []string) error {
+	return db.Where("file_id IN ?", fileIds).Delete(&models.RecycleBin{}).Error
 }
 
-func (r *recycleRepo) DeleteAll(userId int) error {
-	return r.db.Transaction(func(tx *gorm.DB) error {
-		// 1.根据userId删除
-		if err := tx.Where("user_id = ?", userId).Delete(&models.RecycleBin{}).Error; err != nil {
-			return err
-		}
-		// 2.删除file表中该用户软删除的记录
-		if err := tx.Where("user_id = ? AND is_deleted = ?", userId, true).Delete(&models.File{}).Error; err != nil {
-			return err
-		}
-		return nil
-	})
+func (r *recycleRepo) DeleteAll(db *gorm.DB, userId int) error {
+	return db.Where("user_id = ?", userId).Delete(&models.RecycleBin{}).Error
 }
 
 func (r *recycleRepo) RestoreOne(fileId string) error {

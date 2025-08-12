@@ -62,11 +62,11 @@ type ShareRecord struct {
 
 // RecycleBin 回收站模型
 type RecycleBin struct {
-	FileId       string    `gorm:"type:varchar(40);primaryKey" json:"file_id"`
-	UserId       int       `gorm:"not null" json:"user_id"`
-	OriginalPath string    `gorm:"type:varchar(1000);not null" json:"original_path"`
-	DeletedAt    time.Time `gorm:"autoCreateTime" json:"deleted_at"`
-	ExpireAt     time.Time `gorm:"->" json:"expire_at"` // 只读字段，由数据库计算
+	Id        uint64    `gorm:"primaryKey;autoIncrement;column:id" json:"id"`
+	FileId    string    `gorm:"type:varchar(40);not null;column:file_id" json:"file_id"`
+	UserId    int       `gorm:"not null;column:user_id" json:"user_id"`
+	DeletedAt time.Time `gorm:"not null;column:deleted_at;default:CURRENT_TIMESTAMP" json:"deleted_at"`
+	ExpireAt  time.Time `gorm:"not null;column:expire_at" json:"expire_at"`
 }
 
 // StorageQuota 用户存储配额模型
