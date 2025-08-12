@@ -29,8 +29,8 @@ AliyunOss:
   Host: https://go-cloud-storage.oss-cn-beijing.aliyuncs.com     # 阿里云OSS资源外网访问地址
   Bucket: go-cloud-storage                               # 阿里云OSS bucket名称
   Endpoint: oss-cn-beijing.aliyuncs.com               # 阿里云OSS Endpoint
-  AccessId: LTAI5tP54sHsb4GjStgaREtU                  # 阿里云OSS accessID
-  AccessSecret: dSZjpIkRuErcmfrQU5c9UcznmqkyDC        # 阿里云OSS accessKey
+  AccessId: LTAI5tP5qSBX9LDfKrA6repv                  # 阿里云OSS accessID
+  AccessSecret: JTucvrRt9LUsBFJPoXWrEgXSdW4nZ4        # 阿里云OSS accessKey
 
 # QQ登录配置
 QQ:
