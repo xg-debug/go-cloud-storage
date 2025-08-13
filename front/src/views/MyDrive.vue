@@ -83,7 +83,7 @@
                     </el-icon>
                     <el-image
                         v-else-if="['jpg', 'png', 'gif'].includes(item.extension)"
-                        :src="item.thumbnail"
+                        :src="item.thumbnail_url"
                         fit="cover"
                     />
                     <el-icon v-else :size="48" color="#3a86ff">
@@ -116,7 +116,7 @@
                 </template>
             </el-table-column>
             <el-table-column prop="modified" label="修改日期" min-width="150" />
-            <el-table-column prop="size" label="大小" min-width="100" />
+            <el-table-column prop="size" label="大小(KB)" min-width="100"/>
             <el-table-column label="操作" min-width="180" align="center">
                 <template #default="{ row }">
                     <el-button size="small" type="text" @click="handleRename(row)">重命名</el-button>
@@ -364,20 +364,38 @@ const beforeUpload = (file) => {
     return true
 }
 
+// 保存通知实例（用于更新/关闭）
+let uploadNotify = null
+
+// 上传进度
 const handleUploadProgress = (event) => {
-    const percent = Math.round((event.percent * 100) / 100)
-    ElNotification({
-        title: '上传中',
-        message: `上传进度：${percent}%`,
-        type: 'info',
-        duration: 0,
-        key: 'upload-progress'
-    })
+    const percent = Math.round(event.percent)
+    // 第一次显示通知
+    if (!uploadNotify) {
+        uploadNotify = ElNotification({
+            title: '上传中',
+            message: `上传进度：${percent}%`,
+            type: 'info',
+            duration: 0
+        })
+    } else {
+        // 关闭旧的，重新开一个（Element Plus 无法直接修改已有通知）
+        uploadNotify.close()
+        uploadNotify = ElNotification({
+            title: '上传中',
+            message: `上传进度：${percent}%`,
+            type: 'info',
+            duration: 0
+        })
+    }
 }
 
 const handleUploadSuccess = (response) => {
-    ElNotification.close('upload-progress')
-    if (response.success) {
+    if (uploadNotify) {
+        uploadNotify.close()
+        uploadNotify = null
+    }
+    if (response?.name) {
         ElMessage.success('文件上传成功')
         loadFiles()
     } else {
@@ -385,12 +403,12 @@ const handleUploadSuccess = (response) => {
     }
 }
 
-let notifyInstance = null
 const handleUploadError = (err) => {
-    if (notifyInstance) {
-        notifyInstance.close()
+    if (uploadNotify) {
+        uploadNotify.close()
+        uploadNotify = null
     }
-    notifyInstance = ElNotification.error({
+    ElNotification.error({
         title: '上传失败',
         message: err?.message || '未知错误',
         duration: 3000

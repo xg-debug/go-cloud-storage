@@ -32,7 +32,7 @@ export const restore = (fileId) => {
 // 批量恢复文件
 export const restoreBatch = (idList) => {
     return request({
-        url: "/recycle/batch/restore",
+        url: "/recycle/batch",
         method: "PUT",
         data: idList
     })

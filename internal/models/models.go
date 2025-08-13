@@ -26,6 +26,8 @@ type File struct {
 	Size          int64  `gorm:"not null" json:"size"`                   // 字节大小
 	IsDir         bool   `gorm:"default:false;not null" json:"is_dir"`   // 是否为目录
 	FileExtension string `gorm:"size:20;not null" json:"file_extension"` // 文件扩展名
+	FileURL       string `gorm:"column:file_url;not null" json:"file_url"`
+	ThumbnailURL  string `gorm:"column:thumbnail_url" json:"thumbnail_url"`
 
 	// 存储信息
 	OssObjectKey string `gorm:"size:1024;not null" json:"-"`       // OSS对象键（不暴露给前端）

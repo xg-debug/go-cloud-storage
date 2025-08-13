@@ -19,46 +19,17 @@ func NewRecycleController(service services.RecycleService) *RecycleController {
 	return &RecycleController{recycleService: service}
 }
 
-// TrashItem 回收站项目响应结构
-type TrashItem struct {
-	ID           string `json:"id"`
-	Name         string `json:"name"`
-	Type         string `json:"type"`
-	OriginalPath string `json:"originalPath"`
-	DeletedDate  string `json:"deletedDate"`
-	Size         string `json:"size"`
-}
-
 // ListRecycleFiles 获取回收站文件列表
 func (rc *RecycleController) ListRecycleFiles(c *gin.Context) {
 	userId := c.GetInt("userId")
 	// 获取回收站记录
-	recycleRecords, err := rc.recycleService.GetRecycleFiles(userId)
+	records, err := rc.recycleService.GetRecycleFiles(userId)
 	if err != nil {
-		utils.Fail(c, http.StatusInternalServerError, "获取回收站删除文件列表失败")
+		utils.Fail(c, http.StatusInternalServerError, "获取回收站删除文件失败")
 		return
 	}
-	// 构建响应数据
-	//var trashItems []TrashItem
-	//for _, record := range recycleRecords {
-	//	// 获取文件信息
-	//	file, err := rc.fileRepo.GetFileById(record.FileId)
-	//	if err != nil {
-	//		continue // 跳过无法找到的文件
-	//	}
-	//
-	//	item := TrashItem{
-	//		ID:           record.FileId,
-	//		Name:         file.Name,
-	//		Type:         getFileType(file),
-	//		OriginalPath: record.OriginalPath,
-	//		DeletedDate:  record.DeletedAt.Format("2006-01-02"),
-	//		Size:         formatFileSize(file.Size, file.IsDir),
-	//	}
-	//	trashItems = append(trashItems, item)
-	//}
 
-	utils.Success(c, gin.H{"data": recycleRecords})
+	utils.Success(c, gin.H{"data": records})
 }
 
 func (rc *RecycleController) DeletePermanent(c *gin.Context) {

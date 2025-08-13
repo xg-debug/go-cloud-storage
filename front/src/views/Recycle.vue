@@ -5,8 +5,7 @@
             <div class="actions">
                 <el-button
                         type="danger"
-                        :disabled="selectedItems.length === 0"
-                        @click="handleEmptyTrash"
+                        @click="openClearDialog"
                         plain
                         round
                 >
@@ -14,6 +13,18 @@
                         <Delete/>
                     </el-icon>
                     清空回收站
+                </el-button>
+                <el-button
+                    type="danger"
+                    :disabled="selectedItems.length === 0"
+                    @click="handleBatchDelete"
+                    plain
+                    round
+                >
+                    <el-icon>
+                        <Delete/>
+                    </el-icon>
+                    批量删除
                 </el-button>
                 <el-button
                         :disabled="selectedItems.length === 0"
@@ -37,30 +48,41 @@
                 @selection-change="handleSelectionChange"
                 stripe
                 border
-                :row-key="row => row.id"
+                :row-key="row => row.fileId"
                 empty-text="回收站空空如也"
         >
             <el-table-column type="selection" width="55"/>
 
-            <el-table-column label="名称" min-width="260">
+            <el-table-column label="名称" min-width="160">
                 <template #default="{ row }">
                     <div class="file-name-cell" title="点击打开">
                         <el-icon
-                                :color="row.type === 'folder' ? '#FFB800' : '#3a86ff'"
+                                :color="row.is_dir === true ? '#FFB800' : '#3a86ff'"
                                 class="file-icon"
                         >
-                            <component :is="row.type === 'folder' ? Folder : Document"/>
+                            <component :is="row.is_dir === true ? Folder : Document"/>
                         </el-icon>
                         <span class="file-name" @click="handleOpen(row)">{{ row.name }}</span>
                     </div>
                 </template>
             </el-table-column>
 
-            <el-table-column prop="deletedDate" label="删除时间" width="160"/>
-            <el-table-column prop="size" label="大小" width="120"/>
-            <el-table-column prop="timeTraining" label="有效时间" width="160"/>
-
-            <el-table-column label="操作" fixed="right" width="180">
+            <el-table-column prop="size" label="大小" width="120" align="center">
+                <template #default="{ row }">
+                    {{ row.size }} KB
+                </template>
+            </el-table-column>
+            <el-table-column prop="deletedDate" label="删除时间" width="160" align="center">
+                <template #default="{ row }">
+                    {{ row.deletedDate }}
+                </template>
+            </el-table-column>
+            <el-table-column prop="expireDays" label="有效时间" width="160" align="center">
+                <template #default="{ row }">
+                    {{ row.expireDays }}天
+                </template>
+            </el-table-column>
+            <el-table-column label="操作" fixed="right" width="180" align="center">
                 <template #default="{ row }">
                     <!-- 单个还原 -->
                     <el-button
@@ -88,6 +110,22 @@
 
         </el-table>
 
+        <!-- 清空回收站弹窗 -->
+        <el-dialog
+            v-model="clearDialogVisible"
+            title="清空回收站"
+            width="400px"
+            :before-close="handleClearDialogClose"
+        >
+            <div class="delete-confirm-text">
+                <div>确认清空回收站？</div>
+            </div>
+            <template #footer>
+                <el-button @click="clearDialogVisible = false">取消</el-button>
+                <el-button type="primary" @click="confirmClear" :loading="deleting">确定</el-button>
+            </template>
+        </el-dialog>
+
         <!-- 彻底删除弹窗 -->
         <el-dialog
             v-model="deleteDialogVisible"
@@ -100,7 +138,7 @@
             </div>
             <template #footer>
                 <el-button @click="deleteDialogVisible = false">取消</el-button>
-                <el-button type="primary" @click="confirmDelete" :loading="deleting">确定</el-button>
+                <el-button type="primary" @click="">确定</el-button>
             </template>
         </el-dialog>
     </div>
@@ -109,24 +147,26 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { Delete, Document, Folder, Refresh } from '@element-plus/icons-vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import {
     loadSoftDeletedFiles,
     deletePermanent,
+    deleteSelected,
     clearRecycleBin,
     restore,
     restoreBatch,
-    restoreAll
 } from '@/api/recycle'
 
 const deleteDialogVisible = ref(false)
 const deleteTarget = ref({})
 const deleting = ref(false)
 
+const clearDialogVisible = ref(false)
+
 const selectedItems = ref([])
 const trashItems = ref([])
 
-// 1. 页面初始化加载回收站数据
+// 页面初始化加载回收站数据
 const fetchTrashItems = async () => {
     try {
         const res = await loadSoftDeletedFiles()
@@ -150,14 +190,13 @@ const handleOpen = (item) => {
     ElMessage.info(`打开文件: ${item.name}`)
 }
 
+const openClearDialog = () => {
+    clearDialogVisible.value = true
+}
+
 // 清空回收站
-const handleEmptyTrash = async () => {
+const confirmClear = async () => {
     try {
-        await ElMessageBox.confirm(
-            '清空回收站后文件将无法恢复，是否继续？',
-            '提示',
-            { type: 'warning' }
-        )
         await clearRecycleBin()
         trashItems.value = []
         selectedItems.value = []
@@ -169,13 +208,31 @@ const handleEmptyTrash = async () => {
     }
 }
 
+const handleClearDialogClose = () => {
+    clearDialogVisible.value = false
+}
+
+// 批量删除
+const handleBatchDelete = async () => {
+    if (selectedItems.value.length === 0) return
+    try {
+        const deleteIds = selectedItems.value.map((item) => item.fileId)
+        await deleteSelected(deleteIds)
+        trashItems.value = trashItems.value.filter((item) => !deleteIds.includes(item.fileId))
+        selectedItems.value = []
+        ElMessage.success('选中文件已彻底删除')
+    } catch (error) {
+        ElMessage.error('删除失败')
+    }
+}
+
 // 批量还原
 const handleRestore = async () => {
     if (selectedItems.value.length === 0) return
     try {
-        const restoredIds = selectedItems.value.map((item) => item.id)
+        const restoredIds = selectedItems.value.map((item) => item.fileId)
         await restoreBatch(restoredIds)
-        trashItems.value = trashItems.value.filter((item) => !restoredIds.includes(item.id))
+        trashItems.value = trashItems.value.filter((item) => !restoredIds.includes(item.fileId))
         selectedItems.value = []
         ElMessage.success('选中文件已还原')
     } catch (error) {
@@ -186,8 +243,8 @@ const handleRestore = async () => {
 // 单个还原
 const handleRestoreOne = async (row) => {
     try {
-        await restore(row.id)
-        trashItems.value = trashItems.value.filter((item) => item.id !== row.id)
+        await restore(row.fileId)
+        trashItems.value = trashItems.value.filter((item) => item.fileId !== row.fileId)
         ElMessage.success(`已还原 ${row.name}`)
     } catch (error) {
         ElMessage.error('还原失败')
@@ -204,7 +261,7 @@ const openDeleteDialog = (row) => {
 const confirmDelete = async () => {
     deleting.value = true
     try {
-        await deletePermanent(deleteTarget.value.id)
+        await deletePermanent(deleteTarget.value.fileId)
         ElMessage.success('删除成功')
         deleteDialogVisible.value = false
         fetchTrashItems()
@@ -223,7 +280,6 @@ const handleDeleteDialogClose = () => {
     deleting.value = false
 }
 </script>
-
 
 <style scoped>
 .trash-container {
@@ -285,15 +341,6 @@ const handleDeleteDialogClose = () => {
     vertical-align: middle !important;
 }
 
-.el-button--text {
-    padding: 4px 8px;
-    font-weight: 600;
-}
-
-.el-button--danger {
-    color: #f56c6c;
-}
-
 @media (max-width: 768px) {
     .header {
         flex-direction: column;
@@ -313,4 +360,3 @@ const handleDeleteDialogClose = () => {
     user-select: none;
 }
 </style>
-  

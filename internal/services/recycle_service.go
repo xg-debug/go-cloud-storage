@@ -1,13 +1,12 @@
 package services
 
 import (
-	"go-cloud-storage/internal/models"
 	"go-cloud-storage/internal/repositories"
 	"gorm.io/gorm"
 )
 
 type RecycleService interface {
-	GetRecycleFiles(userId int) ([]models.RecycleBin, error)
+	GetRecycleFiles(userId int) ([]map[string]interface{}, error)
 	DeleteOne(fileId string) error
 	DeleteSelected(fileIds []string) error
 	ClearRecycles(userId int) error
@@ -31,9 +30,38 @@ func NewRecycleService(db *gorm.DB, recycleRepo repositories.RecycleRepository, 
 	}
 }
 
+// TrashItem 回收站项目响应结构
+type TrashItem struct {
+	FileId      string `json:"file_id"`
+	Name        string `json:"name"`
+	IsDir       bool   `json:"is_dir"`
+	Size        int64  `json:"size"`
+	DeletedDate string `json:"deleted_date"`
+	ExpireTime  int    `json:"expire_time"`
+}
+
 // GetRecycleFiles 获取用户的回收站项目
-func (s *recycleService) GetRecycleFiles(userId int) ([]models.RecycleBin, error) {
-	return s.recycleRepo.GetFiles(userId)
+func (s *recycleService) GetRecycleFiles(userId int) ([]map[string]interface{}, error) {
+	items, err := s.recycleRepo.GetFiles(userId)
+	if err != nil {
+		return nil, err
+	}
+	var res []map[string]interface{}
+
+	// 准备返回数据
+	for _, item := range items {
+		res = append(res, map[string]interface{}{
+			"fileId":      item.FileId,
+			"name":        item.Name,
+			"isDir":       item.IsDir,
+			"size":        item.Size / 1024, // 以KB为单位显示
+			"deletedDate": item.DeletedAt.Format("2006-01-02 15:04:05"),
+			"expireDays":  int(item.ExpireAt.Sub(item.DeletedAt).Hours() / 24),
+		})
+	}
+
+	return res, nil
+
 }
 
 func (s *recycleService) DeleteOne(fileId string) error {

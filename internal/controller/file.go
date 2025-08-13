@@ -34,7 +34,6 @@ func (c *FileController) GetFiles(ctx *gin.Context) {
 		utils.Fail(ctx, http.StatusBadRequest, "参数错误")
 		return
 	}
-	//fmt.Println("parentId = ", req.ParentId)
 	userId := ctx.GetInt("userId")
 
 	if req.Page <= 0 {

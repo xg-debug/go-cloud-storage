@@ -17,6 +17,7 @@ type FileRepository interface {
 
 	CreateFile(file *models.File) error
 	GetFileById(id string) (*models.File, error)
+	GetFileByIds(fileIds []string) ([]models.File, error)
 	GetUserFileByID(userId int, fileId string) (*models.File, error)
 	UpdateFile(file *models.File, updateFields map[string]interface{}) error
 	UpdateFileNameById(fileId, newName string) error
@@ -87,6 +88,12 @@ func (r *fileRepo) GetFileById(id string) (*models.File, error) {
 	var file models.File
 	err := r.db.Where("id = ?", id).First(&file).Error
 	return &file, err
+}
+
+func (r *fileRepo) GetFileByIds(fileIds []string) ([]models.File, error) {
+	var res []models.File
+	err := r.db.Where("id IN ?", fileIds).Find(&res).Error
+	return res, err
 }
 
 // GetUserFileByID 获取用户文件(不包括软删除的文件)

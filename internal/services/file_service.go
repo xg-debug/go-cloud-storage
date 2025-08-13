@@ -13,12 +13,14 @@ import (
 )
 
 type FileItem struct {
-	Id        string `json:"id"`
-	Name      string `json:"name"`
-	IsDir     bool   `json:"is_dir"`
-	Size      int64  `json:"size"`
-	Extension string `json:"extension"`
-	Modified  string `json:"modified"`
+	Id           string `json:"id"`
+	Name         string `json:"name"`
+	IsDir        bool   `json:"is_dir"`
+	Size         int64  `json:"size"`
+	Extension    string `json:"extension"`
+	Modified     string `json:"modified"`
+	FileURL      string `json:"file_url"`
+	ThumbnailURL string `json:"thumbnail_url"`
 }
 
 type FileService interface {
@@ -47,12 +49,14 @@ func (s *fileService) GetFiles(ctx context.Context, userId int, parentId string,
 	var fileList []FileItem
 	for _, file := range files {
 		fileList = append(fileList, FileItem{
-			Id:        file.Id,
-			Name:      file.Name,
-			IsDir:     file.IsDir,
-			Size:      file.Size,
-			Extension: file.FileExtension,
-			Modified:  file.UpdatedAt.Format("2006-01-02 15:04:05"),
+			Id:           file.Id,
+			Name:         file.Name,
+			IsDir:        file.IsDir,
+			Size:         file.Size / 1024,
+			Extension:    file.FileExtension,
+			Modified:     file.UpdatedAt.Format("2006-01-02 15:04:05"),
+			FileURL:      file.FileURL,
+			ThumbnailURL: file.ThumbnailURL,
 		})
 	}
 	return fileList, total, nil
@@ -145,12 +149,15 @@ func (s *fileService) CreateFromFileInfo(file *oss.FileInfo) error {
 		Size:          int64(file.Size),
 		IsDir:         file.IsDir,
 		FileExtension: file.FileExtension,
-		OssObjectKey:  file.OssObjectKey,
-		FileHash:      file.FileHash,
-		ParentId:      pId,
-		IsDeleted:     file.IsDeleted,
-		CreatedAt:     file.CreatedAt,
-		UpdatedAt:     file.UpdatedAt,
+		FileURL:       file.URL,
+		ThumbnailURL:  file.Thumbnail,
+
+		OssObjectKey: file.OssObjectKey,
+		FileHash:     file.FileHash,
+		ParentId:     pId,
+		IsDeleted:    file.IsDeleted,
+		CreatedAt:    file.CreatedAt,
+		UpdatedAt:    file.UpdatedAt,
 	}
 	return s.fileRepo.CreateFile(&dbFile)
 }

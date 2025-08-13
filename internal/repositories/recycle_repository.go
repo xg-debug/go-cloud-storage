@@ -6,9 +6,18 @@ import (
 	"time"
 )
 
+type TrashItem struct {
+	FileId    string
+	Name      string
+	IsDir     bool
+	Size      int64
+	DeletedAt time.Time
+	ExpireAt  time.Time
+}
+
 // RecycleRepository 1.接口定义：在go中，接口本身就是引用类型，返回接口值已经包含了指向具体实现的指针
 type RecycleRepository interface {
-	GetFiles(userId int) ([]models.RecycleBin, error)
+	GetFiles(userId int) ([]TrashItem, error)
 	DeleteOne(db *gorm.DB, fileId string) error
 	DeleteBatch(db *gorm.DB, fileIds []string) error
 	DeleteAll(db *gorm.DB, userId int) error
@@ -32,12 +41,14 @@ type recycleRepo struct {
 func NewRecycleRepository(db *gorm.DB) RecycleRepository {
 	return &recycleRepo{db: db}
 }
-func (r *recycleRepo) GetFiles(userId int) ([]models.RecycleBin, error) {
-	var recycleFiles []models.RecycleBin
-	if err := r.db.Where("user_id = ?", userId).Find(&recycleFiles).Error; err != nil {
-		return nil, err
-	}
-	return recycleFiles, nil
+
+func (r *recycleRepo) GetFiles(userId int) ([]TrashItem, error) {
+	var res []TrashItem
+	err := r.db.Table("recycle_bin AS rb").
+		Select(`f.id AS file_id, f.name, f.is_dir, f.size, rb.deleted_at, rb.expire_at`).
+		Joins(`LEFT JOIN file AS f ON rb.file_id = f.id`).
+		Where(`rb.user_id = ?`, userId).Scan(&res).Error
+	return res, err
 }
 
 func (r *recycleRepo) DeleteOne(db *gorm.DB, fileId string) error {

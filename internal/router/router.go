@@ -36,8 +36,8 @@ func SetUpRouter(db *gorm.DB, ossService *oss.OSSService) *gin.Engine {
 	// 初始化服务
 	userService := services.NewUserService(userRepo, fileRepo)
 	shareService := services.NewShareService(shareRepo)
-	fileService := services.NewFileService(fileRepo)
-	recycleService := services.NewRecycleService(recycleRepo, fileRepo)
+	fileService := services.NewFileService(db, fileRepo)
+	recycleService := services.NewRecycleService(db, recycleRepo, fileRepo)
 
 	loginCtrl := controller.NewLoginController(userService)
 	shareCtrl := controller.NewShareController(shareService)
@@ -93,7 +93,7 @@ func SetUpRouter(db *gorm.DB, ossService *oss.OSSService) *gin.Engine {
 		recycle.DELETE("", recycleCtrl.ClearRecycleBin)
 
 		recycle.PUT("/:fileId/restore", recycleCtrl.RestoreFile)
-		recycle.PUT("/batch/restore", recycleCtrl.RestoreSelected)
+		recycle.PUT("/batch", recycleCtrl.RestoreSelected)
 		recycle.PUT("/restore/all", recycleCtrl.RestoreAll)
 	}
 
