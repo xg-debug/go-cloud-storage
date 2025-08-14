@@ -112,15 +112,6 @@ func (rc *RecycleController) RestoreSelected(c *gin.Context) {
 	utils.Success(c, nil)
 }
 
-func (rc *RecycleController) RestoreAll(c *gin.Context) {
-	userId := c.GetInt("userId")
-	if err := rc.recycleService.RestoreAll(userId); err != nil {
-		utils.Fail(c, http.StatusInternalServerError, "恢复全部文件失败")
-		return
-	}
-	utils.Success(c, nil)
-}
-
 // 辅助函数：获取文件类型
 func getFileType(file *models.File) string {
 	if file.IsDir {

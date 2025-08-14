@@ -37,8 +37,3 @@ export const restoreBatch = (idList) => {
         data: idList
     })
 }
-
-// 恢复所有文件：根据用户Id恢复
-export const restoreAll = () => {
-    return request.put("/recycle/restore/all")
-}

@@ -12,7 +12,6 @@ type RecycleService interface {
 	ClearRecycles(userId int) error
 	RestoreOne(fileId string) error
 	RestoreSelected(fileIds []string) error
-	RestoreAll(userId int) error
 	CleanExpiredItems() error
 }
 
@@ -122,19 +121,6 @@ func (s *recycleService) RestoreSelected(fileIds []string) error {
 		}
 		// 2.更新file表中软删除的标志
 		if err := s.fileRepo.MarkAsNotDeleted(tx, fileIds, nil); err != nil {
-			return err
-		}
-		return nil
-	})
-}
-func (s *recycleService) RestoreAll(userId int) error {
-	return s.db.Transaction(func(tx *gorm.DB) error {
-		// 1.删除回收站的记录
-		if err := s.recycleRepo.DeleteAll(tx, userId); err != nil {
-			return err
-		}
-		// 2.更新file表中所有软删除的标志
-		if err := s.fileRepo.MarkAsNotDeleted(tx, []string{}, &userId); err != nil {
 			return err
 		}
 		return nil

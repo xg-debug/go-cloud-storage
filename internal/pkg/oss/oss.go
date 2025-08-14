@@ -11,7 +11,6 @@ import (
 	"go-cloud-storage/internal/pkg/config"
 	"go-cloud-storage/utils"
 	"io"
-	"mime/multipart"
 	"path/filepath"
 	"strings"
 	"time"
@@ -132,17 +131,6 @@ func (s *OSSService) generateObjectURL(objectKey string) string {
 	return fmt.Sprintf("https://%s.%s/%s", s.bucket, s.endpoint, objectKey)
 }
 
-func (s *OSSService) UploadAvatar(file multipart.File, fileName string) (string, error) {
-	// 这里可以自定义上传路径，比如 avatars/{uuid}_{filename}
-	//ossPath := "avatars/" + fileName
+// 下载OSS文件
 
-	// 上传
-	//_, err := s.client.PutObject(ossPath, file)
-	//if err != nil {
-	//	return "", fmt.Errorf("upload to OSS failed: %w", err)
-	//}
-
-	// 生成访问 URL，公共读时可直接拼接
-	//url := fmt.Sprintf("https://%s.%s/%s", o.bucketName, o.endpoint, ossPath)
-	return "", nil
-}
+// 删除OSS文件

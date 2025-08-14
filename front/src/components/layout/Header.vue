@@ -24,23 +24,8 @@
       </el-input>
     </div>
 
-    <!-- 右侧：操作按钮和用户菜单 -->
+    <!-- 右侧：用户菜单 -->
     <div class="header-right">
-      <div class="action-buttons">
-        <el-button type="primary" @click="handleUpload" class="action-btn">
-          <el-icon>
-            <Upload />
-          </el-icon>
-          <span>上传</span>
-        </el-button>
-        <el-button @click="handleNewFolder" class="action-btn secondary">
-          <el-icon>
-            <FolderAdd />
-          </el-icon>
-          <span>新建文件夹</span>
-        </el-button>
-      </div>
-
       <el-dropdown class="user-dropdown">
         <div class="user-avatar">
           <el-avatar :size="40" :src="user?.avatar" class="avatar" />
@@ -192,46 +177,6 @@ const handleLogout = async () => {
   gap: 24px;
 }
 
-.action-buttons {
-  display: flex;
-  gap: 12px;
-}
-
-.action-btn {
-  border-radius: 12px;
-  padding: 10px 20px;
-  font-weight: 500;
-  transition: all 0.3s ease;
-  border: none;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.action-btn.primary {
-  background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
-  color: white;
-  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3);
-}
-
-.action-btn.primary:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
-}
-
-.action-btn.secondary {
-  background: #ffffff;
-  color: #64748b;
-  border: 1px solid #e2e8f0;
-}
-
-.action-btn.secondary:hover {
-  background: #f8fafc;
-  color: #3b82f6;
-  border-color: #3b82f6;
-  transform: translateY(-1px);
-}
-
 .user-dropdown {
   cursor: pointer;
 }
@@ -268,12 +213,6 @@ const handleLogout = async () => {
   font-size: 14px;
   font-weight: 600;
   color: #1e293b;
-  line-height: 1;
-}
-
-.user-role {
-  font-size: 12px;
-  color: #64748b;
   line-height: 1;
 }
 
@@ -344,14 +283,6 @@ const handleLogout = async () => {
   
   .search-input {
     width: 200px;
-  }
-  
-  .action-buttons {
-    gap: 8px;
-  }
-  
-  .action-btn {
-    padding: 8px 16px;
   }
   
   .action-btn span {

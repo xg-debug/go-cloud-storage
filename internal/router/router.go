@@ -94,7 +94,6 @@ func SetUpRouter(db *gorm.DB, ossService *oss.OSSService) *gin.Engine {
 
 		recycle.PUT("/:fileId/restore", recycleCtrl.RestoreFile)
 		recycle.PUT("/batch", recycleCtrl.RestoreSelected)
-		recycle.PUT("/restore/all", recycleCtrl.RestoreAll)
 	}
 
 	return ginServer

@@ -487,7 +487,12 @@ const handleMove = (item) => {
 <style scoped>
 /* 样式保持不变 */
 .drive-container {
-    padding: 20px;
+    padding: 24px;
+    background: #fff;
+    border-radius: 10px;
+    box-shadow: 0 8px 20px rgb(0 0 0 / 0.06);
+    height: 100%;
+    overflow-y: auto;
 }
 
 .toolbar {
