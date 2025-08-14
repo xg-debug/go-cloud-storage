@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"go-cloud-storage/internal/models"
 	"go-cloud-storage/internal/pkg/utils"
 	"gorm.io/gorm"
@@ -199,7 +198,6 @@ func (r *fileRepo) CreateFolder(userId int, folderName string, parentId string) 
 	} else {
 		pId = sql.NullString{String: parentId, Valid: true} // 有值
 	}
-	fmt.Println("pId: ", pId)
 	folder := &models.File{
 		Id:        utils.NewUUID(), // 需要实现生成Id的函数
 		UserId:    userId,
@@ -207,6 +205,7 @@ func (r *fileRepo) CreateFolder(userId int, folderName string, parentId string) 
 		IsDir:     true,
 		ParentId:  pId,
 		Size:      0,
+		SizeStr:   "-",
 		CreatedAt: time.Now(),
 	}
 	err := r.db.Create(folder).Error

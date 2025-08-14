@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"errors"
 	"fmt"
 	"github.com/aliyun/alibabacloud-oss-go-sdk-v2/oss"
 	"github.com/aliyun/alibabacloud-oss-go-sdk-v2/oss/credentials"
+	"go-cloud-storage/internal/models"
 	"go-cloud-storage/internal/pkg/config"
 	"go-cloud-storage/internal/pkg/utils"
 	"io"
@@ -17,24 +19,6 @@ import (
 	"strings"
 	"time"
 )
-
-// FileInfo 返回给业务层/前端的结构
-type FileInfo struct {
-	Id            string    `json:"id"`
-	UserId        int       `json:"user_id"`
-	Name          string    `json:"name"`
-	Size          uint64    `json:"size"`
-	IsDir         bool      `json:"is_dir"`
-	FileExtension string    `json:"file_extension"`
-	OssObjectKey  string    `json:"oss_object_key"`
-	FileHash      string    `json:"file_hash"`
-	ParentId      string    `json:"parent_id"`
-	IsDeleted     bool      `json:"is_deleted"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
-	Thumbnail     string    `json:"thumbnail"`
-	URL           string    `json:"url"`
-}
 
 type OSSService struct {
 	client   *oss.Client
@@ -62,9 +46,9 @@ func NewOSSService(cfg *config.AliyunOssConfig) (*OSSService, error) {
 	}, nil
 }
 
-// UploadFromStream 从 reader 上传文件，返回 FileInfo
+// UploadFromStream 上传文件
 // 注意：这里会把文件读入内存（io.ReadAll）。如果需要支持超大文件，后续可改成分片上传（MultipartUpload）。
-func (s *OSSService) UploadFromStream(ctx context.Context, r io.Reader, fileName string, userId int, parentId string, maxSize int64) (*FileInfo, error) {
+func (s *OSSService) UploadFromStream(ctx context.Context, r io.Reader, fileName string, userId int, parentId string, maxSize int64) (*models.File, error) {
 	if fileName == "" {
 		return nil, errors.New("文件名不能为空")
 	}
@@ -110,23 +94,29 @@ func (s *OSSService) UploadFromStream(ctx context.Context, r io.Reader, fileName
 
 	fileURL := s.generateObjectURL(ossPath)
 
-	fi := &FileInfo{
+	pId := sql.NullString{
+		String: parentId,
+		Valid:  parentId != "",
+	}
+
+	file := &models.File{
 		Id:            fileId,
 		UserId:        userId,
 		Name:          fileName,
-		Size:          uint64(len(data)),
+		Size:          int64(len(data)),
+		SizeStr:       utils.FormatFileSize(int64(len(data))),
 		IsDir:         false,
 		FileExtension: ext,
 		OssObjectKey:  ossPath,
 		FileHash:      fileHash,
-		ParentId:      parentId,
+		ParentId:      pId,
 		IsDeleted:     false,
 		CreatedAt:     time.Now(),
 		UpdatedAt:     time.Now(),
-		Thumbnail:     fileURL,
-		URL:           fileURL,
+		FileURL:       fileURL,
+		ThumbnailURL:  fileURL,
 	}
-	return fi, nil
+	return file, nil
 }
 
 func (s *OSSService) generateObjectURL(objectKey string) string {
@@ -207,8 +197,8 @@ func (s *OSSService) DeleteFiles(ctx context.Context, objectKeys []string) error
 	}
 
 	var deleteObjects []oss.DeleteObject
-	for _, name := range objectKeys {
-		deleteObjects = append(deleteObjects, oss.DeleteObject{Key: oss.Ptr(name)})
+	for _, key := range objectKeys {
+		deleteObjects = append(deleteObjects, oss.DeleteObject{Key: oss.Ptr(key)})
 	}
 
 	// 创建删除多个对象的请求

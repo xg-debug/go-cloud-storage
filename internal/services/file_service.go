@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"go-cloud-storage/internal/models"
-	"go-cloud-storage/internal/pkg/oss"
 	"go-cloud-storage/internal/pkg/utils"
 	"go-cloud-storage/internal/repositories"
 	"gorm.io/gorm"
@@ -17,6 +16,7 @@ type FileItem struct {
 	Name         string `json:"name"`
 	IsDir        bool   `json:"is_dir"`
 	Size         int64  `json:"size"`
+	SizeStr      string `json:"size_str"`
 	Extension    string `json:"extension"`
 	Modified     string `json:"modified"`
 	FileURL      string `json:"file_url"`
@@ -29,7 +29,7 @@ type FileService interface {
 	UploadFile(fileName, extension string, size int64, parentId string) (*models.File, error)
 	Rename(userId int, fileId, newName string) error
 	Delete(fileId string, userId int) error
-	CreateFromFileInfo(file *oss.FileInfo) error
+	CreateFileInfo(file *models.File) error
 }
 
 type fileService struct {
@@ -52,7 +52,8 @@ func (s *fileService) GetFiles(ctx context.Context, userId int, parentId string,
 			Id:           file.Id,
 			Name:         file.Name,
 			IsDir:        file.IsDir,
-			Size:         file.Size / 1024,
+			Size:         file.Size,
+			SizeStr:      file.SizeStr,
 			Extension:    file.FileExtension,
 			Modified:     file.UpdatedAt.Format("2006-01-02 15:04:05"),
 			FileURL:      file.FileURL,
@@ -135,29 +136,6 @@ func (s *fileService) Delete(fileId string, userId int) error {
 	})
 }
 
-func (s *fileService) CreateFromFileInfo(file *oss.FileInfo) error {
-	var pId sql.NullString
-	if file.ParentId == "" {
-		pId = sql.NullString{Valid: false} // NULL
-	} else {
-		pId = sql.NullString{String: file.ParentId, Valid: true} // 有值
-	}
-	dbFile := models.File{
-		Id:            file.Id,
-		UserId:        file.UserId,
-		Name:          file.Name,
-		Size:          int64(file.Size),
-		IsDir:         file.IsDir,
-		FileExtension: file.FileExtension,
-		FileURL:       file.URL,
-		ThumbnailURL:  file.Thumbnail,
-
-		OssObjectKey: file.OssObjectKey,
-		FileHash:     file.FileHash,
-		ParentId:     pId,
-		IsDeleted:    file.IsDeleted,
-		CreatedAt:    file.CreatedAt,
-		UpdatedAt:    file.UpdatedAt,
-	}
-	return s.fileRepo.CreateFile(&dbFile)
+func (s *fileService) CreateFileInfo(file *models.File) error {
+	return s.fileRepo.CreateFile(file)
 }

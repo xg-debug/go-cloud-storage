@@ -106,24 +106,27 @@
                 <template #default="{ row }">
                     <div class="file-name-cell">
                         <el-icon v-if="row.is_dir === true" color="#FFB800">
-                            <Folder />
+                            <Folder/>
                         </el-icon>
                         <el-icon v-else color="#3a86ff">
-                            <Document />
+                            <Document/>
                         </el-icon>
                         <span>{{ row.name }}</span>
                     </div>
                 </template>
             </el-table-column>
-            <el-table-column prop="modified" label="修改日期" min-width="150" />
-            <el-table-column prop="size" label="大小(KB)" min-width="100"/>
-            <el-table-column label="操作" min-width="180" align="center">
+            <el-table-column prop="modified" label="修改日期" min-width="150"/>
+            <el-table-column prop="size_str" label="大小" min-width="100"/>
+            <el-table-column label="操作" min-width="180">
                 <template #default="{ row }">
                     <el-button size="small" type="text" @click="handleRename(row)">重命名</el-button>
                     <el-button size="small" type="text" @click="openDeleteDialog(row)">删除</el-button>
                     <el-dropdown>
                         <el-button size="small" type="text">
-                            更多<el-icon><ArrowDown /></el-icon>
+                            更多
+                            <el-icon>
+                                <ArrowDown/>
+                            </el-icon>
                         </el-button>
                         <template #dropdown>
                             <el-dropdown-menu>
@@ -194,8 +197,8 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
-import { listFiles, createFolder, renameFile, deleteFile, previewFile, uploadFile } from '@/api/file'
-import { ElMessage, ElNotification } from 'element-plus'
+import {listFiles, createFolder, renameFile, deleteFile, previewFile, uploadFile} from '@/api/file'
+import {ElMessage} from 'element-plus'
 import {
     ArrowDown,
     MoreFilled,
@@ -230,6 +233,7 @@ const deleteTarget = ref({})
 const deleting = ref(false)
 let tempFolderId = null
 let hoverTimeout = null
+
 
 const uploadRequest = (options) => {
     const { file, onProgress, onSuccess, onError, data } = options
@@ -364,59 +368,21 @@ const beforeUpload = (file) => {
     return true
 }
 
-// 保存通知实例（用于更新/关闭）
-let uploadNotify = null
-
-// 上传进度
-const handleUploadProgress = (event) => {
-    const percent = Math.round(event.percent)
-    // 第一次显示通知
-    if (!uploadNotify) {
-        uploadNotify = ElNotification({
-            title: '上传中',
-            message: `上传进度：${percent}%`,
-            type: 'info',
-            duration: 0
-        })
-    } else {
-        // 关闭旧的，重新开一个（Element Plus 无法直接修改已有通知）
-        uploadNotify.close()
-        uploadNotify = ElNotification({
-            title: '上传中',
-            message: `上传进度：${percent}%`,
-            type: 'info',
-            duration: 0
-        })
-    }
-}
-
 const handleUploadSuccess = (response) => {
-    if (uploadNotify) {
-        uploadNotify.close()
-        uploadNotify = null
-    }
     if (response?.name) {
-        ElMessage.success('文件上传成功')
+        ElMessage.success('上传成功')
         loadFiles()
     } else {
-        ElMessage.error(response.message || '文件上传失败')
+        ElMessage.error(response.message || '上传失败')
     }
 }
 
 const handleUploadError = (err) => {
-    if (uploadNotify) {
-        uploadNotify.close()
-        uploadNotify = null
-    }
-    ElNotification.error({
-        title: '上传失败',
-        message: err?.message || '未知错误',
-        duration: 3000
-    })
+    ElMessage.error(err?.message || '上传失败')
 }
 
 const handleRename = (row) => {
-    renameForm.value = { id: row.id, name: row.name }
+    renameForm.value = {id: row.id, name: row.name}
     renameDialogVisible.value = true
 }
 

@@ -1,12 +1,9 @@
 package controller
 
 import (
-	"go-cloud-storage/internal/models"
 	"go-cloud-storage/internal/pkg/utils"
 	"go-cloud-storage/internal/services"
 	"net/http"
-	"strconv"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -110,33 +107,4 @@ func (rc *RecycleController) RestoreSelected(c *gin.Context) {
 	}
 
 	utils.Success(c, nil)
-}
-
-// 辅助函数：获取文件类型
-func getFileType(file *models.File) string {
-	if file.IsDir {
-		return "folder"
-	}
-	return "file"
-}
-
-// 辅助函数：格式化文件大小
-func formatFileSize(size int64, isDir bool) string {
-	if isDir {
-		return "-"
-	}
-
-	const unit = 1024
-	if size < unit {
-		return strconv.FormatInt(size, 10) + " B"
-	}
-
-	div, exp := int64(unit), 0
-	for n := size / unit; n >= unit; n /= unit {
-		div *= unit
-		exp++
-	}
-
-	units := []string{"KB", "MB", "GB", "TB"}
-	return strings.TrimSuffix(strconv.FormatFloat(float64(size)/float64(div), 'f', 1, 64), ".0") + " " + units[exp]
 }

@@ -69,7 +69,7 @@
 
             <el-table-column prop="size" label="大小" width="120" align="center">
                 <template #default="{ row }">
-                    {{ row.size }} KB
+                    {{ row.size_str }}
                 </template>
             </el-table-column>
             <el-table-column prop="deletedDate" label="删除时间" width="160" align="center">
@@ -201,6 +201,7 @@ const confirmClear = async () => {
         trashItems.value = []
         selectedItems.value = []
         ElMessage.success('回收站已清空')
+        clearDialogVisible.value = false
     } catch (error) {
         if (error !== 'cancel') {
             ElMessage.error('清空失败')

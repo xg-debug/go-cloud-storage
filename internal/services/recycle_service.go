@@ -53,14 +53,13 @@ func (s *recycleService) GetRecycleFiles(userId int) ([]map[string]interface{}, 
 			"fileId":      item.FileId,
 			"name":        item.Name,
 			"isDir":       item.IsDir,
-			"size":        item.Size / 1024, // 以KB为单位显示
+			"size_str":    item.SizeStr,
 			"deletedDate": item.DeletedAt.Format("2006-01-02 15:04:05"),
 			"expireDays":  int(item.ExpireAt.Sub(item.DeletedAt).Hours() / 24),
 		})
 	}
 
 	return res, nil
-
 }
 
 func (s *recycleService) DeleteOne(fileId string) error {

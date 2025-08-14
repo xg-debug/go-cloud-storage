@@ -20,12 +20,13 @@ type User struct {
 
 // File 文件模型
 type File struct {
-	Id            string `gorm:"type:varchar(40);primaryKey" json:"id"`  // UUID或OSS标识
-	UserId        int    `gorm:"not null" json:"user_id"`                // 用户ID
-	Name          string `gorm:"size:255;not null" json:"name"`          // 原始文件名
-	Size          int64  `gorm:"not null" json:"size"`                   // 字节大小
-	IsDir         bool   `gorm:"default:false;not null" json:"is_dir"`   // 是否为目录
-	FileExtension string `gorm:"size:20;not null" json:"file_extension"` // 文件扩展名
+	Id            string `gorm:"type:varchar(40);primaryKey" json:"id"`                     // UUID或OSS标识
+	UserId        int    `gorm:"not null" json:"user_id"`                                   // 用户ID
+	Name          string `gorm:"size:255;not null" json:"name"`                             // 原始文件名
+	Size          int64  `gorm:"not null" json:"size"`                                      // 字节大小
+	SizeStr       string `gorm:"column:size_str;type:varchar(20);not null" json:"size_str"` // 可读大小，如2.8MB
+	IsDir         bool   `gorm:"default:false;not null" json:"is_dir"`                      // 是否为目录
+	FileExtension string `gorm:"size:20;not null" json:"file_extension"`                    // 文件扩展名
 	FileURL       string `gorm:"column:file_url;not null" json:"file_url"`
 	ThumbnailURL  string `gorm:"column:thumbnail_url" json:"thumbnail_url"`
 

@@ -44,8 +44,8 @@ func (c *UploadController) Upload(ctx *gin.Context) {
 		return
 	}
 
-	// 保存到数据库
-	err = c.fileService.CreateFromFileInfo(fileInfo)
+	// 保存文件信息到数据库
+	err = c.fileService.CreateFileInfo(fileInfo)
 	if err != nil {
 		utils.Fail(ctx, http.StatusInternalServerError, "数据库保存上传文件元数据失败: "+err.Error())
 		return

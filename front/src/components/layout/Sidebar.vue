@@ -51,7 +51,7 @@
         >
           <el-menu-item index="/" class="menu-item">
             <el-icon><House /></el-icon>
-            <span>我的网盘</span>
+            <span>全部文件</span>
           </el-menu-item>
 
           <el-menu-item index="/recent" class="menu-item">
@@ -71,7 +71,7 @@
 
           <el-menu-item index="/shared" class="menu-item">
             <el-icon><Share /></el-icon>
-            <span>共享文件</span>
+              <span>我的分享</span>
           </el-menu-item>
 
           <el-menu-item index="/trash" class="menu-item">
