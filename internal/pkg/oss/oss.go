@@ -9,8 +9,9 @@ import (
 	"github.com/aliyun/alibabacloud-oss-go-sdk-v2/oss"
 	"github.com/aliyun/alibabacloud-oss-go-sdk-v2/oss/credentials"
 	"go-cloud-storage/internal/pkg/config"
-	"go-cloud-storage/utils"
+	"go-cloud-storage/internal/pkg/utils"
 	"io"
+	"mime/multipart"
 	"path/filepath"
 	"strings"
 	"time"
@@ -131,6 +132,66 @@ func (s *OSSService) generateObjectURL(objectKey string) string {
 	return fmt.Sprintf("https://%s.%s/%s", s.bucket, s.endpoint, objectKey)
 }
 
-// 下载OSS文件
+// 上传头像
+func (s *OSSService) UploadAvatarFromStream(ctx context.Context, r io.Reader, userId int, header *multipart.FileHeader) (string, error) {
+	// 限制文件大小
+	if header.Size > 5*1024*1024 {
+		return "", fmt.Errorf("头像大小不能超过5MB")
+	}
+	// 校验文件扩展名
+	ext := strings.ToLower(filepath.Ext(header.Filename))
+	if ext != ".jpg" && ext != ".jpeg" && ext != ".png" && ext != ".webp" {
+		return "", fmt.Errorf("不支持的头像格式")
+	}
+
+	// 固定路径，覆盖旧头像
+	avatarPath := fmt.Sprintf("avatars/%d%s", userId, ext)
+
+	// 读取文件数据
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return "", fmt.Errorf("读取头像失败: %w", err)
+	}
+	body := bytes.NewReader(data)
+	request := &oss.PutObjectRequest{
+		Bucket: oss.Ptr(s.bucket),
+		Key:    oss.Ptr(avatarPath),
+		Body:   body,
+	}
+
+	_, err = s.client.PutObject(ctx, request)
+	if err != nil {
+		return "", fmt.Errorf("上传头像失败: %w", err)
+	}
+
+	// 防缓存，加时间戳
+	avatarURL := fmt.Sprintf("https://%s.%s/%s?t=%d", s.bucket, s.endpoint, avatarPath, time.Now().Unix())
+
+	return avatarURL, nil
+}
+
+// DownloadFile 下载OSS文件
+func (s *OSSService) DownloadFile(ctx context.Context, objectKey string) (io.ReadCloser, error) {
+	request := &oss.GetObjectRequest{
+		Bucket: oss.Ptr(s.bucket),
+		Key:    oss.Ptr(objectKey),
+	}
+	resp, err := s.client.GetObject(ctx, request)
+	if err != nil {
+		return nil, fmt.Errorf("下载 OSS 文件失败: %w", err)
+	}
+	return resp.Body, nil
+}
 
 // 删除OSS文件
+func (s *OSSService) DeleteFile(ctx context.Context, objectKey string) error {
+	request := &oss.DeleteObjectRequest{
+		Bucket: oss.Ptr(s.bucket),
+		Key:    oss.Ptr(objectKey),
+	}
+	_, err := s.client.DeleteObject(ctx, request)
+	if err != nil {
+		return fmt.Errorf("删除 OSS 文件失败: %w", err)
+	}
+	return nil
+}

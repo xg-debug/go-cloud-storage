@@ -2,8 +2,8 @@ package controller
 
 import (
 	"go-cloud-storage/internal/models/dto"
+	"go-cloud-storage/internal/pkg/utils"
 	"go-cloud-storage/internal/services"
-	"go-cloud-storage/utils"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -39,7 +39,7 @@ func (c *UserController) GetProfile(ctx *gin.Context) {
 	utils.Success(ctx, profile)
 }
 
-// UpdateProfile 更新用户信息
+// UpdateProfile 更新用户信息：用户名、手机号
 func (c *UserController) UpdateProfile(ctx *gin.Context) {
 	var req UserInfoUpdate
 	if err := ctx.ShouldBindJSON(&req); err != nil {
@@ -69,4 +69,24 @@ func (c *UserController) UpdatePassword(ctx *gin.Context) {
 		return
 	}
 	utils.Success(ctx, gin.H{"message": "修改密码成功"})
+}
+
+// UpdateAvatar 更新头像
+func (c *UserController) UpdateAvatar(ctx *gin.Context) {
+	userId := ctx.GetInt("userId")
+
+	file, header, err := ctx.Request.FormFile("avatar")
+	if err != nil {
+		utils.Fail(ctx, http.StatusBadRequest, "获取头像失败")
+		return
+	}
+	defer file.Close()
+
+	avatarURL, err := c.userService.UploadAvatar(ctx, userId, file, header)
+	if err != nil {
+		utils.Fail(ctx, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	utils.Success(ctx, gin.H{"message": "上传成功", "avatar": avatarURL})
 }

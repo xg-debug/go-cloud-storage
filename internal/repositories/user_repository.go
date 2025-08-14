@@ -11,6 +11,7 @@ type UserRepository interface {
 	Update(user *models.User) error
 	EmailExists(email string) (bool, error)
 	GetUserInfoById(userId int) (*models.User, error)
+	UpdateAvatarURL(userId int, avatarURL string) error
 }
 
 type userRepo struct {
@@ -47,4 +48,8 @@ func (r *userRepo) GetUserInfoById(userId int) (*models.User, error) {
 	var user models.User
 	err := r.db.First(&user, userId).Error
 	return &user, err
+}
+
+func (r *userRepo) UpdateAvatarURL(userId int, avatarURL string) error {
+	return r.db.Model(&models.File{}).Where("user_id = ?", userId).Update("avatar", avatarURL).Error
 }

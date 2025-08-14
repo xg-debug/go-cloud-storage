@@ -2,8 +2,8 @@ package controller
 
 import (
 	"github.com/gin-gonic/gin"
+	"go-cloud-storage/internal/pkg/utils"
 	"go-cloud-storage/internal/services"
-	"go-cloud-storage/utils"
 	"net/http"
 	"strings"
 )

@@ -1,15 +1,18 @@
 package services
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
 	"go-cloud-storage/internal/models"
 	"go-cloud-storage/internal/models/vo"
+	"go-cloud-storage/internal/pkg/oss"
+	"go-cloud-storage/internal/pkg/utils"
 	"go-cloud-storage/internal/repositories"
-	"go-cloud-storage/utils"
 	"log"
 	"math/rand"
+	"mime/multipart"
 	"strings"
 	"time"
 )
@@ -20,15 +23,17 @@ type UserService interface {
 	GetProfile(userId int) (*vo.UserProfileResponse, error)
 	UpdateUserInfo(userId int, username, phone string) error
 	ChangePassword(userId int, oldPassword, newPassword string) error
+	UploadAvatar(ctx context.Context, userId int, file multipart.File, header *multipart.FileHeader) (string, error)
 }
 
 type userService struct {
-	userRepo repositories.UserRepository
-	fileRepo repositories.FileRepository
+	userRepo   repositories.UserRepository
+	fileRepo   repositories.FileRepository
+	ossService *oss.OSSService
 }
 
-func NewUserService(userRepo repositories.UserRepository, fileRepo repositories.FileRepository) UserService {
-	return &userService{userRepo: userRepo, fileRepo: fileRepo}
+func NewUserService(userRepo repositories.UserRepository, fileRepo repositories.FileRepository, aliyunOss *oss.OSSService) UserService {
+	return &userService{userRepo: userRepo, fileRepo: fileRepo, ossService: aliyunOss}
 }
 
 func (s *userService) AuthenticateUser(account, password string) (*models.User, error) {
@@ -134,6 +139,19 @@ func (s *userService) ChangePassword(userId int, oldPassword, newPassword string
 	}
 	user.Password = newPassword
 	return s.userRepo.Update(user)
+}
+
+func (s *userService) UploadAvatar(ctx context.Context, userId int, file multipart.File, header *multipart.FileHeader) (string, error) {
+	// 上传OSS
+	avatarURL, err := s.ossService.UploadAvatarFromStream(ctx, file, userId, header)
+	if err != nil {
+		return "", err
+	}
+	// 更新数据库
+	if err = s.userRepo.UpdateAvatarURL(userId, avatarURL); err != nil {
+		return "", fmt.Errorf("更新用户头像失败: %w", err)
+	}
+	return avatarURL, nil
 }
 
 // generateUsername 生成用户名

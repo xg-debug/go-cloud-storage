@@ -2,7 +2,7 @@ package middleware
 
 import (
 	"github.com/gin-gonic/gin"
-	"go-cloud-storage/utils"
+	"go-cloud-storage/internal/pkg/utils"
 	"net/http"
 	"strings"
 )

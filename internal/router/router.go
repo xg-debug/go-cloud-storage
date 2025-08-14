@@ -34,7 +34,7 @@ func SetUpRouter(db *gorm.DB, ossService *oss.OSSService) *gin.Engine {
 	recycleRepo := repositories.NewRecycleRepository(db)
 
 	// 初始化服务
-	userService := services.NewUserService(userRepo, fileRepo)
+	userService := services.NewUserService(userRepo, fileRepo, ossService)
 	shareService := services.NewShareService(shareRepo)
 	fileService := services.NewFileService(db, fileRepo)
 	recycleService := services.NewRecycleService(db, recycleRepo, fileRepo)

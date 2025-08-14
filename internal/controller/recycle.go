@@ -2,8 +2,8 @@ package controller
 
 import (
 	"go-cloud-storage/internal/models"
+	"go-cloud-storage/internal/pkg/utils"
 	"go-cloud-storage/internal/services"
-	"go-cloud-storage/utils"
 	"net/http"
 	"strconv"
 	"strings"

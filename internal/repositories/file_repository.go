@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"go-cloud-storage/internal/models"
-	"go-cloud-storage/utils"
+	"go-cloud-storage/internal/pkg/utils"
 	"gorm.io/gorm"
 	"time"
 )
