@@ -60,6 +60,7 @@ func SetUpRouter(db *gorm.DB, ossService *oss.OSSService) *gin.Engine {
 	{
 		user.PUT("/update", userCtrl.UpdateProfile)
 		user.PUT("/password", userCtrl.UpdatePassword)
+		user.POST("/avatar", userCtrl.UpdateAvatar)
 	}
 
 	file := ginServer.Group("file")

@@ -373,11 +373,10 @@ const handleAvatarChange = async (event) => {
     }
 
     try {
-        // 模拟API调用，实际项目中应该调用真实API
         const formData = new FormData()
         formData.append('avatar', file)
         const res = await uploadAvatar(formData)
-        const avatarUrl = res.data.avatarUrl
+        const avatarUrl = res.avatar
         // 更新本地用户信息
         userInfo.value.avatar = avatarUrl
         store.commit('setUserInfo', { ...store.state.userInfo, avatar: avatarUrl })
@@ -394,7 +393,6 @@ const saveUserInfo = async () => {
     try {
         saving.value = true
         await updateProfile(userForm.value)
-
         // 更新store中的用户信息
         store.commit('setUserInfo', {
             ...user.value,
@@ -414,8 +412,6 @@ const changePassword = async () => {
     try {
         await passwordFormRef.value.validate()
         changingPassword.value = true
-
-        // 模拟API调用，实际项目中应该调用真实API
         await updatePassword({
             oldPassword: passwordForm.value.oldPassword,
             newPassword: passwordForm.value.newPassword
@@ -435,10 +431,6 @@ const changePassword = async () => {
     } finally {
         changingPassword.value = false
     }
-}
-
-const handleUpgrade = () => {
-    ElMessage.info('请联系客服升级存储空间')
 }
 
 // 初始化用户表单数据

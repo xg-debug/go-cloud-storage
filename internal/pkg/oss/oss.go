@@ -11,6 +11,7 @@ import (
 	"go-cloud-storage/internal/pkg/config"
 	"go-cloud-storage/internal/pkg/utils"
 	"io"
+	"log"
 	"mime/multipart"
 	"path/filepath"
 	"strings"
@@ -183,15 +184,46 @@ func (s *OSSService) DownloadFile(ctx context.Context, objectKey string) (io.Rea
 	return resp.Body, nil
 }
 
-// 删除OSS文件
+// DeleteFile 删除OSS文件
 func (s *OSSService) DeleteFile(ctx context.Context, objectKey string) error {
 	request := &oss.DeleteObjectRequest{
 		Bucket: oss.Ptr(s.bucket),
 		Key:    oss.Ptr(objectKey),
 	}
-	_, err := s.client.DeleteObject(ctx, request)
+	result, err := s.client.DeleteObject(ctx, request)
 	if err != nil {
 		return fmt.Errorf("删除 OSS 文件失败: %w", err)
 	}
+	// 打印删除对象的结果
+	log.Printf("delete objects result:%#v", result)
+	return nil
+}
+
+// DeleteFiles 删除指定的多个 OSS 文件。
+// 接收文件的 ObjectKey 列表，构造批量删除请求并调用 OSS 客户端执行删除。
+func (s *OSSService) DeleteFiles(ctx context.Context, objectKeys []string) error {
+	if len(objectKeys) == 0 {
+		return nil
+	}
+
+	var deleteObjects []oss.DeleteObject
+	for _, name := range objectKeys {
+		deleteObjects = append(deleteObjects, oss.DeleteObject{Key: oss.Ptr(name)})
+	}
+
+	// 创建删除多个对象的请求
+	request := &oss.DeleteMultipleObjectsRequest{
+		Bucket:  oss.Ptr(s.bucket),
+		Objects: deleteObjects, // 要删除的对象列表
+	}
+
+	// 执行删除多个对象的操作并处理结果
+	result, err := s.client.DeleteMultipleObjects(ctx, request)
+	if err != nil {
+		return fmt.Errorf("删除多个 OSS 文件失败: %v", err)
+	}
+
+	// 打印删除多个对象的结果
+	log.Printf("delete multiple objects result:%#v\n", result)
 	return nil
 }

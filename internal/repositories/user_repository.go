@@ -51,5 +51,5 @@ func (r *userRepo) GetUserInfoById(userId int) (*models.User, error) {
 }
 
 func (r *userRepo) UpdateAvatarURL(userId int, avatarURL string) error {
-	return r.db.Model(&models.File{}).Where("user_id = ?", userId).Update("avatar", avatarURL).Error
+	return r.db.Model(&models.User{}).Where("id = ?", userId).Update("avatar", avatarURL).Error
 }

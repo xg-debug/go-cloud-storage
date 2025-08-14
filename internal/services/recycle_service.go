@@ -64,6 +64,7 @@ func (s *recycleService) GetRecycleFiles(userId int) ([]map[string]interface{}, 
 }
 
 func (s *recycleService) DeleteOne(fileId string) error {
+
 	return s.db.Transaction(func(tx *gorm.DB) error {
 		if err := s.recycleRepo.DeleteOne(tx, fileId); err != nil {
 			return err
