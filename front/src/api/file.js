@@ -101,3 +101,12 @@ export const uploadFile = (formData, onUploadProgress) => {
         onUploadProgress
     })
 }
+
+// 获取最近文件
+export const getRecentFiles = (timeRange) => {
+    return request({
+        url: '/file/recent',
+        method: 'get',
+        params: { timeRange: timeRange }
+    })
+}

@@ -14,6 +14,8 @@ type FileRepository interface {
 	InitFolder(folder *models.File) error
 	GetFiles(ctx context.Context, userId int, parentId string, page int, pageSize int) ([]models.File, int64, error)
 
+	GetRecentFiles(since time.Time) ([]models.File, error)
+
 	CreateFile(file *models.File) error
 	GetFileById(id string) (*models.File, error)
 	GetFileByIds(fileIds []string) ([]models.File, error)
@@ -75,6 +77,14 @@ func (r *fileRepo) GetFiles(ctx context.Context, userId int, parentId string, pa
 	}
 
 	return files, total, nil
+}
+
+func (r *fileRepo) GetRecentFiles(since time.Time) ([]models.File, error) {
+	var files []models.File
+	if err := r.db.Where("is_dir = ? AND updated_at >= ?", false, since).Order("updated_at DESC").Find(&files).Error; err != nil {
+		return nil, err
+	}
+	return files, nil
 }
 
 // CreateFile 创建文件或文件夹：根据file.isDir

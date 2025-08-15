@@ -23,6 +23,19 @@ type FileItem struct {
 	ThumbnailURL string `json:"thumbnail_url"`
 }
 
+type RecentFile struct {
+	Date  string      `json:"date"`  // 例如 "2025-08-01"
+	Range string      `json:"range"` // today / week / month
+	Files []FileBrief `json:"files"`
+}
+
+type FileBrief struct {
+	Name     string `json:"name"`
+	IsDir    bool   `json:"is_dir"`
+	Modified string `json:"modified"`
+	SizeStr  string `json:"size_str"`
+}
+
 type FileService interface {
 	GetFiles(ctx context.Context, userId int, parentId string, page int, pageSize int) ([]FileItem, int64, error)
 	CreateFolder(userId int, folderName string, parentId string) (*models.File, error)
@@ -30,6 +43,7 @@ type FileService interface {
 	Rename(userId int, fileId, newName string) error
 	Delete(fileId string, userId int) error
 	CreateFileInfo(file *models.File) error
+	GetRecentFiles(timeRange string) ([]*RecentFile, error)
 }
 
 type fileService struct {
@@ -138,4 +152,53 @@ func (s *fileService) Delete(fileId string, userId int) error {
 
 func (s *fileService) CreateFileInfo(file *models.File) error {
 	return s.fileRepo.CreateFile(file)
+}
+
+func (s *fileService) GetRecentFiles(timeRange string) ([]*RecentFile, error) {
+	var since time.Time
+	now := time.Now()
+	switch timeRange {
+	case "today":
+		since = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	case "week":
+		weekday := int(now.Weekday())
+		if weekday == 0 {
+			weekday = 7
+		}
+		since = time.Date(now.Year(), now.Month(), now.Day()-weekday+1, 0, 0, 0, 0, now.Location())
+	case "month":
+		since = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+	default:
+		since = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()) // 默认读取今天的
+	}
+	files, err := s.fileRepo.GetRecentFiles(since)
+	if err != nil {
+		return nil, err
+	}
+
+	resultMap := make(map[string]*RecentFile)
+	// result 存储最终按日期分组的结果。
+	var result []*RecentFile
+
+	//将查询到的文件按照 日期分组，每一天生成一个 RecentFile 对象，包含该天的文件列表。
+	for _, f := range files {
+		day := f.UpdatedAt.Format("2006-01-02")
+		// 如果这个day还没有在 resultMap 中出现，就新建一个 RecentFile 并加入 result。
+		if _, exist := resultMap[day]; !exist {
+			resultMap[day] = &RecentFile{
+				Date:  day,
+				Range: timeRange,
+				Files: []FileBrief{},
+			}
+			result = append(result, resultMap[day])
+		}
+		// 对已经创建的RecentFile对象修改（返回值是指针类型）: 把文件信息封装成 FileBrief，追加到 Files 列表。
+		resultMap[day].Files = append(resultMap[day].Files, FileBrief{
+			Name:     f.Name,
+			IsDir:    f.IsDir,
+			Modified: f.UpdatedAt.Format("15:04"),
+			SizeStr:  f.SizeStr,
+		})
+	}
+	return result, nil
 }

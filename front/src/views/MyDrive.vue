@@ -7,7 +7,6 @@
                 :multiple="true"
                 :show-file-list="false"
                 :before-upload="beforeUpload"
-                :on-progress="handleUploadProgress"
                 :on-success="handleUploadSuccess"
                 :on-error="handleUploadError"
             >

@@ -74,6 +74,7 @@ func SetUpRouter(db *gorm.DB, ossService *oss.OSSService) *gin.Engine {
 		file.POST("/move")
 		file.GET("/info")
 		file.GET("/preview")
+		file.GET("/recent", fileCtrl.GetRecentFiles)
 	}
 
 	shareGroup := ginServer.Group("/share")

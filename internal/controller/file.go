@@ -117,3 +117,13 @@ func (c *FileController) Delete(ctx *gin.Context) {
 	}
 	utils.Success(ctx, gin.H{"message": "删除成功"})
 }
+
+func (c *FileController) GetRecentFiles(ctx *gin.Context) {
+	timeRange := ctx.Query("timeRange")
+	resultMap, err := c.fileService.GetRecentFiles(timeRange)
+	if err != nil {
+		utils.Fail(ctx, http.StatusInternalServerError, err.Error())
+		return
+	}
+	utils.Success(ctx, resultMap)
+}

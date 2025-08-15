@@ -74,7 +74,7 @@
               <span>我的分享</span>
           </el-menu-item>
 
-          <el-menu-item index="/trash" class="menu-item">
+          <el-menu-item index="/recycle" class="menu-item">
             <el-icon><Delete /></el-icon>
             <span>回收站</span>
           </el-menu-item>
