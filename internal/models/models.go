@@ -44,23 +44,20 @@ type File struct {
 // Favorite 收藏夹模型
 type Favorite struct {
 	Id        int       `gorm:"primaryKey;autoIncrement" json:"id"`
-	UserId    int       `gorm:"not null;index:idx_user_file,unique" json:"user_id"`
-	FileId    string    `gorm:"type:varchar(40);not null;index:idx_user_file,unique" json:"file_id"`
+	UserId    int       `gorm:"not null" json:"user_id"`
+	FileId    string    `gorm:"type:varchar(40);not null" json:"file_id"`
 	CreatedAt time.Time `gorm:"autoCreateTime" json:"created_at"`
 }
 
-// ShareRecord 文件分享模型
-type ShareRecord struct {
-	Id         int       `gorm:"primaryKey"`
-	OwnerID    int       `gorm:"column:owner_id"`    // 分享者ID（int）
-	TargetID   string    `gorm:"column:target_id"`   // 文件/文件夹ID（varchar(40)）
-	SharedType string    `gorm:"column:shared_type"` // "FILE" 或 "FOLDER"
-	SharedTo   string    `gorm:"column:shared_to"`   // 被分享者标识
-	ShareLink  string    `gorm:"column:share_link"`  // 共享链接
-	Password   string    `gorm:"column:password"`    // 访问密码
-	Permission string    `gorm:"column:permissions"` // 权限集合
-	ExpiresAt  time.Time `gorm:"column:expires_at"`  // 过期时间
-	CreatedAt  time.Time `gorm:"column:created_at"`
+// Share 分享表
+type Share struct {
+	Id             int        `gorm:"primaryKey;autoIncrement" json:"id"`
+	UserId         int        `gorm:"not null" json:"user_id"`                           // 分享者ID
+	FileId         string     `gorm:"type:varchar(40);not null" json:"file_id"`          // 分享的文件/文件夹
+	ShareToken     string     `gorm:"type:varchar(100);not null" json:"share_token"`     // 分享标识
+	ExtractionCode *string    `gorm:"type:varchar(20)" json:"extraction_code,omitempty"` // 提取码，可为空
+	ExpireTime     *time.Time `gorm:"type:timestamp" json:"expire_time,omitempty"`       // 过期时间，可为空
+	CreatedAt      time.Time  `gorm:"autoCreateTime" json:"created_at"`
 }
 
 // RecycleBin 回收站模型

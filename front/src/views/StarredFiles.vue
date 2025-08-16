@@ -3,57 +3,39 @@
         <!-- 顶部搜索栏 -->
         <div class="header">
             <h2>⭐ 我的收藏</h2>
-            <el-input
-                    v-model="searchQuery"
-                    placeholder="搜索收藏内容"
-                    clearable
-                    class="search-box"
-            >
-                <template #prefix>
-                    <el-icon>
-                        <Search/>
-                    </el-icon>
-                </template>
-            </el-input>
         </div>
 
         <el-divider/>
 
         <!-- 收藏列表 -->
         <el-table
-                :data="paginatedStarred"
-                v-loading="loading"
-                style="width: 100%"
-                empty-text="暂无收藏内容"
-                stripe
-                border
+            :data="starredItems"
+            v-loading="loading"
+            style="width: 100%"
+            empty-text="暂无收藏内容"
+            stripe
+            border
         >
-            <el-table-column label="名称" min-width="250">
+            <el-table-column label="名称">
                 <template #default="{ row }">
                     <div class="file-name-cell">
-                        <el-icon :color="row.type === 'folder' ? '#FFB800' : '#3a86ff'">
-                            <component :is="row.type === 'folder' ? Folder : Document"/>
+                        <el-icon :color="row.is_dir ? '#FFB800' : '#3a86ff'">
+                            <component :is="row.is_dir ? Folder : Document"/>
                         </el-icon>
                         <span>{{ row.name }}</span>
                     </div>
                 </template>
             </el-table-column>
 
-            <el-table-column prop="path" label="所在路径" min-width="200"/>
-            <el-table-column prop="starredDate" label="收藏时间" width="160"/>
-            <el-table-column label="操作" width="200">
+            <el-table-column prop="path" label="所在目录"/>
+            <el-table-column prop="size_str" label="大小" width="120" />
+            <el-table-column prop="created_at" label="收藏时间" width="180"/>
+            <el-table-column label="操作" width="320">
                 <template #default="{ row }">
-                    <el-button type="primary" text size="small" @click="handleOpen(row)">
-                        打开
-                    </el-button>
-                    <el-button
-                            type="danger"
-                            text
-                            size="small"
-                            @click="handleUnstar(row)"
-                    >
-                        取消收藏
-                    </el-button>
+                    <el-button size="small" type="primary" @click="openFile(row)">打开</el-button>
+                    <el-button size="small" @click="downloadFile(row)" :disabled="row.is_dir">下载</el-button>
+                    <el-button size="small" type="danger" @click="unfavorite(row)">取消收藏</el-button>
+                    <el-button size="small" @click="locateFile(row)">定位</el-button>
                 </template>
             </el-table-column>
         </el-table>
@@ -61,99 +43,92 @@
         <!-- 分页器 -->
         <div class="pagination">
             <el-pagination
-                    background
-                    layout="prev, pager, next"
-                    :total="filteredStarred.length"
-                    :page-size="pageSize"
-                    v-model:current-page="currentPage"
-                    hide-on-single-page
+                background
+                layout="prev, pager, next"
+                :total="totalCount"
+                :page-size="pageSize"
+                v-model:current-page="currentPage"
+                @current-change="onPageChange"
+                hide-on-single-page
             />
         </div>
     </div>
 </template>
 
 <script setup>
-import {computed, ref} from 'vue'
-import {Document, Folder, Search} from '@element-plus/icons-vue'
+import { ref, onMounted } from 'vue'
+import { Document, Folder, Search } from '@element-plus/icons-vue'
+import { getFavorites } from '@/api/favorite'
 
-// 模拟加载状态
+// 加载状态
 const loading = ref(false)
 
-// 搜索关键词
-const searchQuery = ref('')
+// 收藏列表
+const starredItems = ref([])
+const totalCount = ref(0)
 
-// 当前分页信息
+// 分页参数
 const currentPage = ref(1)
-const pageSize = 5
+const pageSize = 10
 
-// 假数据（后期可替换）
-const starredItems = ref([
-    {
-        id: 1,
-        name: '产品设计文档.pdf',
-        type: 'file',
-        path: '/设计/产品文档',
-        starredDate: '2025-08-05'
-    },
-    {
-        id: 2,
-        name: '需求分析文件夹',
-        type: 'folder',
-        path: '/项目资料',
-        starredDate: '2025-08-03'
-    },
-    {
-        id: 3,
-        name: '总结报告.docx',
-        type: 'file',
-        path: '/工作总结',
-        starredDate: '2025-07-29'
-    },
-    {
-        id: 4,
-        name: '用户调研',
-        type: 'folder',
-        path: '/调研',
-        starredDate: '2025-07-25'
-    },
-    {
-        id: 5,
-        name: '系统架构图.png',
-        type: 'file',
-        path: '/技术资料',
-        starredDate: '2025-07-20'
-    },
-    {
-        id: 6,
-        name: '开发日志',
-        type: 'folder',
-        path: '/开发',
-        starredDate: '2025-07-18'
+// 获取收藏列表
+const fetchFavorites = async () => {
+    loading.value = true
+    try {
+        const res = await getFavorites({ page: currentPage.value, pageSize })
+        starredItems.value = res.favoriteList
+        totalCount.value = res.total
+    } catch (err) {
+        console.error('获取收藏列表失败', err)
+    } finally {
+        loading.value = false
     }
-])
-
-// 搜索过滤
-const filteredStarred = computed(() => {
-    return starredItems.value.filter((item) =>
-        item.name.toLowerCase().includes(searchQuery.value.toLowerCase())
-    )
-})
-
-// 当前页数据
-const paginatedStarred = computed(() => {
-    const start = (currentPage.value - 1) * pageSize
-    return filteredStarred.value.slice(start, start + pageSize)
-})
-
-// 操作：打开文件夹或文件
-const handleOpen = (item) => {
-    console.log('打开项目：', item)
-    // 可跳转至对应目录或预览文件
 }
 
-// 操作：取消收藏
-const handleUnstar = (item) => {
-    starredItems.value = starredItems.value.filter((i) => i.id !== item.id)
+// 页码变化回调
+const onPageChange = (page) => {
+    currentPage.value = page
+    fetchFavorites()
+}
+
+// 页面加载时获取
+onMounted(fetchFavorites)
+
+// 操作方法
+const openFile = (row) => {
+    if (row.is_dir) {
+        // 跳转到目录页面
+        router.push({ name: 'FileList', query: { parentId: row.id } })
+    } else {
+        // 文件预览，可以在新窗口打开或者使用内置预览组件
+        window.open(row.fileURL, '_blank')
+    }
+}
+
+const downloadFile = (row) => {
+    if (!row.is_dir && row.fileURL) {
+        const a = document.createElement('a')
+        a.href = row.fileURL
+        a.download = row.name
+        a.click()
+    }
+}
+
+const unfavorite = async (row) => {
+    try {
+        await cancelFavorite(row.id)
+        starredItems.value = starredItems.value.filter(i => i.id !== row.id)
+    } catch (err) {
+        console.error('取消收藏失败', err)
+    }
+}
+
+const locateFile = (row) => {
+    // 跳转到所在目录，并传 fileId 用于高亮
+    router.push({
+        name: 'FileList',
+        query: { parentId: row.parentId, highlightFileId: row.id }
+    })
 }
 </script>
 
@@ -165,8 +140,7 @@ const handleUnstar = (item) => {
     box-shadow: 0 8px 20px rgb(0 0 0 / 0.06);
     height: 100%;
     display: flex;
-    flex-direction: column; /* 关键：让子元素垂直排列 */
-    overflow-y: auto;
+    flex-direction: column;
 }
 
 .header {
@@ -191,18 +165,19 @@ const handleUnstar = (item) => {
     align-items: center;
     gap: 8px;
 }
+
 .el-table {
-    flex: 1 1 auto; /* 表格占据剩余空间 */
+    flex: 1 1 auto;
     overflow: auto;
 }
+
 .pagination {
     position: sticky;
     bottom: 0;
-    background: #fff; /* 避免覆盖时透明 */
+    background: #fff;
     padding: 10px 0;
     display: flex;
     justify-content: center;
     border-top: 1px solid #f0f0f0;
 }
 </style>
-  

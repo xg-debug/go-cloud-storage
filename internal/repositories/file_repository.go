@@ -31,7 +31,6 @@ type FileRepository interface {
 	MarkAsNotDeleted(db *gorm.DB, fileIds []string, userId *int) error
 
 	CheckDuplicateName(userId int, parentId, name string) (bool, error)
-	GetFilePath(userId int, fileId string) (string, error)
 	RestoreFolder(folderId string) error
 
 	CreateFolder(userId int, folderName string, parentId string) (*models.File, error)
@@ -161,14 +160,6 @@ func (r *fileRepo) CheckDuplicateName(userId int, parentId, name string) (bool, 
 		Where("user_id = ? AND parent_id = ? AND name = ? AND is_deleted = ?", userId, parentId, name, false).
 		Count(&count).Error
 	return count > 0, err
-}
-
-// GetFilePath 获取文件完整路径
-func (r *fileRepo) GetFilePath(userId int, fileId string) (string, error) {
-	// 使用递归CTE查询完整路径（MySQL 8.0+ / PostgreSQL）
-	var path string
-	// 实现递归查询逻辑...
-	return path, nil
 }
 
 func (r *fileRepo) RestoreFolder(folderId string) error {

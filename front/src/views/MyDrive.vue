@@ -68,8 +68,9 @@
                     </el-button>
                     <template #dropdown>
                         <el-dropdown-menu>
-                            <el-dropdown-item command="rename">重命名</el-dropdown-item>
                             <el-dropdown-item command="delete">删除</el-dropdown-item>
+                            <el-dropdown-item command="rename">重命名</el-dropdown-item>
+                            <el-dropdown-item command="star">收藏</el-dropdown-item>
                             <el-dropdown-item command="share">分享</el-dropdown-item>
                             <el-dropdown-item command="download">下载</el-dropdown-item>
                         </el-dropdown-menu>
@@ -209,6 +210,7 @@ import {
     Document
 } from '@element-plus/icons-vue'
 import { useStore } from 'vuex'
+import {addFavorite} from "@/api/favorite";
 
 const store = useStore()
 const viewMode = ref('grid')
@@ -429,8 +431,14 @@ const onFileItemEnter = (id) => {
 const handleGridMenuCommand = (item, command) => {
     if (command === 'rename') handleRename(item)
     else if (command === 'delete') openDeleteDialog(item)
+    else if (command === 'star') handleStar(item)
     else if (command === 'share') handleShare(item)
     else if (command === 'download') handleDownload(item)
+}
+
+const handleStar = (item) => {
+    addFavorite(item.id)
+    ElMessage.success('收藏成功')
 }
 
 const handleShare = (item) => {

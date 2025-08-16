@@ -101,20 +101,10 @@ const storageColor = computed(() => {
       : '#10b981'
 })
 
-const quickTags = ref([
-  { id: 1, name: '工作文档', type: '' },
-  { id: 2, name: '项目资料', type: 'success' },
-  { id: 3, name: '个人照片', type: 'warning' },
-  { id: 4, name: '学习资料', type: 'danger' }
-])
-
 const handleUpgrade = () => {
   console.log('升级存储空间')
 }
 
-const handleTagClick = (tag) => {
-  console.log('跳转到标签:', tag.name)
-}
 </script>
 
 <style scoped>

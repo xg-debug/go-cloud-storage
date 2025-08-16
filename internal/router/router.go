@@ -29,22 +29,22 @@ func SetUpRouter(db *gorm.DB, ossService *oss.OSSService) *gin.Engine {
 
 	// 初始化仓库
 	userRepo := repositories.NewUserRepository(db)
-	shareRepo := repositories.NewShareRepository(db)
 	fileRepo := repositories.NewFileRepository(db)
 	recycleRepo := repositories.NewRecycleRepository(db)
+	favoriteRepo := repositories.NewFavoriteRepository(db)
 
 	// 初始化服务
 	userService := services.NewUserService(userRepo, fileRepo, ossService)
-	shareService := services.NewShareService(shareRepo)
 	fileService := services.NewFileService(db, fileRepo)
 	recycleService := services.NewRecycleService(db, recycleRepo, fileRepo)
+	favoriteService := services.NewFavoriteService(favoriteRepo, fileService)
 
 	loginCtrl := controller.NewLoginController(userService)
-	shareCtrl := controller.NewShareController(shareService)
 	fileCtrl := controller.NewFileController(fileService)
 	userCtrl := controller.NewUserController(userService)
 	uploadCtrl := controller.NewUploadController(ossService, fileService)
 	recycleCtrl := controller.NewRecycleController(recycleService)
+	favoriteCtrl := controller.NewFavoriteController(favoriteService)
 
 	ginServer.POST("/login", loginCtrl.Login)
 	ginServer.POST("/register", loginCtrl.Register)
@@ -72,17 +72,16 @@ func SetUpRouter(db *gorm.DB, ossService *oss.OSSService) *gin.Engine {
 		file.DELETE("/:fileId", fileCtrl.Delete)
 		file.POST("/rename", fileCtrl.Rename)
 		file.POST("/move")
-		file.GET("/info")
 		file.GET("/preview")
 		file.GET("/recent", fileCtrl.GetRecentFiles)
 	}
 
-	shareGroup := ginServer.Group("/share")
-	shareGroup.Use(middleware.JWTAuthMiddleware())
+	favorite := ginServer.Group("favorite")
+	favorite.Use(middleware.JWTAuthMiddleware())
 	{
-		shareGroup.POST("/create", shareCtrl.CreateShare)
-		shareGroup.GET("/list", shareCtrl.ListUserShares)
-		shareGroup.DELETE("/:id", shareCtrl.ListUserShares)
+		favorite.GET("", favoriteCtrl.GetFavoriteList)
+		favorite.POST("/:fileId", favoriteCtrl.Favorite)
+		favorite.DELETE("/:fileId", favoriteCtrl.UnFavorite)
 	}
 
 	recycle := ginServer.Group("recycle")

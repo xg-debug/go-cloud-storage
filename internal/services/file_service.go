@@ -8,6 +8,7 @@ import (
 	"go-cloud-storage/internal/pkg/utils"
 	"go-cloud-storage/internal/repositories"
 	"gorm.io/gorm"
+	"strings"
 	"time"
 )
 
@@ -37,6 +38,7 @@ type FileBrief struct {
 }
 
 type FileService interface {
+	GetFileById(fileId string) (*models.File, error)
 	GetFiles(ctx context.Context, userId int, parentId string, page int, pageSize int) ([]FileItem, int64, error)
 	CreateFolder(userId int, folderName string, parentId string) (*models.File, error)
 	UploadFile(fileName, extension string, size int64, parentId string) (*models.File, error)
@@ -44,6 +46,7 @@ type FileService interface {
 	Delete(fileId string, userId int) error
 	CreateFileInfo(file *models.File) error
 	GetRecentFiles(timeRange string) ([]*RecentFile, error)
+	GetFilePath(file *models.File) (string, error)
 }
 
 type fileService struct {
@@ -53,6 +56,10 @@ type fileService struct {
 
 func NewFileService(db *gorm.DB, repo repositories.FileRepository) FileService {
 	return &fileService{db: db, fileRepo: repo}
+}
+
+func (s *fileService) GetFileById(fileId string) (*models.File, error) {
+	return s.fileRepo.GetFileById(fileId)
 }
 
 func (s *fileService) GetFiles(ctx context.Context, userId int, parentId string, page int, pageSize int) ([]FileItem, int64, error) {
@@ -201,4 +208,37 @@ func (s *fileService) GetRecentFiles(timeRange string) ([]*RecentFile, error) {
 		})
 	}
 	return result, nil
+}
+
+func (s *fileService) GetFilePath(file *models.File) (string, error) {
+	if file.ParentId.Valid == false || file.ParentId.String == "" {
+		// 已经是根目录
+		return "/" + file.Name, nil
+	}
+
+	pathParts := []string{}
+	currentParentId := file.ParentId.String
+	for currentParentId != "" {
+		parent, err := s.fileRepo.GetFileById(currentParentId)
+		if err != nil {
+			return "", err
+		}
+
+		// 跳过根目录(name = "/")
+		if parent.Name != "/" {
+			pathParts = append(pathParts, parent.Name)
+		}
+
+		if parent.ParentId.Valid && parent.ParentId.String != "" { // 父级的 parentId 不为 NULL
+			currentParentId = parent.ParentId.String
+		} else {
+			break
+		}
+	}
+	// 反转 pathParts
+	for i, j := 0, len(pathParts)-1; i < j; i, j = i+1, j-1 {
+		pathParts[i], pathParts[j] = pathParts[j], pathParts[i]
+	}
+
+	return "/" + strings.Join(pathParts, "/"), nil
 }
