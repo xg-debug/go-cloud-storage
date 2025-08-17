@@ -1,58 +1,104 @@
 <template>
-    <div class="recent-container">
-        <div class="header">
-            <h2>最近文件</h2>
-            <el-select v-model="timeRange" placeholder="时间范围" size="small" style="width: 120px">
-                <el-option label="今天" value="today"/>
-                <el-option label="本周" value="week"/>
-                <el-option label="本月" value="month"/>
-            </el-select>
+    <div class="recent-files">
+        <!-- 页面头部 -->
+        <div class="page-header">
+            <div class="header-content">
+                <div class="header-info">
+                    <div class="header-icon">
+                        <el-icon :size="28" color="#ffffff">
+                            <Clock />
+                        </el-icon>
+                    </div>
+                    <div class="header-text">
+                        <h1 class="page-title">最近文件</h1>
+                        <p class="page-description">查看您最近访问的文件</p>
+                    </div>
+                </div>
+                <div class="header-actions">
+                    <el-select v-model="timeRange" placeholder="时间范围" class="time-select">
+                        <el-option label="今天" value="today"/>
+                        <el-option label="本周" value="week"/>
+                        <el-option label="本月" value="month"/>
+                    </el-select>
+                </div>
+            </div>
         </div>
 
-        <el-divider/>
+        <!-- 文件内容 -->
+        <div class="file-content">
+            <!-- 空状态 -->
+            <div v-if="filteredFiles.length === 0" class="empty-state">
+                <div class="empty-icon">
+                    <el-icon :size="80" color="#c0c4cc">
+                        <Clock />
+                    </el-icon>
+                </div>
+                <h3>暂无最近文件</h3>
+                <p>您在所选时间范围内没有访问任何文件</p>
+            </div>
 
-        <el-empty v-if="filteredFiles.length === 0" description="暂无最近文件"/>
-
-        <el-timeline v-else>
-            <el-timeline-item
-                    v-for="(day, index) in filteredFiles"
-                    :key="index"
-                    :timestamp="day.date"
-                    placement="top"
-            >
-                <el-table :data="day.files" style="width: 100%" :fit="true" border>
-                    <el-table-column prop="name" label="文件名" min-width="240">
-                        <template #default="{ row }">
-                            <div class="file-name-cell">
-                                <el-icon :color="getIconColor(row)">
-                                    <component :is="getIconComponent(row)"/>
-                                </el-icon>
-                                <span>{{ row.name }}</span>
+            <!-- 时间线视图 -->
+            <div v-else class="timeline-container">
+                <el-timeline class="file-timeline">
+                    <el-timeline-item
+                        v-for="(day, index) in filteredFiles"
+                        :key="index"
+                        :timestamp="day.date"
+                        placement="top"
+                        size="large"
+                        type="primary"
+                    >
+                        <div class="day-files">
+                            <!-- <div class="day-header">
+                                <span class="file-count">{{ day.files.length }} 个文件</span>
+                            </div> -->
+                            
+                            <div class="files-grid">
+                                <div 
+                                    class="file-card" 
+                                    v-for="file in day.files" 
+                                    :key="file.id"
+                                >
+                                    <!-- 文件图标 -->
+                                    <div class="file-icon">
+                                        <el-icon :size="32" :color="getIconColor(file)">
+                                            <component :is="getIconComponent(file)"/>
+                                        </el-icon>
+                                    </div>
+                                    
+                                    <!-- 文件信息 -->
+                                    <div class="file-info">
+                                        <div class="file-name" :title="file.name">{{ file.name }}</div>
+                                        <div class="file-meta">
+                                            <span class="file-size">{{ file.size_str }}</span>
+                                            <span class="file-time">{{ file.modified }}</span>
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- 操作按钮 -->
+                                    <div class="file-actions">
+                                        <el-button size="small" type="primary" link @click="handleOpen(file)">
+                                            <el-icon><View /></el-icon>
+                                            打开
+                                        </el-button>
+                                        <el-button size="small" type="primary" link @click="handleLocate(file)">
+                                            <el-icon><Location /></el-icon>
+                                            定位
+                                        </el-button>
+                                    </div>
+                                </div>
                             </div>
-                        </template>
-                    </el-table-column>
-
-                    <el-table-column prop="modified" label="修改时间" min-width="100"/>
-                    <el-table-column label="大小" min-width="100">
-                        <template #default="{ row }">
-                            {{ row.size_str }}
-                        </template>
-                    </el-table-column>
-                    <el-table-column label="操作" min-width="120">
-                        <template #default="{ row }">
-                            <el-button size="small" type="text" @click="handleOpen(row)">打开</el-button>
-                            <el-button size="small" type="text" @click="handleLocate(row)">定位</el-button>
-                        </template>
-                    </el-table-column>
-                </el-table>
-            </el-timeline-item>
-        </el-timeline>
+                        </div>
+                    </el-timeline-item>
+                </el-timeline>
+            </div>
+        </div>
     </div>
 </template>
 
 <script setup>
 import {computed, ref, watch, onMounted} from 'vue'
-import {Document, Folder} from '@element-plus/icons-vue'
+import {Document, Folder, Clock, View, Location} from '@element-plus/icons-vue'
 import {getRecentFiles} from "@/api/file";
 
 // 时间范围
@@ -115,60 +161,269 @@ function handleLocate(file) {
 </script>
 
 <style scoped>
-.recent-container {
-    padding: 24px;
-    background: #fff;
-    border-radius: 10px;
-    box-shadow: 0 8px 20px rgb(0 0 0 / 0.06);
-    height: 100%;
-    overflow-y: auto;
+.recent-files {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: #f8fafc;
 }
 
-.header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 16px;
+/* 页面头部 */
+.page-header {
+  background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
+  color: white;
+  padding: 24px;
 }
 
-.header h2 {
-    margin: 0;
-    font-size: 20px;
-    font-weight: 600;
-    color: #333;
+.header-content {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
 }
 
-.file-name-cell {
-    display: flex;
-    align-items: center;
-    gap: 8px;
+.header-info {
+  display: flex;
+  align-items: center;
+  gap: 16px;
 }
 
-.el-icon {
-    font-size: 18px;
+.header-icon {
+  width: 48px;
+  height: 48px;
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
-.el-timeline {
-    padding-left: 20px;
+.page-title {
+  font-size: 24px;
+  font-weight: 600;
+  margin: 0 0 4px 0;
 }
 
-.el-table {
-    margin-top: 16px;
-    font-size: 14px;
-    border-radius: 8px;
-    overflow: hidden;
+.page-description {
+  font-size: 14px;
+  opacity: 0.9;
+  margin: 0;
 }
 
-/* 按钮样式美化 */
-:deep(.el-table__cell .cell) {
-    display: flex;
-    gap: 6px;
-    align-items: center;
+.header-actions {
+  display: flex;
+  align-items: center;
 }
 
-.el-button {
-    padding: 0 6px;
-    font-size: 13px;
+.time-select {
+  width: 140px;
+}
+
+.time-select :deep(.el-input__wrapper) {
+  background: rgba(255, 255, 255, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  color: white;
+}
+
+.time-select :deep(.el-input__inner) {
+  color: white;
+}
+
+.time-select :deep(.el-select__caret) {
+  color: white;
+}
+
+/* 文件内容 */
+.file-content {
+  flex: 1;
+  background: white;
+  overflow: auto;
+}
+
+/* 空状态 */
+.empty-state {
+  padding: 80px 24px;
+  text-align: center;
+  color: #909399;
+}
+
+.empty-icon {
+  margin-bottom: 24px;
+}
+
+.empty-state h3 {
+  font-size: 20px;
+  color: #4a5568;
+  margin: 0 0 12px 0;
+}
+
+.empty-state p {
+  margin: 0;
+  font-size: 14px;
+}
+
+/* 时间线容器 */
+.timeline-container {
+  padding: 24px 24px 48px 24px;
+}
+
+.file-timeline {
+  padding-left: 0;
+}
+
+.file-timeline :deep(.el-timeline-item__wrapper) {
+  padding-left: 32px;
+  margin-bottom: 24px;
+}
+
+.file-timeline :deep(.el-timeline-item:last-child .el-timeline-item__wrapper) {
+  margin-bottom: 48px;
+}
+
+.file-timeline :deep(.el-timeline-item__tail) {
+  border-left: 2px solid #e2e8f0;
+}
+
+.file-timeline :deep(.el-timeline-item__node) {
+  background: #8b5cf6;
+  border-color: #8b5cf6;
+  width: 16px;
+  height: 16px;
+}
+
+.file-timeline :deep(.el-timeline-item__timestamp) {
+  font-size: 16px;
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 16px;
+}
+
+/* 每日文件 */
+.day-files {
+  background: white;
+  border-radius: 12px;
+  padding: 20px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  border: 1px solid #e2e8f0;
+}
+
+.day-header {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.file-count {
+  font-size: 12px;
+  color: #6b7280;
+  background: #f3f4f6;
+  padding: 4px 8px;
+  border-radius: 12px;
+}
+
+/* 文件网格 */
+.files-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.file-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.file-card:hover {
+  border-color: #8b5cf6;
+  box-shadow: 0 4px 12px rgba(139, 92, 246, 0.15);
+  transform: translateY(-1px);
+}
+
+.file-icon {
+  flex-shrink: 0;
+  width: 48px;
+  height: 48px;
+  background: #f9fafb;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.file-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.file-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: #1f2937;
+  margin-bottom: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-meta {
+  display: flex;
+  gap: 12px;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.file-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.file-actions .el-button {
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+  .page-header {
+    padding: 20px 16px;
+  }
+  
+  .header-content {
+    flex-direction: column;
+    gap: 16px;
+    text-align: center;
+  }
+  
+  .timeline-container {
+    padding: 16px;
+  }
+  
+  .day-files {
+    padding: 16px;
+  }
+  
+  .files-grid {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+  
+  .file-card {
+    padding: 10px;
+  }
+  
+  .file-actions {
+    flex-direction: column;
+    gap: 4px;
+  }
 }
 </style>
   

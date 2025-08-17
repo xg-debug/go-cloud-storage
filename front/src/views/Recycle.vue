@@ -1,114 +1,155 @@
 <template>
-    <div class="trash-container">
-        <div class="header">
-            <h2>回收站</h2>
-            <div class="actions">
-                <el-button
-                        type="danger"
-                        @click="openClearDialog"
-                        plain
-                        round
+    <div class="recycle-bin">
+        <!-- 页面头部 -->
+        <div class="page-header">
+            <div class="header-content">
+                <div class="header-info">
+                    <div class="header-icon">
+                        <el-icon :size="28" color="#ffffff">
+                            <Delete />
+                        </el-icon>
+                    </div>
+                    <div class="header-text">
+                        <h1 class="page-title">回收站</h1>
+                        <p class="page-description">已删除的文件将在此保留10天</p>
+                    </div>
+                </div>
+                <div class="header-stats">
+                    <div class="stat-item">
+                        <span class="stat-number">{{ trashItems.length }}</span>
+                        <span class="stat-label">文件数量</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-number">{{ selectedItems.length }}</span>
+                        <span class="stat-label">已选择</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 工具栏 -->
+        <div class="toolbar">
+            <div class="toolbar-left">
+                <span class="selection-info" v-if="selectedItems.length > 0">
+                    已选择 {{ selectedItems.length }} 个文件
+                </span>
+            </div>
+            <div class="toolbar-right">
+                <el-button 
+                    :icon="Refresh" 
+                    :disabled="selectedItems.length === 0"
+                    @click="handleRestore"
+                    type="success"
                 >
-                    <el-icon>
-                        <Delete/>
-                    </el-icon>
-                    清空回收站
+                    还原选中
                 </el-button>
-                <el-button
-                    type="danger"
+                <el-button 
+                    :icon="Delete" 
                     :disabled="selectedItems.length === 0"
                     @click="handleBatchDelete"
-                    plain
-                    round
+                    type="danger"
                 >
-                    <el-icon>
-                        <Delete/>
-                    </el-icon>
-                    批量删除
+                    彻底删除
                 </el-button>
-                <el-button
-                        :disabled="selectedItems.length === 0"
-                        @click="handleRestore"
-                        plain
-                        round
+                <el-button 
+                    :icon="Delete" 
+                    @click="openClearDialog"
+                    type="danger"
+                    plain
                 >
-                    <el-icon>
-                        <Refresh/>
-                    </el-icon>
-                    还原
+                    清空回收站
                 </el-button>
             </div>
         </div>
 
-        <el-divider/>
+        <!-- 文件内容 -->
+        <div class="file-content">
+            <!-- 空状态 -->
+            <div v-if="trashItems.length === 0" class="empty-state">
+                <div class="empty-icon">
+                    <el-icon :size="80" color="#c0c4cc">
+                        <Delete />
+                    </el-icon>
+                </div>
+                <h3>回收站为空</h3>
+                <p>删除的文件会出现在这里，并保留10天</p>
+            </div>
 
-        <el-table
-                :data="trashItems"
-                style="width: 100%"
-                @selection-change="handleSelectionChange"
-                stripe
-                border
-                :row-key="row => row.fileId"
-                empty-text="回收站空空如也"
-        >
-            <el-table-column type="selection" width="55"/>
+            <!-- 文件表格 -->
+            <div v-else class="table-container">
+                <el-table
+                    :data="trashItems"
+                    class="recycle-table"
+                    @selection-change="handleSelectionChange"
+                    :row-key="row => row.fileId"
+                    empty-text="回收站空空如也"
+                >
+                    <el-table-column type="selection" width="55" />
 
-            <el-table-column label="名称" min-width="160">
-                <template #default="{ row }">
-                    <div class="file-name-cell" title="点击打开">
-                        <el-icon
-                                :color="row.is_dir === true ? '#FFB800' : '#3a86ff'"
-                                class="file-icon"
-                        >
-                            <component :is="row.is_dir === true ? Folder : Document"/>
-                        </el-icon>
-                        <span class="file-name" @click="handleOpen(row)">{{ row.name }}</span>
-                    </div>
-                </template>
-            </el-table-column>
+                    <el-table-column width="60">
+                        <template #default="{ row }">
+                            <el-icon :size="20" :color="row.is_dir === true ? '#FFB800' : '#3a86ff'">
+                                <component :is="row.is_dir === true ? Folder : Document"/>
+                            </el-icon>
+                        </template>
+                    </el-table-column>
 
-            <el-table-column prop="size" label="大小" width="120" align="center">
-                <template #default="{ row }">
-                    {{ row.size_str }}
-                </template>
-            </el-table-column>
-            <el-table-column prop="deletedDate" label="删除时间" width="160" align="center">
-                <template #default="{ row }">
-                    {{ row.deletedDate }}
-                </template>
-            </el-table-column>
-            <el-table-column prop="expireDays" label="有效时间" width="160" align="center">
-                <template #default="{ row }">
-                    {{ row.expireDays }}天
-                </template>
-            </el-table-column>
-            <el-table-column label="操作" fixed="right" width="180" align="center">
-                <template #default="{ row }">
-                    <!-- 单个还原 -->
-                    <el-button
-                        size="small"
-                        type="primary"
-                        text
-                        @click="handleRestoreOne(row)"
-                        title="还原"
-                    >
-                        还原
-                    </el-button>
+                    <el-table-column label="名称" min-width="200" show-overflow-tooltip>
+                        <template #default="{ row }">
+                            <span class="file-name" @click="handleOpen(row)" :title="row.name">
+                                {{ row.name }}
+                            </span>
+                        </template>
+                    </el-table-column>
 
-                    <!-- 单个彻底删除 -->
-                    <el-button
-                        size="small"
-                        type="danger"
-                        text
-                        @click="openDeleteDialog(row)"
-                        title="彻底删除"
-                    >
-                        彻底删除
-                    </el-button>
-                </template>
-            </el-table-column>
+                    <el-table-column label="大小" width="120" align="center">
+                        <template #default="{ row }">
+                            <span class="file-size">{{ row.size_str }}</span>
+                        </template>
+                    </el-table-column>
 
-        </el-table>
+                    <el-table-column label="删除时间" width="180" align="center">
+                        <template #default="{ row }">
+                            <span class="delete-time">{{ row.deletedDate }}</span>
+                        </template>
+                    </el-table-column>
+
+                    <el-table-column label="剩余天数" width="120" align="center">
+                        <template #default="{ row }">
+                            <el-tag 
+                                :type="row.expireDays <= 3 ? 'danger' : row.expireDays <= 7 ? 'warning' : 'success'"
+                                size="small"
+                            >
+                                {{ row.expireDays }}天
+                            </el-tag>
+                        </template>
+                    </el-table-column>
+
+                    <el-table-column label="操作" fixed="right" width="180" align="center">
+                        <template #default="{ row }">
+                            <el-button
+                                size="small"
+                                type="success"
+                                link
+                                @click="handleRestoreOne(row)"
+                                :icon="Refresh"
+                            >
+                                还原
+                            </el-button>
+                            <el-button
+                                size="small"
+                                type="danger"
+                                link
+                                @click="openDeleteDialog(row)"
+                                :icon="Delete"
+                            >
+                                彻底删除
+                            </el-button>
+                        </template>
+                    </el-table-column>
+                </el-table>
+            </div>
+        </div>
 
         <!-- 清空回收站弹窗 -->
         <el-dialog
@@ -283,81 +324,218 @@ const handleDeleteDialogClose = () => {
 </script>
 
 <style scoped>
-.trash-container {
-    padding: 24px;
-    background: #fff;
-    border-radius: 10px;
-    box-shadow: 0 8px 20px rgb(0 0 0 / 0.06);
-    height: 100%;
-    overflow-y: auto;
+.recycle-bin {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: #f8fafc;
 }
 
-.header {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 20px;
-    gap: 12px;
+/* 页面头部 */
+.page-header {
+  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+  color: white;
+  padding: 24px;
 }
 
-.header h2 {
-    font-size: 26px;
-    font-weight: 700;
-    color: #2c3e50;
-    margin: 0;
+.header-content {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
 }
 
-.actions {
-    display: flex;
-    gap: 12px;
-    flex-wrap: wrap;
+.header-info {
+  display: flex;
+  align-items: center;
+  gap: 16px;
 }
 
-.file-name-cell {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    cursor: pointer;
-    user-select: none;
+.header-icon {
+  width: 48px;
+  height: 48px;
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
-.file-icon {
-    font-size: 20px;
+.page-title {
+  font-size: 24px;
+  font-weight: 600;
+  margin: 0 0 4px 0;
+}
+
+.page-description {
+  font-size: 14px;
+  opacity: 0.9;
+  margin: 0;
+}
+
+.header-stats {
+  display: flex;
+  gap: 32px;
+}
+
+.stat-item {
+  text-align: center;
+}
+
+.stat-number {
+  display: block;
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.stat-label {
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+/* 工具栏 */
+.toolbar {
+  background: white;
+  padding: 20px 24px;
+  border-bottom: 1px solid #e2e8f0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.toolbar-left {
+  display: flex;
+  align-items: center;
+}
+
+.selection-info {
+  font-size: 14px;
+  color: #6b7280;
+  font-weight: 500;
+}
+
+.toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* 文件内容 */
+.file-content {
+  flex: 1;
+  background: white;
+  overflow: auto;
+}
+
+/* 空状态 */
+.empty-state {
+  padding: 80px 24px;
+  text-align: center;
+  color: #909399;
+}
+
+.empty-icon {
+  margin-bottom: 24px;
+}
+
+.empty-state h3 {
+  font-size: 20px;
+  color: #4a5568;
+  margin: 0 0 12px 0;
+}
+
+.empty-state p {
+  margin: 0;
+  font-size: 14px;
+}
+
+/* 表格容器 */
+.table-container {
+  padding: 24px;
+}
+
+.recycle-table {
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+.recycle-table :deep(.el-table__header) {
+  background: #f8fafc;
+}
+
+.recycle-table :deep(.el-table__row:hover) {
+  background: #fef2f2;
 }
 
 .file-name {
-    font-weight: 600;
-    color: #409eff;
-    transition: color 0.25s ease;
+  font-weight: 500;
+  color: #1f2937;
+  cursor: pointer;
+  transition: color 0.2s;
 }
 
 .file-name:hover {
-    color: #1f63d6;
-    text-decoration: underline;
+  color: #ef4444;
+  text-decoration: underline;
 }
 
-.el-table th,
-.el-table td {
-    vertical-align: middle !important;
+.file-size {
+  font-size: 13px;
+  color: #6b7280;
 }
 
-@media (max-width: 768px) {
-    .header {
-        flex-direction: column;
-        align-items: flex-start;
-    }
-
-    .actions {
-        width: 100%;
-        justify-content: flex-start;
-    }
+.delete-time {
+  font-size: 13px;
+  color: #6b7280;
 }
 
+/* 对话框样式 */
 .delete-confirm-text {
-    text-align: center; /* 文字居中 */
-    font-size: 14px;
-    line-height: 1.8; /* 行高，保证两行间距合适 */
-    user-select: none;
+  text-align: center;
+  font-size: 14px;
+  line-height: 1.8;
+  user-select: none;
+}
+
+.delete-confirm-text strong {
+  color: #ef4444;
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+  .page-header {
+    padding: 20px 16px;
+  }
+  
+  .header-content {
+    flex-direction: column;
+    gap: 20px;
+    text-align: center;
+  }
+  
+  .header-stats {
+    gap: 24px;
+  }
+  
+  .toolbar {
+    padding: 16px;
+    flex-direction: column;
+    gap: 16px;
+    align-items: stretch;
+  }
+  
+  .toolbar-left,
+  .toolbar-right {
+    justify-content: center;
+  }
+  
+  .table-container {
+    padding: 16px;
+  }
+  
+  .recycle-table :deep(.el-table__cell) {
+    padding: 8px 4px;
+  }
 }
 </style>

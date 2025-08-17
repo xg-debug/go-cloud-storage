@@ -8,12 +8,12 @@
           升级
         </el-button>
       </div>
-      
+
       <div class="storage-progress">
-        <el-progress 
-          type="dashboard" 
-          :percentage="storagePercentage" 
-          :color="storageColor" 
+        <el-progress
+          type="dashboard"
+          :percentage="storagePercentage"
+          :color="storageColor"
           :width="80"
         >
           <template #default>
@@ -41,11 +41,11 @@
     <nav class="sidebar-menu">
       <div class="menu-section">
         <h4 class="section-title">主要功能</h4>
-        <el-menu 
-          active-text-color="#3b82f6" 
-          background-color="transparent" 
+        <el-menu
+          active-text-color="#3b82f6"
+          background-color="transparent"
           text-color="#64748b"
-          :default-active="activeMenu" 
+          :default-active="activeMenu"
           router
           class="menu-list"
         >
@@ -64,10 +64,28 @@
             <span>收藏夹</span>
           </el-menu-item>
 
-          <el-menu-item index="/file-category" class="menu-item">
-            <el-icon><FolderOpened /></el-icon>
-            <span>分类文件</span>
-          </el-menu-item>
+          <el-sub-menu index="file-category" class="menu-item">
+            <template #title>
+              <el-icon><FolderOpened /></el-icon>
+              <span>分类文件</span>
+            </template>
+            <el-menu-item index="/file/image" class="sub-menu-item">
+              <el-icon><Picture /></el-icon>
+              <span>相册</span>
+            </el-menu-item>
+            <el-menu-item index="/file/video" class="sub-menu-item">
+              <el-icon><VideoCamera /></el-icon>
+              <span>视频</span>
+            </el-menu-item>
+            <el-menu-item index="/file/audio" class="sub-menu-item">
+              <el-icon><Headset /></el-icon>
+              <span>音频</span>
+            </el-menu-item>
+            <el-menu-item index="/file/document" class="sub-menu-item">
+              <el-icon><Document /></el-icon>
+              <span>文档</span>
+            </el-menu-item>
+          </el-sub-menu>
 
           <el-menu-item index="/shared" class="menu-item">
             <el-icon><Share /></el-icon>
@@ -228,7 +246,8 @@ const handleUpgrade = () => {
   background: transparent;
 }
 
-.menu-item {
+/* 主菜单项样式 */
+.menu-list .el-menu-item {
   margin-bottom: 4px;
   border-radius: 12px;
   height: 48px;
@@ -236,20 +255,79 @@ const handleUpgrade = () => {
   transition: all 0.3s ease;
 }
 
-.menu-item:hover {
+.menu-list .el-menu-item:hover {
   background: #f1f5f9 !important;
   color: #3b82f6 !important;
 }
 
-.menu-item.is-active {
+.menu-list .el-menu-item.is-active {
   background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%) !important;
   color: white !important;
   box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3);
 }
 
-.menu-item .el-icon {
+.menu-list .el-menu-item .el-icon {
   font-size: 18px;
   margin-right: 12px;
+}
+
+/* 子菜单容器样式 */
+.menu-list .el-sub-menu {
+  margin-bottom: 4px;
+}
+
+.menu-list .el-sub-menu .el-sub-menu__title {
+  border-radius: 12px;
+  height: 48px;
+  line-height: 48px;
+  transition: all 0.3s ease;
+}
+
+.menu-list .el-sub-menu .el-sub-menu__title:hover {
+  background: #f1f5f9 !important;
+  color: #3b82f6 !important;
+}
+
+.menu-list .el-sub-menu.is-active .el-sub-menu__title {
+  background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%) !important;
+  color: white !important;
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3);
+}
+
+.menu-list .el-sub-menu .el-sub-menu__title .el-icon {
+  font-size: 18px;
+  margin-right: 12px;
+}
+
+/* 子菜单项样式 */
+.menu-list .el-sub-menu .el-menu {
+  background: transparent !important;
+  padding: 8px 0;
+}
+
+.menu-list .el-sub-menu .el-menu-item {
+  margin: 2px 8px;
+  border-radius: 8px;
+  height: 40px;
+  line-height: 40px;
+  transition: all 0.3s ease;
+  background: transparent;
+}
+
+.menu-list .el-sub-menu .el-menu-item:hover {
+  background: #f1f5f9 !important;
+  color: #3b82f6 !important;
+}
+
+.menu-list .el-sub-menu .el-menu-item.is-active {
+  background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%) !important;
+  color: white !important;
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3);
+}
+
+.menu-list .el-sub-menu .el-menu-item .el-icon {
+  font-size: 16px;
+  margin-right: 10px;
 }
 
 .quick-tags {
@@ -290,20 +368,20 @@ const handleUpgrade = () => {
   .sidebar-container {
     padding: 16px 0;
   }
-  
+
   .storage-info {
     padding: 0 16px 16px;
     margin-bottom: 16px;
   }
-  
+
   .sidebar-menu {
     padding: 0 8px;
   }
-  
+
   .quick-tags {
     padding: 0 16px;
   }
-  
+
   .menu-item {
     height: 44px;
     line-height: 44px;

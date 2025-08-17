@@ -46,6 +46,7 @@ func (s favoriteService) GetFavorites(userId, page, pageSize int) ([]dto.Favorit
 			IsDir:     file.IsDir,
 			Path:      fullPath,
 			SizeStr:   file.SizeStr,
+			FileURL:   file.FileURL,
 			CreatedAt: f.CreatedAt.Format("2006-01-02 15:04:05"),
 		}
 		result = append(result, dto)

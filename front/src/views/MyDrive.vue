@@ -1,41 +1,39 @@
 <template>
-    <div class="drive-container">
-        <div class="toolbar">
-            <el-upload
-                :http-request="uploadRequest"
-                :data="{ parentId: currentParentId }"
-                :multiple="true"
-                :show-file-list="false"
-                :before-upload="beforeUpload"
-                :on-success="handleUploadSuccess"
-                :on-error="handleUploadError"
-            >
-                <el-button type="primary">
-                    <el-icon><Upload /></el-icon>
-                    <span>上传文件</span>
-                </el-button>
-            </el-upload>
-            <el-button @click="handleNewFolder">
-                <el-icon><FolderAdd /></el-icon>
-                <span>新建文件夹</span>
-            </el-button>
-            <div class="view-switch">
-                <el-radio-group v-model="viewMode">
-                    <el-radio-button label="grid">
-                        <el-icon><Grid /></el-icon>
-                    </el-radio-button>
-                    <el-radio-button label="list">
-                        <el-icon><List /></el-icon>
-                    </el-radio-button>
-                </el-radio-group>
+    <div class="my-drive">
+        <!-- 页面头部 -->
+        <div class="page-header">
+            <div class="header-content">
+                <div class="header-info">
+                    <div class="header-icon">
+                        <el-icon :size="28" color="#ffffff">
+                            <Folder />
+                        </el-icon>
+                    </div>
+                    <div class="header-text">
+                        <h1 class="page-title">我的网盘</h1>
+                        <p class="page-description">{{ currentPath.length > 0 ? currentPath.join(' / ') : '根目录' }}</p>
+                    </div>
+                </div>
+                <div class="header-stats">
+                    <div class="stat-item">
+                        <span class="stat-number">{{ fileList.length }}</span>
+                        <span class="stat-label">文件数量</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-number">{{ total }}</span>
+                        <span class="stat-label">总数量</span>
+                    </div>
+                </div>
             </div>
         </div>
 
-        <el-divider />
-
-        <div class="path-breadcrumb">
+        <!-- 面包屑导航 -->
+        <div class="breadcrumb-container">
             <el-breadcrumb separator="/">
-                <el-breadcrumb-item @click="goRoot">全部文件</el-breadcrumb-item>
+                <el-breadcrumb-item @click="goRoot" style="cursor: pointer">
+                    <el-icon><HomeFilled /></el-icon>
+                    全部文件
+                </el-breadcrumb-item>
                 <el-breadcrumb-item
                     v-for="(item, index) in currentPath"
                     :key="index"
@@ -47,98 +45,174 @@
             </el-breadcrumb>
         </div>
 
-        <!-- 网格视图 -->
-        <div v-if="viewMode === 'grid'" class="file-grid">
-            <div
-                class="file-item"
-                v-for="item in fileList"
-                :key="item.id"
-                @dblclick="handleOpenFolder(item)"
-                @mouseenter="onFileItemEnter(item.id)"
-                :class="{ 'file-item-hover': hoveredId === item.id }"
-            >
-                <el-dropdown
-                    v-if="hoveredId === item.id"
-                    class="file-item-more"
-                    trigger="hover"
-                    @command="cmd => handleGridMenuCommand(item, cmd)"
+        <!-- 工具栏 -->
+        <div class="toolbar">
+            <div class="toolbar-left">
+                <el-upload
+                    :http-request="uploadRequest"
+                    :data="{ parentId: currentParentId }"
+                    :multiple="true"
+                    :show-file-list="false"
+                    :before-upload="beforeUpload"
+                    :on-success="handleUploadSuccess"
+                    :on-error="handleUploadError"
                 >
-                    <el-button link size="small" class="file-item-more-btn" tabindex="-1">
-                        <el-icon><MoreFilled /></el-icon>
+                    <el-button type="primary" :icon="Upload">
+                        上传文件
                     </el-button>
-                    <template #dropdown>
-                        <el-dropdown-menu>
-                            <el-dropdown-item command="delete">删除</el-dropdown-item>
-                            <el-dropdown-item command="rename">重命名</el-dropdown-item>
-                            <el-dropdown-item command="star">收藏</el-dropdown-item>
-                            <el-dropdown-item command="share">分享</el-dropdown-item>
-                            <el-dropdown-item command="download">下载</el-dropdown-item>
-                        </el-dropdown-menu>
-                    </template>
-                </el-dropdown>
-
-                <div class="file-icon">
-                    <el-icon v-if="item.is_dir === true" :size="48" color="#FFB800">
-                        <Folder />
-                    </el-icon>
-                    <el-image
-                        v-else-if="['jpg', 'png', 'gif'].includes(item.extension)"
-                        :src="item.thumbnail_url"
-                        fit="cover"
-                    />
-                    <el-icon v-else :size="48" color="#3a86ff">
-                        <Document />
-                    </el-icon>
-                </div>
-                <div class="file-name">
-                    <template v-if="item.isTemp">
-                        <span style="color:#aaa">（新建文件夹）</span>
-                    </template>
-                    {{ item.name || newFolderName }}
-                </div>
-                <div class="file-meta">{{ item.modified }}</div>
+                </el-upload>
+                <el-button :icon="FolderAdd" @click="handleNewFolder">
+                    新建文件夹
+                </el-button>
+            </div>
+            <div class="toolbar-right">
+                <el-button-group>
+                    <el-button 
+                        :type="viewMode === 'grid' ? 'primary' : ''" 
+                        :icon="Grid"
+                        @click="viewMode = 'grid'"
+                    >
+                        网格
+                    </el-button>
+                    <el-button 
+                        :type="viewMode === 'list' ? 'primary' : ''" 
+                        :icon="List"
+                        @click="viewMode = 'list'"
+                    >
+                        列表
+                    </el-button>
+                </el-button-group>
             </div>
         </div>
 
-        <!-- 列表视图 -->
-        <el-table v-else :data="fileList" style="width: 100%" :fit="true">
-            <el-table-column prop="name" label="名称" min-width="200" show-overflow-tooltip>
-                <template #default="{ row }">
-                    <div class="file-name-cell">
-                        <el-icon v-if="row.is_dir === true" color="#FFB800">
-                            <Folder/>
-                        </el-icon>
-                        <el-icon v-else color="#3a86ff">
-                            <Document/>
-                        </el-icon>
-                        <span>{{ row.name }}</span>
-                    </div>
-                </template>
-            </el-table-column>
-            <el-table-column prop="modified" label="修改日期" min-width="150"/>
-            <el-table-column prop="size_str" label="大小" min-width="100"/>
-            <el-table-column label="操作" min-width="180">
-                <template #default="{ row }">
-                    <el-button size="small" type="text" @click="handleRename(row)">重命名</el-button>
-                    <el-button size="small" type="text" @click="openDeleteDialog(row)">删除</el-button>
-                    <el-dropdown>
-                        <el-button size="small" type="text">
-                            更多
-                            <el-icon>
-                                <ArrowDown/>
+        <!-- 文件内容区域 -->
+        <div class="file-content">
+            <!-- 网格视图 -->
+            <div v-if="viewMode === 'grid'" class="grid-view">
+                <div class="file-grid">
+                    <div
+                        class="file-card"
+                        v-for="item in fileList"
+                        :key="item.id"
+                        @dblclick="handleOpenFolder(item)"
+                        @mouseenter="onFileItemEnter(item.id)"
+                        :class="{ 'file-card-hover': hoveredId === item.id }"
+                    >
+                        <!-- 操作菜单 -->
+                        <el-dropdown
+                            v-if="hoveredId === item.id"
+                            class="file-actions-dropdown"
+                            trigger="hover"
+                            @command="cmd => handleGridMenuCommand(item, cmd)"
+                        >
+                            <el-button link size="small" class="more-btn">
+                                <el-icon><MoreFilled /></el-icon>
+                            </el-button>
+                            <template #dropdown>
+                                <el-dropdown-menu>
+                                    <el-dropdown-item command="rename">
+                                        <el-icon><Edit /></el-icon>
+                                        重命名
+                                    </el-dropdown-item>
+                                    <el-dropdown-item command="star">
+                                        <el-icon><Star /></el-icon>
+                                        收藏
+                                    </el-dropdown-item>
+                                    <el-dropdown-item command="download" v-if="!item.is_dir">
+                                        <el-icon><Download /></el-icon>
+                                        下载
+                                    </el-dropdown-item>
+                                    <el-dropdown-item command="share">
+                                        <el-icon><Share /></el-icon>
+                                        分享
+                                    </el-dropdown-item>
+                                    <el-dropdown-item divided command="delete">
+                                        <el-icon><Delete /></el-icon>
+                                        删除
+                                    </el-dropdown-item>
+                                </el-dropdown-menu>
+                            </template>
+                        </el-dropdown>
+
+                        <!-- 文件缩略图 -->
+                        <div class="file-thumbnail">
+                            <el-icon v-if="item.is_dir === true" :size="48" color="#FFB800">
+                                <Folder />
                             </el-icon>
-                        </el-button>
-                        <template #dropdown>
-                            <el-dropdown-menu>
-                                <el-dropdown-item @click="handleDownload(row)">下载</el-dropdown-item>
-                                <el-dropdown-item @click="handleShare(row)">分享</el-dropdown-item>
-                                <el-dropdown-item @click="handleMove(row)">移动</el-dropdown-item>
-                            </el-dropdown-menu>
+                            <el-image
+                                v-else-if="['jpg', 'png', 'gif'].includes(item.extension)"
+                                :src="item.thumbnail_url"
+                                fit="cover"
+                                class="thumbnail-image"
+                            />
+                            <el-icon v-else :size="48" color="#3a86ff">
+                                <Document />
+                            </el-icon>
+                        </div>
+                        
+                        <!-- 文件信息 -->
+                        <div class="file-info">
+                            <div class="file-name" :title="item.name || newFolderName">
+                                <template v-if="item.isTemp">
+                                    <span class="temp-folder">（新建文件夹）</span>
+                                </template>
+                                {{ item.name || newFolderName }}
+                            </div>
+                            <div class="file-meta">{{ item.modified }}</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 列表视图 -->
+            <div v-else class="list-view">
+                <el-table :data="fileList" class="file-table" @row-dblclick="handleOpenFolder">
+                    <el-table-column width="60">
+                        <template #default="{ row }">
+                            <el-icon :size="20" :color="row.is_dir === true ? '#FFB800' : '#3a86ff'">
+                                <Folder v-if="row.is_dir === true" />
+                                <Document v-else />
+                            </el-icon>
                         </template>
-                    </el-dropdown>
-                </template>
-            </el-table-column>
-        </el-table>
+                    </el-table-column>
+                    
+                    <el-table-column prop="name" label="名称" min-width="300" show-overflow-tooltip>
+                        <template #default="{ row }">
+                            <span class="file-name-text">{{ row.name }}</span>
+                        </template>
+                    </el-table-column>
+                    
+                    <el-table-column prop="modified" label="修改日期" width="180" />
+                    <el-table-column prop="size_str" label="大小" width="120" />
+                    
+                    <el-table-column label="操作" width="200" fixed="right">
+                        <template #default="{ row }">
+                            <el-button size="small" type="primary" link @click="handleRename(row)">
+                                <el-icon><Edit /></el-icon>
+                                重命名
+                            </el-button>
+                            <el-button size="small" type="danger" link @click="openDeleteDialog(row)">
+                                <el-icon><Delete /></el-icon>
+                                删除
+                            </el-button>
+                            <el-dropdown>
+                                <el-button size="small" type="primary" link>
+                                    更多
+                                    <el-icon><ArrowDown /></el-icon>
+                                </el-button>
+                                <template #dropdown>
+                                    <el-dropdown-menu>
+                                        <el-dropdown-item @click="handleDownload(row)" v-if="!row.is_dir">下载</el-dropdown-item>
+                                        <el-dropdown-item @click="handleShare(row)">分享</el-dropdown-item>
+                                        <el-dropdown-item @click="handleMove(row)">移动</el-dropdown-item>
+                                    </el-dropdown-menu>
+                                </template>
+                            </el-dropdown>
+                        </template>
+                    </el-table-column>
+                </el-table>
+            </div>
+        </div>
 
         <!-- 确定删除弹窗 -->
         <el-dialog
@@ -458,127 +532,276 @@ const handleMove = (item) => {
 </script>
 
 <style scoped>
-/* 样式保持不变 */
-.drive-container {
-    padding: 24px;
-    background: #fff;
-    border-radius: 10px;
-    box-shadow: 0 8px 20px rgb(0 0 0 / 0.06);
-    height: 100%;
-    overflow-y: auto;
+.my-drive {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: #f8fafc;
 }
 
+/* 页面头部 */
+.page-header {
+  background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
+  color: white;
+  padding: 24px;
+}
+
+.header-content {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.header-info {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.header-icon {
+  width: 48px;
+  height: 48px;
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.page-title {
+  font-size: 24px;
+  font-weight: 600;
+  margin: 0 0 4px 0;
+}
+
+.page-description {
+  font-size: 14px;
+  opacity: 0.9;
+  margin: 0;
+}
+
+.header-stats {
+  display: flex;
+  gap: 32px;
+}
+
+.stat-item {
+  text-align: center;
+}
+
+.stat-number {
+  display: block;
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.stat-label {
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+/* 面包屑导航 */
+.breadcrumb-container {
+  background: white;
+  padding: 16px 24px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+/* 工具栏 */
 .toolbar {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin-bottom: 16px;
+  background: white;
+  padding: 20px 24px;
+  border-bottom: 1px solid #e2e8f0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
 }
 
-.view-switch {
-    margin-left: auto;
+.toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* 文件内容 */
+.file-content {
+  flex: 1;
+  background: white;
+  overflow: auto;
+}
+
+/* 网格视图 */
+.grid-view {
+  padding: 24px;
 }
 
 .file-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-    gap: 20px;
-    padding: 20px 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 20px;
 }
 
-.file-item {
-    position: relative;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    padding: 12px;
-    border-radius: 8px;
-    cursor: pointer;
-    transition: background 0.2s;
+.file-card {
+  background: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 16px;
+  transition: all 0.3s ease;
+  cursor: pointer;
+  position: relative;
 }
 
-.file-item-hover,
-.file-item:hover {
-    background: var(--el-color-primary-light-9);
+.file-card:hover,
+.file-card-hover {
+  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.1);
+  border-color: #3b82f6;
+  transform: translateY(-2px);
 }
 
-.file-item-more {
-    position: absolute;
-    top: 8px;
-    right: 8px;
-    z-index: 2;
+.file-actions-dropdown {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
 }
 
-.file-item-more-btn {
-    padding: 0;
-    min-width: 0;
-    background: transparent !important;
-    border: none !important;
-    box-shadow: none !important;
-    outline: none !important;
+.more-btn {
+  padding: 4px;
+  min-width: 0;
+  background: rgba(255, 255, 255, 0.9) !important;
+  border-radius: 50%;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
-.file-item-more-btn:focus,
-.file-item-more-btn:active {
-    background: transparent !important;
-    border: none !important;
-    box-shadow: none !important;
-    outline: none !important;
+.file-thumbnail {
+  width: 100%;
+  height: 120px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #f9fafb;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 12px;
 }
 
-.file-item-more-btn .el-icon {
-    font-size: 20px;
+.thumbnail-image {
+  width: 100%;
+  height: 100%;
 }
 
-.file-icon {
-    margin-bottom: 8px;
+.file-info {
+  text-align: center;
 }
 
 .file-name {
-    font-size: 13px;
-    text-align: center;
-    word-break: break-all;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
+  font-size: 14px;
+  font-weight: 500;
+  color: #1f2937;
+  margin-bottom: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.temp-folder {
+  color: #9ca3af;
+  font-style: italic;
 }
 
 .file-meta {
-    font-size: 11px;
-    color: var(--el-text-color-secondary);
-    margin-top: 4px;
+  font-size: 12px;
+  color: #6b7280;
 }
 
-.file-name-cell {
-    display: flex;
-    align-items: center;
-    gap: 8px;
+/* 列表视图 */
+.list-view {
+  padding: 24px;
 }
 
-.file-name-cell .el-icon {
-    font-size: 18px;
+.file-table {
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
 }
 
-.el-table {
-    margin-top: 16px;
+.file-table :deep(.el-table__header) {
+  background: #f8fafc;
 }
 
-.el-table :deep(.el-table__cell) {
-    .cell {
-        display: flex;
-        gap: 4px;
-    }
-
-    .el-button {
-        padding: 0px;
-    }
+.file-table :deep(.el-table__row:hover) {
+  background: #f0f9ff;
 }
 
+.file-name-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 对话框样式 */
 .delete-confirm-text {
-    text-align: center; /* 文字居中 */
-    font-size: 14px;
-    line-height: 1.8; /* 行高，保证两行间距合适 */
-    user-select: none;
+  text-align: center;
+  font-size: 14px;
+  line-height: 1.8;
+  user-select: none;
+}
+
+.delete-confirm-text strong {
+  color: #ef4444;
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+  .page-header {
+    padding: 20px 16px;
+  }
+  
+  .header-content {
+    flex-direction: column;
+    gap: 20px;
+    text-align: center;
+  }
+  
+  .header-stats {
+    gap: 24px;
+  }
+  
+  .breadcrumb-container {
+    padding: 12px 16px;
+  }
+  
+  .toolbar {
+    padding: 16px;
+    flex-direction: column;
+    gap: 16px;
+    align-items: stretch;
+  }
+  
+  .toolbar-left {
+    justify-content: center;
+  }
+  
+  .toolbar-right {
+    justify-content: center;
+  }
+  
+  .file-grid {
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 16px;
+    padding: 16px;
+  }
+  
+  .grid-view,
+  .list-view {
+    padding: 16px;
+  }
 }
 </style>

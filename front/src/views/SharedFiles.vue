@@ -1,371 +1,983 @@
 <template>
-    <div class="shared-container">
-      <div class="header">
-        <h2>共享文件</h2>
-        <el-tabs v-model="activeTab" class="tabs">
-          <el-tab-pane label="我共享的" name="sharedByMe" />
-          <el-tab-pane label="共享给我的" name="sharedWithMe" />
-        </el-tabs>
-      </div>
-  
-      <el-divider />
-  
-      <div v-if="activeTab === 'sharedByMe'">
-        <el-table
-          :data="sharedByMe"
-          style="width: 100%"
-          stripe
-          border
-          :row-key="row => row.id"
-          empty-text="暂无我共享的文件"
-        >
-          <el-table-column label="文件名" min-width="280">
-            <template #default="{ row }">
-              <div class="file-name-cell" title="点击打开">
-                <el-icon
-                  :color="row.type === 'folder' ? '#FFB800' : '#3a86ff'"
-                  class="file-icon"
-                >
-                  <component :is="row.type === 'folder' ? Folder : Document" />
-                </el-icon>
-                <span class="file-name" @click="handleOpen(row)">{{ row.name }}</span>
-              </div>
-            </template>
-          </el-table-column>
-  
-          <el-table-column label="共享给" min-width="220">
-            <template #default="{ row }">
-              <div class="shared-users">
-                <el-tooltip
-                  v-for="user in row.sharedWith"
-                  :key="user.id"
-                  :content="user.name"
-                  placement="top"
-                >
-                  <el-avatar
-                    size="small"
-                    :style="{ backgroundColor: stringToColor(user.name) }"
-                    class="user-avatar"
-                  >
-                    {{ user.name.slice(-2) }}
-                  </el-avatar>
-                </el-tooltip>
-              </div>
-            </template>
-          </el-table-column>
-  
-          <el-table-column prop="sharedDate" label="共享时间" width="160" />
-          <el-table-column prop="permission" label="权限" width="120" />
-          <el-table-column label="操作" fixed="right" width="180">
-            <template #default="{ row }">
-              <el-button
-                size="small"
-                type="primary"
-                text
-                @click="handleManageShare(row)"
-                title="管理共享"
-              >
-                管理
-              </el-button>
-              <el-button
-                size="small"
-                type="danger"
-                text
-                @click="handleCancelShare(row)"
-                title="取消共享"
-              >
-                取消共享
-              </el-button>
-            </template>
-          </el-table-column>
-        </el-table>
-      </div>
-  
-      <div v-else>
-        <el-table
-          :data="sharedWithMe"
-          style="width: 100%"
-          stripe
-          border
-          :row-key="row => row.id"
-          empty-text="暂无共享给我的文件"
-        >
-          <el-table-column label="文件名" min-width="280">
-            <template #default="{ row }">
-              <div class="file-name-cell" title="点击打开">
-                <el-icon
-                  :color="row.type === 'folder' ? '#FFB800' : '#3a86ff'"
-                  class="file-icon"
-                >
-                  <component :is="row.type === 'folder' ? Folder : Document" />
-                </el-icon>
-                <span class="file-name" @click="handleOpen(row)">{{ row.name }}</span>
-              </div>
-            </template>
-          </el-table-column>
-  
-          <el-table-column prop="sharedBy" label="共享者" width="140" />
-          <el-table-column prop="sharedDate" label="共享时间" width="160" />
-          <el-table-column prop="permission" label="权限" width="120" />
-          <el-table-column label="操作" fixed="right" width="180">
-            <template #default="{ row }">
-              <el-button
-                size="small"
-                type="primary"
-                text
-                @click="handleRequestEdit(row)"
-                v-if="row.permission === '只读'"
-                title="申请编辑权限"
-              >
-                申请编辑
-              </el-button>
-              <el-button
-                size="small"
-                type="danger"
-                text
-                @click="handleLeaveShare(row)"
-                title="取消共享"
-              >
-                取消共享
-              </el-button>
-            </template>
-          </el-table-column>
-        </el-table>
+  <div class="shared-files">
+    <!-- 页面头部 -->
+    <div class="page-header">
+      <div class="header-content">
+        <div class="header-info">
+          <div class="header-icon">
+            <el-icon :size="28" color="#10b981">
+              <Share />
+            </el-icon>
+          </div>
+          <div class="header-text">
+            <h1 class="page-title">我的分享</h1>
+            <p class="page-description">管理您分享的文件和链接</p>
+          </div>
+        </div>
+        <div class="header-stats">
+          <div class="stat-item">
+            <span class="stat-number">{{ totalShares }}</span>
+            <span class="stat-label">总分享</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-number">{{ activeShares }}</span>
+            <span class="stat-label">有效分享</span>
+          </div>
+        </div>
       </div>
     </div>
-  </template>
+
+    <!-- 工具栏 -->
+    <div class="toolbar">
+      <div class="toolbar-left">
+        <el-input
+          v-model="searchKeyword"
+          placeholder="搜索分享文件..."
+          :prefix-icon="Search"
+          clearable
+          style="width: 300px;"
+          @input="handleSearch"
+        />
+        <el-select v-model="statusFilter" placeholder="状态筛选" style="width: 120px;" @change="handleFilter">
+          <el-option label="全部" value="" />
+          <el-option label="有效" value="active" />
+          <el-option label="已过期" value="expired" />
+          <el-option label="已失效" value="invalid" />
+        </el-select>
+      </div>
+      <div class="toolbar-right">
+        <el-button :icon="Refresh" @click="refreshData">
+          刷新
+        </el-button>
+      </div>
+    </div>
+
+    <!-- 分享文件列表 -->
+    <div class="share-content">
+      <!-- 加载状态 -->
+      <div v-if="loading" class="loading-container">
+        <el-icon class="is-loading" :size="40">
+          <Loading />
+        </el-icon>
+        <p>正在加载分享文件...</p>
+      </div>
+
+      <!-- 分享列表 -->
+      <div v-else-if="filteredShares.length > 0" class="share-list">
+        <div class="share-item" v-for="share in filteredShares" :key="share.id">
+          <!-- 文件信息 -->
+          <div class="file-info">
+            <div class="file-icon">
+              <el-icon :size="32" :color="getFileIconColor(share.fileType)">
+                <component :is="getFileIcon(share.fileType)" />
+              </el-icon>
+            </div>
+            <div class="file-details">
+              <div class="file-name" :title="share.fileName">{{ share.fileName }}</div>
+              <div class="file-meta">
+                <span class="file-size">{{ formatSize(share.fileSize) }}</span>
+                <span class="share-time">分享于 {{ formatDate(share.createdAt) }}</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 分享状态 -->
+          <div class="share-status">
+            <el-tag 
+              :type="getStatusType(share.status)" 
+              :effect="share.status === 'active' ? 'light' : 'plain'"
+            >
+              {{ getStatusText(share) }}
+            </el-tag>
+          </div>
+
+          <!-- 下载统计 -->
+          <div class="download-stats">
+            <div class="download-count">
+              <el-icon :size="16" color="#64748b">
+                <Download />
+              </el-icon>
+              <span>{{ share.downloadCount }} 次下载</span>
+            </div>
+          </div>
+
+          <!-- 操作按钮 -->
+          <div class="share-actions">
+            <el-button 
+              size="small" 
+              type="primary" 
+              link 
+              @click="copyShareLink(share)"
+              :disabled="share.status !== 'active'"
+            >
+              <el-icon><Link /></el-icon>
+              复制链接
+            </el-button>
+            <el-dropdown @command="cmd => handleShareCommand(share, cmd)">
+              <el-button size="small" type="primary" link>
+                更多
+                <el-icon><ArrowDown /></el-icon>
+              </el-button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item command="detail">
+                    <el-icon><View /></el-icon>
+                    查看详情
+                  </el-dropdown-item>
+                  <el-dropdown-item command="edit" :disabled="share.status !== 'active'">
+                    <el-icon><Edit /></el-icon>
+                    编辑分享
+                  </el-dropdown-item>
+                  <el-dropdown-item command="qrcode">
+                    <el-icon><QrCode /></el-icon>
+                    二维码
+                  </el-dropdown-item>
+                  <el-dropdown-item divided command="cancel" :disabled="share.status !== 'active'">
+                    <el-icon><Close /></el-icon>
+                    取消分享
+                  </el-dropdown-item>
+                  <el-dropdown-item command="delete">
+                    <el-icon><Delete /></el-icon>
+                    删除记录
+                  </el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+          </div>
+        </div>
+      </div>
+
+      <!-- 空状态 -->
+      <div v-else class="empty-state">
+        <div class="empty-icon">
+          <el-icon :size="80" color="#c0c4cc">
+            <Share />
+          </el-icon>
+        </div>
+        <h3>暂无分享文件</h3>
+        <p v-if="searchKeyword">没有找到包含 "{{ searchKeyword }}" 的分享文件</p>
+        <p v-else>您还没有分享任何文件，可以在文件列表中点击分享按钮创建分享</p>
+      </div>
+    </div>
+
+    <!-- 分享详情对话框 -->
+    <el-dialog
+      v-model="shareDetailVisible"
+      title="分享详情"
+      width="600px"
+      :close-on-click-modal="false"
+    >
+      <div v-if="currentShare" class="share-detail">
+        <div class="detail-section">
+          <h4>文件信息</h4>
+          <div class="detail-item">
+            <span class="label">文件名：</span>
+            <span class="value">{{ currentShare.fileName }}</span>
+          </div>
+          <div class="detail-item">
+            <span class="label">文件大小：</span>
+            <span class="value">{{ formatSize(currentShare.fileSize) }}</span>
+          </div>
+          <div class="detail-item">
+            <span class="label">文件类型：</span>
+            <span class="value">{{ currentShare.fileType }}</span>
+          </div>
+        </div>
+
+        <div class="detail-section">
+          <h4>分享信息</h4>
+          <div class="detail-item">
+            <span class="label">分享链接：</span>
+            <div class="link-container">
+              <el-input 
+                :model-value="currentShare.shareUrl" 
+                readonly 
+                class="link-input"
+              />
+              <el-button type="primary" @click="copyShareLink(currentShare)">
+                复制
+              </el-button>
+            </div>
+          </div>
+          <div class="detail-item">
+            <span class="label">提取码：</span>
+            <span class="value code">{{ currentShare.extractCode || '无需提取码' }}</span>
+          </div>
+          <div class="detail-item">
+            <span class="label">分享时间：</span>
+            <span class="value">{{ formatDate(currentShare.createdAt) }}</span>
+          </div>
+          <div class="detail-item">
+            <span class="label">过期时间：</span>
+            <span class="value">{{ getExpiryText(currentShare) }}</span>
+          </div>
+          <div class="detail-item">
+            <span class="label">分享状态：</span>
+            <el-tag :type="getStatusType(currentShare.status)">
+              {{ getStatusText(currentShare) }}
+            </el-tag>
+          </div>
+        </div>
+
+        <div class="detail-section">
+          <h4>访问统计</h4>
+          <div class="stats-grid">
+            <div class="stat-card">
+              <div class="stat-icon">
+                <el-icon :size="24" color="#10b981">
+                  <View />
+                </el-icon>
+              </div>
+              <div class="stat-info">
+                <div class="stat-value">{{ currentShare.viewCount || 0 }}</div>
+                <div class="stat-name">查看次数</div>
+              </div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-icon">
+                <el-icon :size="24" color="#3b82f6">
+                  <Download />
+                </el-icon>
+              </div>
+              <div class="stat-info">
+                <div class="stat-value">{{ currentShare.downloadCount || 0 }}</div>
+                <div class="stat-name">下载次数</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="shareDetailVisible = false">关闭</el-button>
+        <el-button type="primary" @click="copyShareLink(currentShare)">
+          复制链接
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 二维码对话框 -->
+    <el-dialog
+      v-model="qrcodeVisible"
+      title="分享二维码"
+      width="400px"
+      :close-on-click-modal="false"
+    >
+      <div class="qrcode-container">
+        <div class="qrcode-placeholder">
+          <el-icon :size="120" color="#e5e7eb">
+            <QrCode />
+          </el-icon>
+          <p>二维码生成功能开发中...</p>
+        </div>
+        <div class="qrcode-info">
+          <p>扫描二维码即可访问分享文件</p>
+          <el-input :model-value="currentShare?.shareUrl" readonly />
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="qrcodeVisible = false">关闭</el-button>
+        <el-button type="primary">保存二维码</el-button>
+      </template>
+    </el-dialog>
+  </div>
+</template>
+
+<script setup>
+import { ref, computed, onMounted } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import {
+  Share,
+  Search,
+  Plus,
+  Refresh,
+  Loading,
+  Download,
+  View,
+  Link,
+  ArrowDown,
+  Edit,
+  QrCode,
+  Close,
+  Delete,
+  Picture,
+  VideoCamera,
+  Headset,
+  Document,
+  Files
+} from '@element-plus/icons-vue'
+
+// 响应式数据
+const loading = ref(false)
+const searchKeyword = ref('')
+const statusFilter = ref('')
+const shares = ref([])
+const shareDetailVisible = ref(false)
+const qrcodeVisible = ref(false)
+const currentShare = ref(null)
+
+// 统计数据
+const totalShares = computed(() => shares.value.length)
+const activeShares = computed(() => shares.value.filter(s => s.status === 'active').length)
+const totalDownloads = computed(() => shares.value.reduce((sum, s) => sum + (s.downloadCount || 0), 0))
+
+// 过滤后的分享列表
+const filteredShares = computed(() => {
+  let result = [...shares.value]
   
-  <script setup>
-  import { ref } from 'vue'
-  import { Folder, Document } from '@element-plus/icons-vue'
-  import { ElMessage, ElMessageBox } from 'element-plus'
-  
-  const activeTab = ref('sharedByMe')
-  
-  const sharedByMe = ref([
-    {
-      id: 1,
-      name: '项目需求文档.pdf',
-      type: 'file',
-      sharedWith: [
-        { id: 2, name: '李四' },
-        { id: 3, name: '王五' },
-        { id: 4, name: '赵六' }
-      ],
-      sharedDate: '2025-08-01',
-      permission: '可编辑'
-    },
-    {
-      id: 2,
-      name: '设计资源',
-      type: 'folder',
-      sharedWith: [{ id: 5, name: '钱七' }],
-      sharedDate: '2025-07-25',
-      permission: '只读'
-    }
-  ])
-  
-  const sharedWithMe = ref([
-    {
-      id: 11,
-      name: '公司报表.xlsx',
-      type: 'file',
-      sharedBy: '张三',
-      sharedDate: '2025-08-02',
-      permission: '只读'
-    },
-    {
-      id: 12,
-      name: '项目资料',
-      type: 'folder',
-      sharedBy: '李四',
-      sharedDate: '2025-07-30',
-      permission: '可编辑'
-    }
-  ])
-  
-  // 点击打开文件或文件夹
-  const handleOpen = (item) => {
-    ElMessage.info(`打开文件：${item.name}`)
-    // 这里可接入路由跳转或文件预览功能
-  }
-  
-  // 管理共享 — 弹窗示例
-  const handleManageShare = (item) => {
-    ElMessageBox.alert(
-      `管理共享功能待开发，当前文件：${item.name}`,
-      '提示',
-      { confirmButtonText: '知道了' }
+  // 搜索过滤
+  if (searchKeyword.value) {
+    result = result.filter(share => 
+      share.fileName.toLowerCase().includes(searchKeyword.value.toLowerCase())
     )
   }
   
-  // 取消共享 — 确认弹窗
-  const handleCancelShare = (item) => {
-    ElMessageBox.confirm(
-      `确定要取消共享《${item.name}》吗？`,
-      '操作确认',
+  // 状态过滤
+  if (statusFilter.value) {
+    result = result.filter(share => share.status === statusFilter.value)
+  }
+  
+  // 按创建时间倒序排列
+  return result.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+})
+
+// 加载分享数据
+const loadShares = async () => {
+  loading.value = true
+  try {
+    // 模拟数据
+    const mockShares = [
+      {
+        id: '1',
+        fileName: '项目设计文档.pdf',
+        fileType: 'document',
+        fileSize: 2048576,
+        shareUrl: 'https://share.example.com/s/abc123',
+        extractCode: 'xy8k',
+        createdAt: new Date('2024-01-15'),
+        expiresAt: new Date('2024-02-15'),
+        status: 'active',
+        downloadCount: 15,
+        viewCount: 32
+      },
+      {
+        id: '2',
+        fileName: '演示视频.mp4',
+        fileType: 'video',
+        fileSize: 52428800,
+        shareUrl: 'https://share.example.com/s/def456',
+        extractCode: 'mn3p',
+        createdAt: new Date('2024-01-10'),
+        expiresAt: new Date('2024-01-20'),
+        status: 'expired',
+        downloadCount: 8,
+        viewCount: 25
+      },
+      {
+        id: '3',
+        fileName: '产品截图.png',
+        fileType: 'image',
+        fileSize: 1024000,
+        shareUrl: 'https://share.example.com/s/ghi789',
+        extractCode: null,
+        createdAt: new Date('2024-01-12'),
+        expiresAt: null, // 永久有效
+        status: 'active',
+        downloadCount: 42,
+        viewCount: 89
+      },
+      {
+        id: '4',
+        fileName: '会议录音.mp3',
+        fileType: 'audio',
+        fileSize: 15728640,
+        shareUrl: 'https://share.example.com/s/jkl012',
+        extractCode: 'qr5t',
+        createdAt: new Date('2024-01-08'),
+        expiresAt: new Date('2024-01-18'),
+        status: 'invalid',
+        downloadCount: 3,
+        viewCount: 12
+      }
+    ]
+    
+    shares.value = mockShares
+  } catch (error) {
+    console.error('加载分享数据失败:', error)
+    ElMessage.error('加载分享数据失败')
+  } finally {
+    loading.value = false
+  }
+}
+
+// 获取文件图标
+const getFileIcon = (type) => {
+  const iconMap = {
+    image: Picture,
+    video: VideoCamera,
+    audio: Headset,
+    document: Document
+  }
+  return iconMap[type] || Files
+}
+
+// 获取文件图标颜色
+const getFileIconColor = (type) => {
+  const colorMap = {
+    image: '#f59e0b',
+    video: '#ef4444',
+    audio: '#8b5cf6',
+    document: '#06b6d4'
+  }
+  return colorMap[type] || '#6b7280'
+}
+
+// 获取状态类型
+const getStatusType = (status) => {
+  const typeMap = {
+    active: 'success',
+    expired: 'warning',
+    invalid: 'danger'
+  }
+  return typeMap[status] || 'info'
+}
+
+// 获取状态文本
+const getStatusText = (share) => {
+  if (share.status === 'active') {
+    if (!share.expiresAt) {
+      return '永久有效'
+    }
+    const now = new Date()
+    const expires = new Date(share.expiresAt)
+    const diffDays = Math.ceil((expires - now) / (1000 * 60 * 60 * 24))
+    if (diffDays > 0) {
+      return `${diffDays}天后过期`
+    } else {
+      return '已过期'
+    }
+  } else if (share.status === 'expired') {
+    return '已过期'
+  } else if (share.status === 'invalid') {
+    return '已失效'
+  }
+  return '未知状态'
+}
+
+// 获取过期时间文本
+const getExpiryText = (share) => {
+  if (!share.expiresAt) {
+    return '永久有效'
+  }
+  return formatDate(share.expiresAt)
+}
+
+// 格式化文件大小
+const formatSize = (bytes) => {
+  if (bytes === 0) return '0 B'
+  const k = 1024
+  const sizes = ['B', 'KB', 'MB', 'GB']
+  const i = Math.floor(Math.log(bytes) / Math.log(k))
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
+}
+
+// 格式化日期
+const formatDate = (date) => {
+  return new Date(date).toLocaleDateString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit'
+  })
+}
+
+// 复制分享链接
+const copyShareLink = async (share) => {
+  try {
+    const text = share.extractCode 
+      ? `${share.shareUrl} 提取码: ${share.extractCode}`
+      : share.shareUrl
+    
+    await navigator.clipboard.writeText(text)
+    ElMessage.success('分享链接已复制到剪贴板')
+  } catch (error) {
+    console.error('复制失败:', error)
+    ElMessage.error('复制失败，请手动复制')
+  }
+}
+
+// 处理分享操作
+const handleShareCommand = (share, command) => {
+  currentShare.value = share
+  
+  switch (command) {
+    case 'detail':
+      shareDetailVisible.value = true
+      break
+    case 'edit':
+      ElMessage.info('编辑分享功能开发中...')
+      break
+    case 'qrcode':
+      qrcodeVisible.value = true
+      break
+    case 'cancel':
+      cancelShare(share)
+      break
+    case 'delete':
+      deleteShareRecord(share)
+      break
+  }
+}
+
+// 取消分享
+const cancelShare = async (share) => {
+  try {
+    await ElMessageBox.confirm(
+      `确定要取消分享文件 "${share.fileName}" 吗？取消后分享链接将失效。`,
+      '确认取消分享',
       {
         confirmButtonText: '确定',
         cancelButtonText: '取消',
-        type: 'warning'
+        type: 'warning',
       }
     )
-      .then(() => {
-        sharedByMe.value = sharedByMe.value.filter((f) => f.id !== item.id)
-        ElMessage.success('已取消共享')
-      })
-      .catch(() => {
-        ElMessage.info('已取消操作')
-      })
+    
+    // 更新状态
+    share.status = 'invalid'
+    ElMessage.success('分享已取消')
+  } catch (error) {
+    if (error !== 'cancel') {
+      console.error('取消分享失败:', error)
+      ElMessage.error('取消分享失败')
+    }
   }
-  
-  // 共享给我的申请编辑权限
-  const handleRequestEdit = (item) => {
-    ElMessageBox.prompt(
-      `向共享者申请编辑权限，文件：${item.name}`,
-      '申请编辑权限',
-      {
-        confirmButtonText: '发送申请',
-        cancelButtonText: '取消',
-        inputPlaceholder: '请输入申请理由',
-        inputValidator: (val) => val && val.trim() !== '',
-        inputErrorMessage: '申请理由不能为空'
-      }
-    )
-      .then(({ value }) => {
-        // 模拟申请提交
-        ElMessage.success(`申请已发送：${value}`)
-      })
-      .catch(() => {
-        ElMessage.info('申请已取消')
-      })
-  }
-  
-  // 共享给我的文件取消共享/退出共享
-  const handleLeaveShare = (item) => {
-    ElMessageBox.confirm(
-      `确定取消共享，退出《${item.name}》的访问吗？`,
-      '操作确认',
+}
+
+// 删除分享记录
+const deleteShareRecord = async (share) => {
+  try {
+    await ElMessageBox.confirm(
+      `确定要删除分享记录 "${share.fileName}" 吗？此操作不可恢复。`,
+      '确认删除',
       {
         confirmButtonText: '确定',
         cancelButtonText: '取消',
-        type: 'warning'
+        type: 'warning',
       }
     )
-      .then(() => {
-        sharedWithMe.value = sharedWithMe.value.filter((f) => f.id !== item.id)
-        ElMessage.success('已取消访问')
-      })
-      .catch(() => {
-        ElMessage.info('已取消操作')
-      })
-  }
-  
-  // 颜色生成工具，字符串转颜色（用于头像背景）
-  const stringToColor = (str) => {
-    let hash = 0
-    for (let i = 0; i < str.length; i++) {
-      hash = str.charCodeAt(i) + ((hash << 5) - hash)
+    
+    shares.value = shares.value.filter(s => s.id !== share.id)
+    ElMessage.success('分享记录已删除')
+  } catch (error) {
+    if (error !== 'cancel') {
+      console.error('删除失败:', error)
+      ElMessage.error('删除失败')
     }
-    let color = '#'
-    for (let i = 0; i < 3; i++) {
-      const value = (hash >> (i * 8)) & 0xff
-      color += ('00' + value.toString(16)).slice(-2)
-    }
-    return color
   }
-  </script>
-  
-  <style scoped>
-  .shared-container {
-    padding: 24px;
-    background-color: #fff;
-    border-radius: 8px;
-    box-shadow: 0 4px 12px rgb(0 0 0 / 0.05);
-    height: 100%;
-    overflow: auto;
+}
+
+// 显示创建分享对话框
+const showCreateShareDialog = () => {
+  ElMessage.info('创建分享功能开发中...')
+}
+
+// 搜索处理
+const handleSearch = () => {
+  // 搜索逻辑已在计算属性中处理
+}
+
+// 筛选处理
+const handleFilter = () => {
+  // 筛选逻辑已在计算属性中处理
+}
+
+// 刷新数据
+const refreshData = () => {
+  loadShares()
+}
+
+onMounted(() => {
+  loadShares()
+})
+</script>
+
+<style scoped>
+.shared-files {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: #f8fafc;
+}
+
+/* 页面头部 */
+.page-header {
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  color: white;
+  padding: 24px;
+}
+
+.header-content {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.header-info {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.header-icon {
+  width: 48px;
+  height: 48px;
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.page-title {
+  font-size: 24px;
+  font-weight: 600;
+  margin: 0 0 4px 0;
+}
+
+.page-description {
+  font-size: 14px;
+  opacity: 0.9;
+  margin: 0;
+}
+
+.header-stats {
+  display: flex;
+  gap: 32px;
+}
+
+.stat-item {
+  text-align: center;
+}
+
+.stat-number {
+  display: block;
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.stat-label {
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+/* 工具栏 */
+.toolbar {
+  background: white;
+  padding: 20px 24px;
+  border-bottom: 1px solid #e2e8f0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* 分享内容 */
+.share-content {
+  flex: 1;
+  background: white;
+  overflow: auto;
+}
+
+.loading-container {
+  padding: 80px;
+  text-align: center;
+  color: #909399;
+}
+
+.loading-container p {
+  margin-top: 16px;
+  font-size: 16px;
+}
+
+/* 分享列表 */
+.share-list {
+  padding: 24px;
+}
+
+.share-item {
+  display: flex;
+  align-items: center;
+  padding: 20px;
+  background: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  margin-bottom: 16px;
+  transition: all 0.3s ease;
+}
+
+.share-item:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  border-color: #d1d5db;
+}
+
+.file-info {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex: 1;
+  min-width: 0;
+}
+
+.file-icon {
+  flex-shrink: 0;
+}
+
+.file-details {
+  min-width: 0;
+  flex: 1;
+}
+
+.file-name {
+  font-size: 16px;
+  font-weight: 500;
+  color: #1f2937;
+  margin-bottom: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-meta {
+  display: flex;
+  gap: 16px;
+  font-size: 14px;
+  color: #6b7280;
+}
+
+.share-status {
+  margin: 0 24px;
+}
+
+.download-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0 24px;
+  min-width: 120px;
+}
+
+.download-count,
+.view-count {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  color: #6b7280;
+}
+
+.share-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 空状态 */
+.empty-state {
+  padding: 80px 24px;
+  text-align: center;
+  color: #909399;
+}
+
+.empty-icon {
+  margin-bottom: 24px;
+}
+
+.empty-state h3 {
+  font-size: 20px;
+  color: #4a5568;
+  margin: 0 0 12px 0;
+}
+
+.empty-state p {
+  margin: 0 0 24px 0;
+  font-size: 14px;
+}
+
+/* 分享详情对话框 */
+.share-detail {
+  max-height: 500px;
+  overflow-y: auto;
+}
+
+.detail-section {
+  margin-bottom: 24px;
+}
+
+.detail-section h4 {
+  font-size: 16px;
+  font-weight: 600;
+  color: #1f2937;
+  margin: 0 0 16px 0;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.detail-item {
+  display: flex;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.detail-item .label {
+  width: 80px;
+  font-size: 14px;
+  color: #6b7280;
+  flex-shrink: 0;
+}
+
+.detail-item .value {
+  font-size: 14px;
+  color: #1f2937;
+}
+
+.detail-item .value.code {
+  font-family: 'Courier New', monospace;
+  background: #f3f4f6;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.link-container {
+  display: flex;
+  gap: 8px;
+  flex: 1;
+}
+
+.link-input {
+  flex: 1;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+}
+
+.stat-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+  background: #f9fafb;
+  border-radius: 8px;
+}
+
+.stat-info {
+  flex: 1;
+}
+
+.stat-value {
+  font-size: 20px;
+  font-weight: 600;
+  color: #1f2937;
+  line-height: 1;
+}
+
+.stat-name {
+  font-size: 12px;
+  color: #6b7280;
+  margin-top: 2px;
+}
+
+/* 二维码对话框 */
+.qrcode-container {
+  text-align: center;
+}
+
+.qrcode-placeholder {
+  padding: 40px;
+  background: #f9fafb;
+  border-radius: 8px;
+  margin-bottom: 20px;
+}
+
+.qrcode-placeholder p {
+  margin: 16px 0 0 0;
+  color: #6b7280;
+}
+
+.qrcode-info p {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  color: #6b7280;
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+  .page-header {
+    padding: 20px 16px;
   }
   
-  .header {
-    display: flex;
-    align-items: center;
+  .header-content {
+    flex-direction: column;
+    gap: 20px;
+    text-align: center;
+  }
+  
+  .header-stats {
+    gap: 24px;
+  }
+  
+  .toolbar {
+    padding: 16px;
+    flex-direction: column;
+    gap: 16px;
+    align-items: stretch;
+  }
+  
+  .toolbar-right {
     justify-content: space-between;
-    flex-wrap: wrap;
+  }
+  
+  .share-list {
+    padding: 16px;
+  }
+  
+  .share-item {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 16px;
+    padding: 16px;
+  }
+  
+  .file-info {
     gap: 12px;
-    margin-bottom: 16px;
   }
   
-  .header h2 {
-    font-size: 24px;
-    font-weight: 700;
+  .download-stats {
+    flex-direction: row;
     margin: 0;
+    min-width: auto;
   }
   
-  .tabs {
-    flex: 1;
-    max-width: 400px;
+  .share-actions {
+    justify-content: flex-end;
   }
   
-  .file-name-cell {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    cursor: pointer;
-    user-select: none;
+  .stats-grid {
+    grid-template-columns: 1fr;
   }
-  
-  .file-icon {
-    font-size: 20px;
-  }
-  
-  .file-name {
-    color: #409eff;
-    transition: color 0.3s;
-  }
-  .file-name:hover {
-    color: #1869c7;
-    text-decoration: underline;
-  }
-  
-  .shared-users {
-    display: flex;
-    gap: 6px;
-    flex-wrap: wrap;
-  }
-  
-  .user-avatar {
-    font-size: 12px;
-    color: #fff;
-    font-weight: 600;
-    user-select: none;
-  }
-  
-  .el-table th,
-  .el-table td {
-    vertical-align: middle !important;
-  }
-  
-  /* 操作按钮文字更紧凑 */
-  .el-button--text {
-    padding: 2px 6px;
-    font-weight: 600;
-  }
-  
-  /* 取消共享按钮颜色 */
-  .el-button--danger {
-    color: #f56c6c;
-  }
-  
-  @media (max-width: 768px) {
-    .header {
-      flex-direction: column;
-      align-items: flex-start;
-    }
-  
-    .tabs {
-      max-width: 100%;
-      width: 100%;
-    }
-  }
-  </style>
-  
+}
+</style>

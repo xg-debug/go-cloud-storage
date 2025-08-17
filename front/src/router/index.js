@@ -24,10 +24,16 @@ const routes = [
             meta: {title: '收藏夹'}
         },
         {
-            path: 'file-category',
+            path: 'file',
             name: 'FileCategory',
             component: () => import('@/views/FileCategory.vue'),
             meta: {title: '文件分类', icon: 'FolderOpened'}
+        },
+        {
+            path: 'file/:type',
+            name: 'FileCategoryType',
+            component: () => import('@/views/FileCategory.vue'),
+            meta: {title: '文件分类'}
         },
         {path: 'shared', name: 'Shared', component: () => import('@/views/SharedFiles.vue'), meta: {title: '我的分享'}},
         {path: 'recycle', name: 'Recycle', component: () => import('@/views/Recycle.vue'), meta: {title: '回收站'}},
