@@ -47,7 +47,7 @@ func (r *recycleRepo) GetFiles(userId int) ([]TrashItem, error) {
 	err := r.db.Table("recycle_bin AS rb").
 		Select(`f.id AS file_id, f.name, f.is_dir, f.size_str, rb.deleted_at, rb.expire_at`).
 		Joins(`LEFT JOIN file AS f ON rb.file_id = f.id`).
-		Where(`rb.user_id = ?`, userId).Scan(&res).Error
+		Where(`rb.user_id = ?`, userId).Order("rb.deleted_at DESC").Scan(&res).Error
 	return res, err
 }
 

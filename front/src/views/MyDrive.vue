@@ -533,7 +533,7 @@ const handleMove = (item) => {
 
 <style scoped>
 .my-drive {
-  height: 100vh;
+  height: 100%;
   display: flex;
   flex-direction: column;
   background: #f8fafc;
@@ -543,7 +543,7 @@ const handleMove = (item) => {
 .page-header {
   background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
   color: white;
-  padding: 24px;
+  padding: 14px 24px;
 }
 
 .header-content {
@@ -634,12 +634,16 @@ const handleMove = (item) => {
 .file-content {
   flex: 1;
   background: white;
-  overflow: auto;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 /* 网格视图 */
 .grid-view {
+  flex: 1;
   padding: 24px;
+  overflow: auto;
 }
 
 .file-grid {
@@ -723,12 +727,14 @@ const handleMove = (item) => {
 
 /* 列表视图 */
 .list-view {
+  flex: 1;
   padding: 24px;
+  overflow: auto;
 }
 
 .file-table {
   border-radius: 8px;
-  overflow: hidden;
+  overflow: visible;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
 }
 

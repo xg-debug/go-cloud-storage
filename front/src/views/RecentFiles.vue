@@ -27,7 +27,7 @@
         <!-- 文件内容 -->
         <div class="file-content">
             <!-- 空状态 -->
-            <div v-if="filteredFiles.length === 0" class="empty-state">
+            <div v-if="!filteredFiles || filteredFiles.length === 0" class="empty-state">
                 <div class="empty-icon">
                     <el-icon :size="80" color="#c0c4cc">
                         <Clock />
@@ -130,9 +130,10 @@ function getIconColor(file) {
 async function fetchRecentFiles() {
     try {
         const res = await getRecentFiles(timeRange.value)
-        allFiles.value = res
+        allFiles.value = res || []
     } catch (err) {
         console.error('获取最近文件失败', err)
+        allFiles.value = []
     }
 }
 
@@ -172,7 +173,7 @@ function handleLocate(file) {
 .page-header {
   background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
   color: white;
-  padding: 24px;
+  padding: 14px 24px;
 }
 
 .header-content {

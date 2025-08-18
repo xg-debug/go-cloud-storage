@@ -7,9 +7,10 @@ import (
 	"go-cloud-storage/internal/models"
 	"go-cloud-storage/internal/pkg/utils"
 	"go-cloud-storage/internal/repositories"
-	"gorm.io/gorm"
 	"strings"
 	"time"
+
+	"gorm.io/gorm"
 )
 
 type FileItem struct {
@@ -37,6 +38,20 @@ type FileBrief struct {
 	SizeStr  string `json:"size_str"`
 }
 
+type FilePreview struct {
+	Id           string `json:"id"`
+	Name         string `json:"name"`
+	Size         int64  `json:"size"`
+	SizeStr      string `json:"size_str"`
+	Extension    string `json:"extension"`
+	FileURL      string `json:"file_url"`
+	ThumbnailURL string `json:"thumbnail_url"`
+	CanPreview   bool   `json:"can_preview"`
+	PreviewType  string `json:"preview_type"` // image, video, audio, text, pdf, office, other
+	Modified     string `json:"modified"`
+	FilePath     string `json:"file_path"`
+}
+
 type FileService interface {
 	GetFileById(fileId string) (*models.File, error)
 	GetFiles(ctx context.Context, userId int, parentId string, page int, pageSize int) ([]FileItem, int64, error)
@@ -45,8 +60,9 @@ type FileService interface {
 	Rename(userId int, fileId, newName string) error
 	Delete(fileId string, userId int) error
 	CreateFileInfo(file *models.File) error
-	GetRecentFiles(timeRange string) ([]*RecentFile, error)
+	GetRecentFiles(userId int, timeRange string) ([]*RecentFile, error)
 	GetFilePath(file *models.File) (string, error)
+	PreviewFile(ctx context.Context, userId int, fileId string) (*FilePreview, error)
 }
 
 type fileService struct {
@@ -161,7 +177,7 @@ func (s *fileService) CreateFileInfo(file *models.File) error {
 	return s.fileRepo.CreateFile(file)
 }
 
-func (s *fileService) GetRecentFiles(timeRange string) ([]*RecentFile, error) {
+func (s *fileService) GetRecentFiles(userId int, timeRange string) ([]*RecentFile, error) {
 	var since time.Time
 	now := time.Now()
 	switch timeRange {
@@ -169,16 +185,19 @@ func (s *fileService) GetRecentFiles(timeRange string) ([]*RecentFile, error) {
 		since = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	case "week":
 		weekday := int(now.Weekday())
-		if weekday == 0 {
+		if weekday == 0 { // 周日
 			weekday = 7
 		}
-		since = time.Date(now.Year(), now.Month(), now.Day()-weekday+1, 0, 0, 0, 0, now.Location())
+		// 计算本周一的日期（weekday-1 天前）
+		daysToSubtract := weekday - 1
+		since = now.AddDate(0, 0, -daysToSubtract)
+		since = time.Date(since.Year(), since.Month(), since.Day(), 0, 0, 0, 0, since.Location())
 	case "month":
 		since = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
 	default:
 		since = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()) // 默认读取今天的
 	}
-	files, err := s.fileRepo.GetRecentFiles(since)
+	files, err := s.fileRepo.GetRecentFiles(userId, since)
 	if err != nil {
 		return nil, err
 	}
@@ -241,4 +260,102 @@ func (s *fileService) GetFilePath(file *models.File) (string, error) {
 	}
 
 	return "/" + strings.Join(pathParts, "/"), nil
+}
+
+// 判断文件类型是否可预览
+func getPreviewType(extension string) (bool, string) {
+	ext := strings.ToLower(extension)
+
+	// 图片类型
+	imageExts := []string{".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".svg"}
+	for _, imgExt := range imageExts {
+		if ext == imgExt {
+			return true, "image"
+		}
+	}
+
+	// 视频类型
+	videoExts := []string{".mp4", ".avi", ".mov", ".wmv", ".flv", ".webm", ".mkv"}
+	for _, vidExt := range videoExts {
+		if ext == vidExt {
+			return true, "video"
+		}
+	}
+
+	// 音频类型
+	audioExts := []string{".mp3", ".wav", ".flac", ".aac", ".ogg", ".m4a"}
+	for _, audExt := range audioExts {
+		if ext == audExt {
+			return true, "audio"
+		}
+	}
+
+	// 文本类型
+	textExts := []string{".txt", ".md", ".json", ".xml", ".csv", ".log", ".js", ".css", ".html", ".go", ".java", ".py", ".c", ".cpp"}
+	for _, txtExt := range textExts {
+		if ext == txtExt {
+			return true, "text"
+		}
+	}
+
+	// PDF类型
+	if ext == ".pdf" {
+		return true, "pdf"
+	}
+
+	// Office类型
+	officeExts := []string{".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx"}
+	for _, offExt := range officeExts {
+		if ext == offExt {
+			return true, "office"
+		}
+	}
+
+	return false, "other"
+}
+
+func (s *fileService) PreviewFile(ctx context.Context, userId int, fileId string) (*FilePreview, error) {
+	// 获取文件信息
+	file, err := s.fileRepo.GetFileById(fileId)
+	if err != nil {
+		return nil, errors.New("文件不存在")
+	}
+
+	// 检查文件所有权
+	if file.UserId != userId {
+		return nil, errors.New("无权限访问该文件")
+	}
+
+	// 检查是否为文件夹
+	if file.IsDir {
+		return nil, errors.New("文件夹无法预览")
+	}
+
+	// 检查文件是否已删除
+	if file.IsDeleted {
+		return nil, errors.New("文件已删除")
+	}
+
+	// 获取文件路径
+	filePath, err := s.GetFilePath(file)
+	if err != nil {
+		filePath = "/" + file.Name
+	}
+
+	// 判断文件类型和是否可预览
+	canPreview, previewType := getPreviewType(file.FileExtension)
+
+	return &FilePreview{
+		Id:           file.Id,
+		Name:         file.Name,
+		Size:         file.Size,
+		SizeStr:      file.SizeStr,
+		Extension:    file.FileExtension,
+		FileURL:      file.FileURL,
+		ThumbnailURL: file.ThumbnailURL,
+		CanPreview:   canPreview,
+		PreviewType:  previewType,
+		Modified:     file.UpdatedAt.Format("2006-01-02 15:04:05"),
+		FilePath:     filePath,
+	}, nil
 }

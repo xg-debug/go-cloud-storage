@@ -23,15 +23,6 @@ export const createFolder = (data) => {
     })
 }
 
-// 最近文件(按时间段)
-export const listRecentFiles = (range = 'week') => {
-    return request({
-        url: '/recent',
-        method: 'get',
-        params: {range}
-    })
-}
-
 // 收藏列表
 export const lisStarred = () => {
     return request({

@@ -620,7 +620,7 @@ const handleTableMenuCommand = (item, command) => {
   background: linear-gradient(135deg, #06b6d4 0%, #0891b2 100%);
   color: white;
   border-bottom: 1px solid #e2e8f0;
-  padding: 24px;
+  padding: 17px 24px;
 }
 
 .header-content {

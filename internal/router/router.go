@@ -72,7 +72,7 @@ func SetUpRouter(db *gorm.DB, ossService *oss.OSSService) *gin.Engine {
 		file.DELETE("/:fileId", fileCtrl.Delete)
 		file.POST("/rename", fileCtrl.Rename)
 		file.POST("/move")
-		file.GET("/preview")
+		file.GET("/preview/:fileId", fileCtrl.PreviewFile)
 		file.GET("/recent", fileCtrl.GetRecentFiles)
 	}
 

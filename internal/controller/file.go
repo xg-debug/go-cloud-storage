@@ -1,11 +1,12 @@
 package controller
 
 import (
-	"github.com/gin-gonic/gin"
 	"go-cloud-storage/internal/pkg/utils"
 	"go-cloud-storage/internal/services"
 	"net/http"
 	"strings"
+
+	"github.com/gin-gonic/gin"
 )
 
 type FileController struct {
@@ -120,10 +121,30 @@ func (c *FileController) Delete(ctx *gin.Context) {
 
 func (c *FileController) GetRecentFiles(ctx *gin.Context) {
 	timeRange := ctx.Query("timeRange")
-	resultMap, err := c.fileService.GetRecentFiles(timeRange)
+	userId := ctx.GetInt("userId")
+	resultMap, err := c.fileService.GetRecentFiles(userId, timeRange)
 	if err != nil {
 		utils.Fail(ctx, http.StatusInternalServerError, err.Error())
 		return
 	}
 	utils.Success(ctx, resultMap)
+}
+
+func (c *FileController) PreviewFile(ctx *gin.Context) {
+	fileId := ctx.Param("fileId")
+	if fileId == "" {
+		utils.Fail(ctx, http.StatusBadRequest, "文件ID不能为空")
+		return
+	}
+
+	userId := ctx.GetInt("userId")
+
+	// 获取文件信息和预览数据
+	previewData, err := c.fileService.PreviewFile(ctx, userId, fileId)
+	if err != nil {
+		utils.Fail(ctx, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	utils.Success(ctx, previewData)
 }
