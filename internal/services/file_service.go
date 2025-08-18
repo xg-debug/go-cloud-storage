@@ -20,6 +20,7 @@ type FileItem struct {
 	Size         int64  `json:"size"`
 	SizeStr      string `json:"size_str"`
 	Extension    string `json:"extension"`
+	CreatedAt    string `json:"created_at"`
 	Modified     string `json:"modified"`
 	FileURL      string `json:"file_url"`
 	ThumbnailURL string `json:"thumbnail_url"`
@@ -66,12 +67,13 @@ type FileService interface {
 }
 
 type fileService struct {
-	db       *gorm.DB
-	fileRepo repositories.FileRepository
+	db               *gorm.DB
+	fileRepo         repositories.FileRepository
+	storageQuotaRepo repositories.StorageQuotaRepository
 }
 
-func NewFileService(db *gorm.DB, repo repositories.FileRepository) FileService {
-	return &fileService{db: db, fileRepo: repo}
+func NewFileService(db *gorm.DB, repo repositories.FileRepository, storageQuotaRepo repositories.StorageQuotaRepository) FileService {
+	return &fileService{db: db, fileRepo: repo, storageQuotaRepo: storageQuotaRepo}
 }
 
 func (s *fileService) GetFileById(fileId string) (*models.File, error) {
@@ -153,11 +155,24 @@ func (s *fileService) Rename(userId int, fileId, newName string) error {
 }
 
 func (s *fileService) Delete(fileId string, userId int) error {
+	// 先获取文件信息，以便后续更新存储配额
+	file, err := s.fileRepo.GetFileById(fileId)
+	if err != nil {
+		return err
+	}
+
+	// 如果不是文件夹，需要更新存储配额
+	var fileSize int64 = 0
+	if !file.IsDir {
+		fileSize = file.Size
+	}
+
 	return s.db.Transaction(func(tx *gorm.DB) error {
 		// 1.软删除文件
 		if err := s.fileRepo.SoftDeleteFile(tx, userId, fileId); err != nil {
 			return err
 		}
+
 		// 2.构造回收站记录
 		recycleEntry := &models.RecycleBin{
 			FileId:    fileId,
@@ -168,6 +183,15 @@ func (s *fileService) Delete(fileId string, userId int) error {
 		if err := s.fileRepo.AddToRecycle(tx, recycleEntry); err != nil {
 			return err
 		}
+
+		// 3.如果是文件（非文件夹），更新存储配额
+		if !file.IsDir && fileSize > 0 {
+			// 减少已使用空间（传入负数表示减少）
+			if err := s.storageQuotaRepo.UpdateUsedSpace(userId, -fileSize); err != nil {
+				return err
+			}
+		}
+
 		// 如果到这里都没报错，事务会自动提交
 		return nil
 	})

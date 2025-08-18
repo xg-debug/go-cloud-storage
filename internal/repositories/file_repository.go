@@ -14,8 +14,10 @@ import (
 type FileRepository interface {
 	InitFolder(folder *models.File) error
 	GetFiles(ctx context.Context, userId int, parentId string, page int, pageSize int) ([]models.File, int64, error)
+	GetFilesByCategory(ctx context.Context, userId int, fileType string, sortBy string, sortOrder string, page int, pageSize int) ([]models.File, int64, error)
 
 	GetRecentFiles(userId int, since time.Time) ([]models.File, error)
+	GetAllUserFiles(userId int) ([]models.File, error)
 
 	CreateFile(file *models.File) error
 	GetFileById(id string) (*models.File, error)
@@ -73,6 +75,46 @@ func (r *fileRepo) GetFiles(ctx context.Context, userId int, parentId string, pa
 	}
 	offset := (page - 1) * pageSize
 	if err := query.Order("is_dir desc, created_at desc").Offset(offset).Limit(pageSize).Find(&files).Error; err != nil {
+		return nil, 0, err
+	}
+
+	return files, total, nil
+}
+
+// GetFilesByCategory 根据文件类型获取文件列表
+func (r *fileRepo) GetFilesByCategory(ctx context.Context, userId int, fileType string, sortBy string, sortOrder string, page int, pageSize int) ([]models.File, int64, error) {
+	var files []models.File
+	var total int64
+
+	query := r.db.WithContext(ctx).Where("user_id = ? AND is_dir = ? AND is_deleted = ?", userId, false, false)
+
+	// 根据文件类型筛选
+	switch fileType {
+	case "image":
+		query = query.Where("file_extension IN ('jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'svg')")
+	case "video":
+		query = query.Where("file_extension IN ('mp4', 'avi', 'mov', 'wmv', 'flv', 'webm', 'mkv')")
+	case "audio":
+		query = query.Where("file_extension IN ('mp3', 'wav', 'flac', 'aac', 'ogg', '.m4a')")
+	case "document":
+		query = query.Where("file_extension IN ('txt', 'md', 'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx')")
+	}
+
+	// 计算总数
+	if err := query.Model(&models.File{}).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	// 排序
+	if sortOrder == "asc" {
+		query = query.Order(sortBy + " asc")
+	} else {
+		query = query.Order(sortBy + " desc")
+	}
+
+	// 分页
+	offset := (page - 1) * pageSize
+	if err := query.Offset(offset).Limit(pageSize).Find(&files).Error; err != nil {
 		return nil, 0, err
 	}
 
@@ -252,5 +294,12 @@ func (r *fileRepo) RenameFile(userId int, fileId, newName string) error {
 func (r *fileRepo) MoveFile(userId int, fileId, newParentId string) error {
 	return r.db.Model(&models.File{}).
 		Where("id = ? AND user_id = ?", fileId, userId).
-		Update("parent_id = ?", newParentId).Error
+		Update("parent_id", newParentId).Error
+}
+
+// GetAllUserFiles 获取用户所有文件（不包括已删除的）
+func (r *fileRepo) GetAllUserFiles(userId int) ([]models.File, error) {
+	var files []models.File
+	err := r.db.Where("user_id = ? AND is_deleted = ?", userId, false).Find(&files).Error
+	return files, err
 }

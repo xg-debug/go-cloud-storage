@@ -231,7 +231,7 @@
 import {computed, onMounted, ref} from 'vue'
 import {ElMessage} from 'element-plus'
 import {useStore} from 'vuex'
-import {updatePassword, updateProfile, uploadAvatar} from '@/api/user'
+import {updatePassword, updateProfile, uploadAvatar, getUserStats} from '@/api/user'
 
 const store = useStore()
 const userInfo = ref(store.state.userInfo)
@@ -306,47 +306,29 @@ const passwordRules = {
 
 const loadStats = async () => {
     try {
-        // 模拟统计数据，实际项目中应该调用API
-        const mockStatsData = {
-            usedStorage: 45.8,
-            totalStorage: 100,
-            totalFiles: 156,
-            folders: 23,
-            sharedFiles: 12
-        }
-
-        const mockFileTypeData = [
-            {type: 'document', name: '文档', count: 45, percentage: 30},
-            {type: 'image', name: '图片', count: 38, percentage: 25},
-            {type: 'video', name: '视频', count: 25, percentage: 17},
-            {type: 'audio', name: '音频', count: 18, percentage: 12},
-            {type: 'other', name: '其他', count: 30, percentage: 20}
-        ]
-
-        // 如果有真实API，使用下面的代码
-        // const [statsData, fileTypeData] = await Promise.all([
-        //   getUserStats(),
-        //   getFileTypeStats()
-        // ])
-
+        // 调用API获取用户统计信息
+        const response = await getUserStats();
+        const statsData = response;
+        
         // 更新存储统计
         storageStats.value = {
-            used: mockStatsData.usedStorage || 0,
-            total: mockStatsData.totalStorage || 100,
-            percentage: Math.round(((mockStatsData.usedStorage || 0) / (mockStatsData.totalStorage || 100)) * 100)
+            used: statsData.storage_quota.used_gb || 0,
+            total: statsData.storage_quota.total_gb || 100,
+            percentage: statsData.storage_quota.used_percent || 0
         }
 
         // 更新文件统计
         fileStats.value = {
-            totalFiles: mockStatsData.totalFiles || 0,
-            folders: mockStatsData.folders || 0,
-            sharedFiles: mockStatsData.sharedFiles || 0
+            totalFiles: statsData.file_stats.total_files || 0,
+            folders: statsData.file_stats.folders || 0,
+            sharedFiles: statsData.file_stats.shared_files || 0
         }
 
         // 更新文件类型统计
-        fileTypeStats.value = mockFileTypeData.map((type, index) => ({
+        const colors = ['#409eff', '#67c23a', '#e6a23c', '#f56c6c', '#909399'];
+        fileTypeStats.value = statsData.file_type_stats.map((type, index) => ({
             ...type,
-            color: ['#409eff', '#67c23a', '#e6a23c', '#f56c6c', '#909399'][index % 5]
+            color: colors[index % colors.length]
         }))
     } catch (error) {
         ElMessage.error('获取统计信息失败')
@@ -453,8 +435,9 @@ onMounted(() => {
 <style scoped>
 .user-profile {
     background: #f8fafc;
-    min-height: 100vh;
-    padding: 32px;
+    height: 100%;
+    padding: 16px;
+    overflow-x: hidden;
 }
 
 .profile-container {

@@ -40,10 +40,14 @@
             </el-radio-button>
           </el-radio-group>
         </div>
-        <el-select v-model="sortBy" @change="sortFiles" size="small" style="width: 120px;">
+        <el-select v-model="sortBy" @change="handleSortChange" size="small" style="width: 120px;">
           <el-option label="按名称" value="name" />
           <el-option label="按大小" value="size" />
-          <el-option label="按日期" value="date" />
+          <el-option label="按日期" value="created_at" />
+        </el-select>
+        <el-select v-model="sortOrder" @change="handleSortChange" size="small" style="width: 80px;">
+          <el-option label="升序" value="asc" />
+          <el-option label="降序" value="desc" />
         </el-select>
       </div>
     </div>
@@ -121,18 +125,18 @@
           </el-dropdown>
 
           <div class="file-thumbnail">
-            <img v-if="item.thumbnail" :src="item.thumbnail" :alt="item.name" />
+            <img v-if="item.thumbnail_url" :src="item.thumbnail_url" :alt="item.name" />
             <div v-else class="file-icon-wrapper">
-              <el-icon :size="48" :color="getFileIconColor(item.type)">
-                <component :is="getFileIcon(item.type)" />
+              <el-icon :size="48" :color="getFileIconColor(getFileType(item.extension))">
+                <component :is="getFileIcon(getFileType(item.extension))" />
               </el-icon>
             </div>
           </div>
           <div class="file-info">
             <div class="file-name" :title="item.name">{{ item.name }}</div>
             <div class="file-meta">
-              <span class="file-size">{{ formatSize(item.size) }}</span>
-              <span class="file-date">{{ formatDate(item.updatedAt) }}</span>
+              <span class="file-size">{{ item.size_str }}</span>
+              <span class="file-date">{{ item.created_at }}</span>
             </div>
           </div>
         </div>
@@ -144,23 +148,23 @@
           <template #default="{ row }">
             <div class="file-name-cell" @dblclick="previewFileHandler(row)">
               <div class="file-thumbnail-small">
-                <img v-if="row.thumbnail" :src="row.thumbnail" :alt="row.name" />
-                <el-icon v-else :size="20" :color="getFileIconColor(row.type)">
-                  <component :is="getFileIcon(row.type)" />
+                <img v-if="row.thumbnail_url" :src="row.thumbnail_url" :alt="row.name" />
+                <el-icon v-else :size="20" :color="getFileIconColor(getFileType(row.extension))">
+                  <component :is="getFileIcon(getFileType(row.extension))" />
                 </el-icon>
               </div>
               <span class="file-name-text">{{ row.name }}</span>
             </div>
           </template>
         </el-table-column>
-        <el-table-column prop="size" label="大小" min-width="100" sortable>
+        <el-table-column prop="size_str" label="大小" min-width="100">
           <template #default="{ row }">
-            {{ formatSize(row.size) }}
+            {{ row.size_str }}
           </template>
         </el-table-column>
-        <el-table-column prop="updatedAt" label="修改日期" min-width="150" sortable>
+        <el-table-column prop="modified" label="创建日期" min-width="150">
           <template #default="{ row }">
-            {{ formatDate(row.updatedAt) }}
+            {{ row.created_at }}
           </template>
         </el-table-column>
         <el-table-column label="操作" min-width="200" fixed="right">
@@ -169,7 +173,7 @@
               <el-icon><Star /></el-icon>
               收藏
             </el-button>
-            <el-button size="small" type="text" @click="downloadFile(row)">
+            <el-button size="small" type="text" @click="downloadFileHandler(row)">
               <el-icon><Download /></el-icon>
               下载
             </el-button>
@@ -208,7 +212,7 @@
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { listFiles, deleteFile, previewFile } from '@/api/file'
+import { getFilesByCategory, deleteFile, previewFile } from '@/api/file'
 import { addFavorite } from '@/api/favorite'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
@@ -237,11 +241,15 @@ const router = useRouter()
 
 const selectedCategory = ref(route.params.type || null)
 const viewMode = ref('grid')
-const sortBy = ref('name')
+const sortBy = ref('created_at')
+const sortOrder = ref('desc')
 const loading = ref(false)
 const files = ref([])
 const hoveredId = ref(null)
 const searchKeyword = ref('')
+const total = ref(0)
+const page = ref(1)
+const pageSize = ref(20)
 
 const categories = ref([
   {
@@ -296,92 +304,36 @@ const filteredFiles = computed(() => {
     )
   }
   
-  // 排序
-  switch (sortBy.value) {
-    case 'name':
-      return result.sort((a, b) => a.name.localeCompare(b.name))
-    case 'size':
-      return result.sort((a, b) => b.size - a.size)
-    case 'date':
-      return result.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))
-    default:
-      return result
-  }
+  return result
 })
 
 const loadCategoryFiles = async (type) => {
   loading.value = true
   try {
-    // 模拟数据展示
-    const mockFiles = []
-    const fileNames = {
-      image: ['风景照片', '家庭合影', '旅行回忆', '美食拍摄', '宠物照片', '日落美景', '城市夜景', '花朵特写'],
-      video: ['生日聚会', '旅行视频', '演唱会录像', '运动比赛', '教学视频', '电影片段', '短视频', '纪录片'],
-      audio: ['流行音乐', '古典音乐', '播客节目', '有声读物', '会议录音', '语音备忘', '音效素材', '背景音乐'],
-      document: ['工作报告', '学习笔记', '项目计划', '会议纪要', '简历文档', '合同文件', '说明书', '技术文档']
+    // 调用后端API获取分类文件
+    const response = await getFilesByCategory({
+      fileType: type,
+      sortBy: sortBy.value,
+      sortOrder: sortOrder.value,
+      page: page.value,
+      pageSize: pageSize.value
+    })
+    
+    if (response) {
+      files.value = response.list || []
+      total.value = response.total || 0
+      
+      // 更新分类统计
+      const categoryIndex = categories.value.findIndex(c => c.type === type)
+      if (categoryIndex !== -1) {
+        categories.value[categoryIndex].count = total.value
+      }
     }
-    
-    const extensions = {
-      image: ['jpg', 'png', 'gif', 'jpeg', 'webp'],
-      video: ['mp4', 'avi', 'mov', 'mkv', 'wmv'],
-      audio: ['mp3', 'wav', 'flac', 'aac', 'ogg'],
-      document: ['pdf', 'doc', 'docx', 'txt', 'xlsx']
-    }
-    
-    const names = fileNames[type] || ['文件']
-    const exts = extensions[type] || ['file']
-    
-    for (let i = 0; i < 12; i++) {
-      const fileName = names[i % names.length]
-      const ext = exts[i % exts.length]
-      mockFiles.push({
-        id: `${type}_${i + 1}`,
-        name: `${fileName}_${i + 1}.${ext}`,
-        type: type,
-        size: Math.floor(Math.random() * 1024 * 1024 * 50) + 1024 * 100, // 100KB - 50MB
-        updatedAt: new Date(Date.now() - Math.random() * 30 * 24 * 60 * 60 * 1000),
-        isFavorite: Math.random() > 0.8,
-        thumbnail: type === 'image' ? `https://picsum.photos/200/200?random=${i + 1}` : null,
-        extension: ext
-      })
-    }
-    
-    files.value = mockFiles
-    
-    // 更新分类统计
-    const categoryIndex = categories.value.findIndex(c => c.type === type)
-    if (categoryIndex !== -1) {
-      categories.value[categoryIndex].count = mockFiles.length
-      categories.value[categoryIndex].totalSize = mockFiles.reduce((sum, file) => sum + file.size, 0)
-    }
-    
   } catch (error) {
     console.error('加载文件失败:', error)
     ElMessage.error('加载文件失败')
   } finally {
     loading.value = false
-  }
-}
-
-const loadCategoryStats = async () => {
-  try {
-    // 使用模拟统计数据
-    const mockData = {
-      image: { count: 248, size: 1024 * 1024 * 500 },
-      video: { count: 87, size: 1024 * 1024 * 1200 },
-      audio: { count: 42, size: 1024 * 1024 * 300 },
-      document: { count: 156, size: 1024 * 1024 * 800 }
-    }
-    
-    categories.value.forEach(category => {
-      const mock = mockData[category.type]
-      if (mock) {
-        category.count = mock.count
-        category.totalSize = mock.size
-      }
-    })
-  } catch (error) {
-    console.error('加载分类统计失败:', error)
   }
 }
 
@@ -393,21 +345,35 @@ watch(() => route.params.type, (newType) => {
   }
 }, { immediate: true })
 
+// 监听排序变化
+const handleSortChange = () => {
+  if (selectedCategory.value) {
+    loadCategoryFiles(selectedCategory.value)
+  }
+}
+
 onMounted(() => {
-  loadCategoryStats()
   if (selectedCategory.value) {
     loadCategoryFiles(selectedCategory.value)
   }
 })
 
-const getExtension = (type) => {
-  const extensions = {
-    image: 'jpg',
-    video: 'mp4',
-    audio: 'mp3',
-    document: 'pdf'
-  }
-  return extensions[type] || 'file'
+// 获取文件类型
+const getFileType = (extension) => {
+  if (!extension) return 'document'
+  
+  const ext = extension.toLowerCase().replace('.', '')
+  
+  const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'svg']
+  if (imageExts.includes(ext)) return 'image'
+  
+  const videoExts = ['mp4', 'avi', 'mov', 'wmv', 'flv', 'webm', 'mkv']
+  if (videoExts.includes(ext)) return 'video'
+  
+  const audioExts = ['mp3', 'wav', 'flac', 'aac', 'ogg', 'm4a']
+  if (audioExts.includes(ext)) return 'audio'
+  
+  return 'document'
 }
 
 const getCurrentCategory = () => {
@@ -434,40 +400,8 @@ const getCurrentCategoryColor = () => {
   return colorMap[selectedCategory.value] || '#6b7280'
 }
 
-const getCurrentCategoryGradient = () => {
-  const gradientMap = {
-    image: 'linear-gradient(135deg, #f59e0b 0%, #f97316 100%)',
-    video: 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)',
-    audio: 'linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%)',
-    document: 'linear-gradient(135deg, #06b6d4 0%, #0891b2 100%)'
-  }
-  return gradientMap[selectedCategory.value] || 'linear-gradient(135deg, #6b7280 0%, #4b5563 100%)'
-}
-
-const getRecentCount = () => {
-  // 模拟最近7天添加的文件数量
-  const recentCounts = {
-    image: 12,
-    video: 3,
-    audio: 5,
-    document: 8
-  }
-  return recentCounts[selectedCategory.value] || 0
-}
-
 const getCurrentCategoryCount = () => {
-  const category = getCurrentCategory()
-  return category.count || 0
-}
-
-const getCurrentCategorySize = () => {
-  const category = getCurrentCategory()
-  return category.totalSize || 0
-}
-
-const getCurrentCategoryDescription = () => {
-  const category = getCurrentCategory()
-  return category.description || '文件分类'
+  return total.value || 0
 }
 
 const getFileIcon = (type) => {
@@ -490,16 +424,10 @@ const getFileIconColor = (type) => {
   return colorMap[type] || '#718096'
 }
 
-const formatSize = (bytes) => {
-  if (bytes === 0) return '0 B'
-  const k = 1024
-  const sizes = ['B', 'KB', 'MB', 'GB']
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
-}
-
-const formatDate = (date) => {
-  return new Date(date).toLocaleDateString('zh-CN', {
+const formatDate = (dateStr) => {
+  if (!dateStr) return ''
+  const date = new Date(dateStr)
+  return date.toLocaleDateString('zh-CN', {
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
@@ -512,36 +440,46 @@ const handleSearch = () => {
   // 搜索逻辑已在计算属性中处理
 }
 
-const sortFiles = () => {
-  // 排序逻辑已在计算属性中处理
-}
-
-const previewFileHandler = (file) => {
-  console.log('预览文件:', file)
-  // 实现文件预览逻辑
+const previewFileHandler = async (file) => {
+  try {
+    const response = await previewFile(file.id)
+    if (response && response.data) {
+      const previewData = response.data
+      
+      // 根据文件类型处理预览
+      if (previewData.can_preview) {
+        // 这里可以根据不同的预览类型打开不同的预览组件
+        window.open(previewData.file_url, '_blank')
+      } else {
+        ElMessage.info('该文件类型暂不支持预览')
+      }
+    }
+  } catch (error) {
+    console.error('预览文件失败:', error)
+    ElMessage.error('预览文件失败')
+  }
 }
 
 const toggleFavorite = async (file) => {
   try {
-    if (file.isFavorite) {
-      // await removeFavorite(file.id)
-    } else {
-      await addFavorite(file.id)
-    }
-    file.isFavorite = !file.isFavorite
-    ElMessage.success(file.isFavorite ? '已收藏' : '已取消收藏')
+    await addFavorite(file.id)
+    ElMessage.success('已添加到收藏夹')
   } catch (error) {
-    console.error('操作失败:', error)
-    ElMessage.error('操作失败')
+    console.error('收藏失败:', error)
+    ElMessage.error('收藏失败')
   }
 }
 
-const downloadFile = (file) => {
-  const link = document.createElement('a')
-  link.href = file.downloadUrl || '#'
-  link.download = file.name
-  link.click()
-  ElMessage.success('开始下载')
+const downloadFileHandler = (file) => {
+  if (file.file_url) {
+    const link = document.createElement('a')
+    link.href = file.file_url
+    link.download = file.name
+    link.click()
+    ElMessage.success('开始下载')
+  } else {
+    ElMessage.warning('文件下载链接不可用')
+  }
 }
 
 const deleteFileHandler = async (file) => {
@@ -557,6 +495,7 @@ const deleteFileHandler = async (file) => {
     )
     await deleteFile(file.id)
     files.value = files.value.filter(f => f.id !== file.id)
+    total.value--
     ElMessage.success('文件已删除')
   } catch (error) {
     if (error !== 'cancel') {
@@ -583,7 +522,7 @@ const handleGridMenuCommand = (item, command) => {
       toggleFavorite(item)
       break
     case 'download':
-      downloadFile(item)
+      downloadFileHandler(item)
       break
     case 'share':
       ElMessage.info('分享功能开发中...')
@@ -609,10 +548,12 @@ const handleTableMenuCommand = (item, command) => {
 
 <style scoped>
 .file-category {
-  height: 100vh;
+  height: 100%;
+  min-height: calc(100vh - 60px); /* 减去可能的顶部导航高度 */
   display: flex;
   flex-direction: column;
   background: #f8fafc;
+  overflow: hidden;
 }
 
 /* 页面头部 */

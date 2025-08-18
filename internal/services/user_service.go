@@ -27,13 +27,15 @@ type UserService interface {
 }
 
 type userService struct {
-	userRepo   repositories.UserRepository
-	fileRepo   repositories.FileRepository
-	ossService *oss.OSSService
+	userRepo         repositories.UserRepository
+	fileRepo         repositories.FileRepository
+	storageQuotaRepo repositories.StorageQuotaRepository
+	ossService       *oss.OSSService
 }
 
-func NewUserService(userRepo repositories.UserRepository, fileRepo repositories.FileRepository, aliyunOss *oss.OSSService) UserService {
-	return &userService{userRepo: userRepo, fileRepo: fileRepo, ossService: aliyunOss}
+func NewUserService(userRepo repositories.UserRepository, fileRepo repositories.FileRepository,
+	storage repositories.StorageQuotaRepository, aliyunOss *oss.OSSService) UserService {
+	return &userService{userRepo: userRepo, fileRepo: fileRepo, ossService: aliyunOss, storageQuotaRepo: storage}
 }
 
 func (s *userService) AuthenticateUser(account, password string) (*models.User, error) {
@@ -96,6 +98,17 @@ func (s *userService) RegisterUser(email, pwd, pwdConfirm string) error {
 	if err := s.userRepo.Update(&user); err != nil {
 		return errors.New("回写root_folder_id失败")
 	}
+
+	// 6.给用户分配 10GB 的物理空间
+	storage := &models.StorageQuota{
+		UserID:      user.Id,
+		Total:       10 * 1024 * 1024,
+		Used:        0,
+		UsedPercent: 0.00,
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+	}
+	s.storageQuotaRepo.Create(storage)
 	return nil
 }
 

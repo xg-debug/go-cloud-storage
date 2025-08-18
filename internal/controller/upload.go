@@ -1,22 +1,29 @@
 package controller
 
 import (
-	"github.com/gin-gonic/gin"
 	"go-cloud-storage/internal/pkg/oss"
 	"go-cloud-storage/internal/pkg/utils"
+	"go-cloud-storage/internal/repositories"
 	"go-cloud-storage/internal/services"
 	"net/http"
+
+	"github.com/gin-gonic/gin"
 )
 
 type UploadController struct {
-	ossService  *oss.OSSService
-	fileService services.FileService
+	ossService       *oss.OSSService
+	fileService      services.FileService
+	storageQuotaRepo repositories.StorageQuotaRepository
 }
 
 // services.FileService 是接口, 本身就是引用类型，不需要加 *
 
-func NewUploadController(oss *oss.OSSService, service services.FileService) *UploadController {
-	return &UploadController{ossService: oss, fileService: service}
+func NewUploadController(oss *oss.OSSService, service services.FileService, storageQuotaRepo repositories.StorageQuotaRepository) *UploadController {
+	return &UploadController{
+		ossService:       oss,
+		fileService:      service,
+		storageQuotaRepo: storageQuotaRepo,
+	}
 }
 
 // 上传文件
@@ -37,6 +44,7 @@ func (c *UploadController) Upload(ctx *gin.Context) {
 		return
 	}
 	defer file.Close()
+
 	// 调用 OSS 上传
 	fileInfo, err := c.ossService.UploadFromStream(ctx, file, fileHeader.Filename, userId, parentId, 100*1024*1024)
 	if err != nil {
@@ -50,6 +58,16 @@ func (c *UploadController) Upload(ctx *gin.Context) {
 		utils.Fail(ctx, http.StatusInternalServerError, "数据库保存上传文件元数据失败: "+err.Error())
 		return
 	}
+
+	// 更新用户存储配额
+	if fileInfo.Size > 0 {
+		err = c.storageQuotaRepo.UpdateUsedSpace(userId, fileInfo.Size)
+		if err != nil {
+			// 这里只记录错误，不影响上传成功
+			ctx.Error(err)
+		}
+	}
+
 	utils.Success(ctx, fileInfo)
 }
 

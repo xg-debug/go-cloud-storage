@@ -1,15 +1,17 @@
 package router
 
 import (
-	"github.com/gin-contrib/cors"
-	"github.com/gin-gonic/gin"
 	"go-cloud-storage/internal/controller"
 	"go-cloud-storage/internal/middleware"
 	"go-cloud-storage/internal/repositories"
 	"time"
 
+	"github.com/gin-contrib/cors"
+	"github.com/gin-gonic/gin"
+
 	"go-cloud-storage/internal/pkg/oss"
 	"go-cloud-storage/internal/services"
+
 	"gorm.io/gorm"
 )
 
@@ -32,19 +34,27 @@ func SetUpRouter(db *gorm.DB, ossService *oss.OSSService) *gin.Engine {
 	fileRepo := repositories.NewFileRepository(db)
 	recycleRepo := repositories.NewRecycleRepository(db)
 	favoriteRepo := repositories.NewFavoriteRepository(db)
+	shareRepo := repositories.NewShareRepository(db)
+
+	// 初始化仓库
+	storageQuotaRepo := repositories.NewStorageQuotaRepository(db)
 
 	// 初始化服务
-	userService := services.NewUserService(userRepo, fileRepo, ossService)
-	fileService := services.NewFileService(db, fileRepo)
+	userService := services.NewUserService(userRepo, fileRepo, storageQuotaRepo, ossService)
+	fileService := services.NewFileService(db, fileRepo, storageQuotaRepo)
 	recycleService := services.NewRecycleService(db, recycleRepo, fileRepo)
 	favoriteService := services.NewFavoriteService(favoriteRepo, fileService)
+	categoryService := services.NewCategoryService(db, fileRepo)
+	statsService := services.NewStatsService(fileRepo, storageQuotaRepo, shareRepo)
 
 	loginCtrl := controller.NewLoginController(userService)
 	fileCtrl := controller.NewFileController(fileService)
 	userCtrl := controller.NewUserController(userService)
-	uploadCtrl := controller.NewUploadController(ossService, fileService)
+	uploadCtrl := controller.NewUploadController(ossService, fileService, storageQuotaRepo)
 	recycleCtrl := controller.NewRecycleController(recycleService)
 	favoriteCtrl := controller.NewFavoriteController(favoriteService)
+	categoryCtrl := controller.NewCategoryController(categoryService, fileService)
+	statsCtrl := controller.NewStatsController(statsService)
 
 	ginServer.POST("/login", loginCtrl.Login)
 	ginServer.POST("/register", loginCtrl.Register)
@@ -61,6 +71,7 @@ func SetUpRouter(db *gorm.DB, ossService *oss.OSSService) *gin.Engine {
 		user.PUT("/update", userCtrl.UpdateProfile)
 		user.PUT("/password", userCtrl.UpdatePassword)
 		user.POST("/avatar", userCtrl.UpdateAvatar)
+		user.GET("/stats", statsCtrl.GetUserDashboardStats)
 	}
 
 	file := ginServer.Group("file")
@@ -95,6 +106,13 @@ func SetUpRouter(db *gorm.DB, ossService *oss.OSSService) *gin.Engine {
 
 		recycle.PUT("/:fileId/restore", recycleCtrl.RestoreFile)
 		recycle.PUT("/batch", recycleCtrl.RestoreSelected)
+	}
+
+	// 添加分类路由
+	category := ginServer.Group("category")
+	category.Use(middleware.JWTAuthMiddleware())
+	{
+		category.POST("/files", categoryCtrl.GetFilesByCategory)
 	}
 
 	return ginServer

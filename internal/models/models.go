@@ -71,8 +71,10 @@ type RecycleBin struct {
 
 // StorageQuota 用户存储配额模型
 type StorageQuota struct {
-	UserID    int       `gorm:"primaryKey" json:"user_id"`
-	Total     int64     `gorm:"type:bigint;default:10737418240" json:"total"` // 默认10GB (10 * 1024^3)
-	Used      int64     `gorm:"type:bigint;default:0" json:"used"`
-	UpdatedAt time.Time `gorm:"autoUpdateTime" json:"updated_at"`
+	UserID      int       `gorm:"primaryKey" json:"user_id"`
+	Total       int64     `gorm:"type:bigint;default:10737418240" json:"total"` // 默认10GB (10 * 1024^3)
+	Used        int64     `gorm:"type:bigint;default:0" json:"used"`
+	UsedPercent float32   `gorm:"type:float;default:0.00" json:"used_percent"`
+	CreatedAt   time.Time `gorm:"column:created_at;default:CURRENT_TIMESTAMP" json:"created_at"`
+	UpdatedAt   time.Time `gorm:"column:updated_at;default:CURRENT_TIMESTAMP" json:"updated_at"`
 }

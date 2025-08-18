@@ -1,10 +1,5 @@
 import request from '@/utils/request'
 
-// 获取分类下的文件列表
-export const getFilesByCategory = (categoryId) => {
-    return request.get("/file/list/${categoryId}")
-}
-
 // 文件列表：获取指定父目录下的文件/文件夹
 export const listFiles = (data) => {
     return request({
@@ -99,5 +94,14 @@ export const getRecentFiles = (timeRange) => {
         url: '/file/recent',
         method: 'get',
         params: { timeRange: timeRange }
+    })
+}
+
+// 获取分类下的文件列表（按文件类型：图片、视频、音频、文档）
+export const getFilesByCategory = (data) => {
+    return request({
+        url: '/category/files',
+        method: 'post',
+        data
     })
 }

@@ -16,7 +16,7 @@
                 </div>
                 <div class="header-stats">
                     <div class="stat-item">
-                        <span class="stat-number">{{ fileList.length }}</span>
+                        <span class="stat-number">{{ fileList.length}}</span>
                         <span class="stat-label">文件数量</span>
                     </div>
                     <div class="stat-item">
@@ -335,8 +335,12 @@ const loadFiles = async () => {
         page: currentPage.value,
         pageSize: pageSize.value
     })
-    fileList.value = res.list
-    total.value = res.total
+    if (res.list) {
+        fileList.value = res.list
+        total.value = res.total
+    }
+    // fileList.value = res.list
+    // total.value = res.total
 }
 
 const handleOpenFolder = (item) => {
