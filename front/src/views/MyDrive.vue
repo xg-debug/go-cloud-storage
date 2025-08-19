@@ -240,6 +240,13 @@
             </template>
         </el-dialog>
 
+        <!-- 创建分享对话框 -->
+        <CreateShareDialog
+            v-model="shareDialogVisible"
+            :file-info="shareFileInfo"
+            @success="handleShareSuccess"
+        />
+
         <el-dialog
             v-model="newFolderDialogVisible"
             title="新建文件夹"
@@ -281,10 +288,17 @@ import {
     Grid,
     List,
     Folder,
-    Document
+    Document,
+    Edit,
+    Delete,
+    Star,
+    Share,
+    Download,
+    HomeFilled
 } from '@element-plus/icons-vue'
 import { useStore } from 'vuex'
 import {addFavorite} from "@/api/favorite";
+import CreateShareDialog from '@/components/CreateShareDialog.vue'
 
 const store = useStore()
 const viewMode = ref('grid')
@@ -306,6 +320,8 @@ const hoveredId = ref(null)
 const deleteDialogVisible = ref(false)
 const deleteTarget = ref({})
 const deleting = ref(false)
+const shareDialogVisible = ref(false)
+const shareFileInfo = ref({})
 let tempFolderId = null
 let hoverTimeout = null
 
@@ -520,8 +536,43 @@ const handleStar = (item) => {
 }
 
 const handleShare = (item) => {
-    ElMessage.info(`分享文件: ${item.name}`)
-    // TODO: 实现分享逻辑
+    if (item.is_dir) {
+        ElMessage.warning('暂不支持分享文件夹')
+        return
+    }
+    
+    shareFileInfo.value = {
+        id: item.id,
+        name: item.name,
+        size: item.size,
+        fileType: getFileTypeFromExtension(item.file_extension || item.extension)
+    }
+    shareDialogVisible.value = true
+}
+
+// 分享成功回调
+const handleShareSuccess = (shareData) => {
+    ElMessage.success('分享创建成功')
+    // 可以在这里添加其他逻辑，比如跳转到分享列表
+}
+
+// 根据文件扩展名获取文件类型
+const getFileTypeFromExtension = (extension) => {
+    if (!extension) return 'other'
+    
+    const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp']
+    const videoExts = ['mp4', 'avi', 'mov', 'wmv', 'flv', 'mkv']
+    const audioExts = ['mp3', 'wav', 'flac', 'aac', 'ogg']
+    const docExts = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt']
+    
+    const ext = extension.toLowerCase().replace('.', '')
+    
+    if (imageExts.includes(ext)) return 'image'
+    if (videoExts.includes(ext)) return 'video'
+    if (audioExts.includes(ext)) return 'audio'
+    if (docExts.includes(ext)) return 'document'
+    
+    return 'other'
 }
 
 const handleDownload = (item) => {

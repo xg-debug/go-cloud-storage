@@ -305,6 +305,7 @@ import {
   Document,
   Files
 } from '@element-plus/icons-vue'
+import { getUserShares, cancelShare, deleteShare } from '@/api/share'
 
 // 响应式数据
 const loading = ref(false)
@@ -344,66 +345,36 @@ const filteredShares = computed(() => {
 const loadShares = async () => {
   loading.value = true
   try {
-    // 模拟数据
-    const mockShares = [
-      {
-        id: '1',
-        fileName: '项目设计文档.pdf',
-        fileType: 'document',
-        fileSize: 2048576,
-        shareUrl: 'https://share.example.com/s/abc123',
-        extractCode: 'xy8k',
-        createdAt: new Date('2024-01-15'),
-        expiresAt: new Date('2024-02-15'),
-        status: 'active',
-        downloadCount: 15,
-        viewCount: 32
-      },
-      {
-        id: '2',
-        fileName: '演示视频.mp4',
-        fileType: 'video',
-        fileSize: 52428800,
-        shareUrl: 'https://share.example.com/s/def456',
-        extractCode: 'mn3p',
-        createdAt: new Date('2024-01-10'),
-        expiresAt: new Date('2024-01-20'),
-        status: 'expired',
-        downloadCount: 8,
-        viewCount: 25
-      },
-      {
-        id: '3',
-        fileName: '产品截图.png',
-        fileType: 'image',
-        fileSize: 1024000,
-        shareUrl: 'https://share.example.com/s/ghi789',
-        extractCode: null,
-        createdAt: new Date('2024-01-12'),
-        expiresAt: null, // 永久有效
-        status: 'active',
-        downloadCount: 42,
-        viewCount: 89
-      },
-      {
-        id: '4',
-        fileName: '会议录音.mp3',
-        fileType: 'audio',
-        fileSize: 15728640,
-        shareUrl: 'https://share.example.com/s/jkl012',
-        extractCode: 'qr5t',
-        createdAt: new Date('2024-01-08'),
-        expiresAt: new Date('2024-01-18'),
-        status: 'invalid',
-        downloadCount: 3,
-        viewCount: 12
-      }
-    ]
+    const response = await getUserShares()
     
-    shares.value = mockShares
+    // 处理正常响应
+    if (response && response.code === 200) {
+      const shareData = Array.isArray(response.data) ? response.data : []
+      shares.value = shareData.map(share => ({
+        ...share,
+        createdAt: new Date(share.createdAt),
+        expiresAt: share.expiresAt ? new Date(share.expiresAt) : null
+      }))
+    } 
+    // 处理直接返回的数组（404情况下的空数组）
+    else if (Array.isArray(response)) {
+      shares.value = response.map(share => ({
+        ...share,
+        createdAt: new Date(share.createdAt),
+        expiresAt: share.expiresAt ? new Date(share.expiresAt) : null
+      }))
+    }
+    // 其他情况设为空数组
+    else {
+      shares.value = []
+    }
   } catch (error) {
     console.error('加载分享数据失败:', error)
-    ElMessage.error('加载分享数据失败')
+    // 404错误已经在API层面处理，这里只处理其他错误
+    if (error.response && error.response.status !== 404) {
+      ElMessage.error('网络错误，请稍后重试')
+    }
+    shares.value = []
   } finally {
     loading.value = false
   }
@@ -521,7 +492,7 @@ const handleShareCommand = (share, command) => {
       qrcodeVisible.value = true
       break
     case 'cancel':
-      cancelShare(share)
+      cancelShareAction(share)
       break
     case 'delete':
       deleteShareRecord(share)
@@ -530,7 +501,7 @@ const handleShareCommand = (share, command) => {
 }
 
 // 取消分享
-const cancelShare = async (share) => {
+const cancelShareAction = async (share) => {
   try {
     await ElMessageBox.confirm(
       `确定要取消分享文件 "${share.fileName}" 吗？取消后分享链接将失效。`,
@@ -542,9 +513,14 @@ const cancelShare = async (share) => {
       }
     )
     
-    // 更新状态
-    share.status = 'invalid'
-    ElMessage.success('分享已取消')
+    const response = await cancelShare(share.id)
+    if (response.code === 200) {
+      // 更新状态
+      share.status = 'invalid'
+      ElMessage.success('分享已取消')
+    } else {
+      ElMessage.error(response.message || '取消分享失败')
+    }
   } catch (error) {
     if (error !== 'cancel') {
       console.error('取消分享失败:', error)
@@ -566,8 +542,13 @@ const deleteShareRecord = async (share) => {
       }
     )
     
-    shares.value = shares.value.filter(s => s.id !== share.id)
-    ElMessage.success('分享记录已删除')
+    const response = await deleteShare(share.id)
+    if (response.code === 200) {
+      shares.value = shares.value.filter(s => s.id !== share.id)
+      ElMessage.success('分享记录已删除')
+    } else {
+      ElMessage.error(response.message || '删除失败')
+    }
   } catch (error) {
     if (error !== 'cancel') {
       console.error('删除失败:', error)

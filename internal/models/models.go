@@ -10,7 +10,7 @@ type User struct {
 	Id           int       `gorm:"primaryKey;autoIncrement" json:"id" form:"id"`
 	Username     string    `gorm:"size:50;unique;not null" json:"username" form:"username"` // 用户名
 	Email        string    `gorm:"size:100;unique;not null" json:"email" form:"email"`
-	Phone        string    `gorm:"size:20;unique" json:"phone" form:"phone"`
+	Phone        *string   `gorm:"size:20;unique" json:"phone" form:"phone"`
 	Password     string    `gorm:"size:100;not null" json:"password" form:"password"`
 	Avatar       string    `gorm:"size:255" json:"avatar" form:"avatar"`
 	OpenId       string    `gorm:"size:255" json:"openId"`
@@ -71,10 +71,10 @@ type RecycleBin struct {
 
 // StorageQuota 用户存储配额模型
 type StorageQuota struct {
-	UserID      int       `gorm:"primaryKey" json:"user_id"`
-	Total       int64     `gorm:"type:bigint;default:10737418240" json:"total"` // 默认10GB (10 * 1024^3)
-	Used        int64     `gorm:"type:bigint;default:0" json:"used"`
-	UsedPercent float32   `gorm:"type:float;default:0.00" json:"used_percent"`
-	CreatedAt   time.Time `gorm:"column:created_at;default:CURRENT_TIMESTAMP" json:"created_at"`
-	UpdatedAt   time.Time `gorm:"column:updated_at;default:CURRENT_TIMESTAMP" json:"updated_at"`
+	UserID int   `gorm:"primaryKey" json:"user_id"`
+	Total  int64 `gorm:"type:bigint;default:10737418240" json:"total"` // 默认10GB (10 * 1024^3)
+	Used   int64 `gorm:"type:bigint;default:0" json:"used"`
+	//UsedPercent float32   `gorm:"type:float;default:0.00" json:"used_percent"` // 该字段自动计算，不需要
+	CreatedAt time.Time `gorm:"column:created_at;default:CURRENT_TIMESTAMP" json:"created_at"`
+	UpdatedAt time.Time `gorm:"column:updated_at;default:CURRENT_TIMESTAMP" json:"updated_at"`
 }

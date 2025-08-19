@@ -45,7 +45,9 @@ func SetUpRouter(db *gorm.DB, ossService *oss.OSSService) *gin.Engine {
 	recycleService := services.NewRecycleService(db, recycleRepo, fileRepo)
 	favoriteService := services.NewFavoriteService(favoriteRepo, fileService)
 	categoryService := services.NewCategoryService(db, fileRepo)
+	shareService := services.NewShareService(shareRepo, fileRepo)
 	statsService := services.NewStatsService(fileRepo, storageQuotaRepo, shareRepo)
+	storageQuotaService := services.NewStorageQuotaService(storageQuotaRepo)
 
 	loginCtrl := controller.NewLoginController(userService)
 	fileCtrl := controller.NewFileController(fileService)
@@ -54,7 +56,8 @@ func SetUpRouter(db *gorm.DB, ossService *oss.OSSService) *gin.Engine {
 	recycleCtrl := controller.NewRecycleController(recycleService)
 	favoriteCtrl := controller.NewFavoriteController(favoriteService)
 	categoryCtrl := controller.NewCategoryController(categoryService, fileService)
-	statsCtrl := controller.NewStatsController(statsService)
+	shareCtrl := controller.NewShareController(shareService)
+	statsCtrl := controller.NewStatsController(statsService, storageQuotaService)
 
 	ginServer.POST("/login", loginCtrl.Login)
 	ginServer.POST("/register", loginCtrl.Register)
@@ -72,6 +75,7 @@ func SetUpRouter(db *gorm.DB, ossService *oss.OSSService) *gin.Engine {
 		user.PUT("/password", userCtrl.UpdatePassword)
 		user.POST("/avatar", userCtrl.UpdateAvatar)
 		user.GET("/stats", statsCtrl.GetUserDashboardStats)
+		user.GET("/quota", statsCtrl.GetUserStorage)
 	}
 
 	file := ginServer.Group("file")
@@ -114,6 +118,21 @@ func SetUpRouter(db *gorm.DB, ossService *oss.OSSService) *gin.Engine {
 	{
 		category.POST("/files", categoryCtrl.GetFilesByCategory)
 	}
+
+	// 添加分享路由
+	share := ginServer.Group("share")
+	share.Use(middleware.JWTAuthMiddleware())
+	{
+		share.POST("", shareCtrl.CreateShare)                // 创建分享
+		share.GET("", shareCtrl.GetUserShares)               // 获取用户分享列表
+		share.GET("/:shareId", shareCtrl.GetShareDetail)     // 获取分享详情
+		share.PUT("/:shareId/cancel", shareCtrl.CancelShare) // 取消分享
+		share.DELETE("/:shareId", shareCtrl.DeleteShare)     // 删除分享记录
+	}
+
+	// 公开分享访问路由（无需认证）
+	ginServer.GET("/s/:token", shareCtrl.AccessShare)                 // 访问分享
+	ginServer.GET("/s/:token/download", shareCtrl.DownloadSharedFile) // 下载分享文件
 
 	return ginServer
 }

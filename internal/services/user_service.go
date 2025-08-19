@@ -68,6 +68,7 @@ func (s *userService) RegisterUser(email, pwd, pwdConfirm string) error {
 	user := models.User{
 		Username:     username,
 		Email:        email,
+		Phone:        nil,
 		Password:     pwd,
 		Avatar:       "https://cube.elemecdn.com/3/7c/3ea6beec64369c2642b92c6726f1epng.png",
 		RegisterTime: time.Now(),
@@ -101,12 +102,11 @@ func (s *userService) RegisterUser(email, pwd, pwdConfirm string) error {
 
 	// 6.给用户分配 10GB 的物理空间
 	storage := &models.StorageQuota{
-		UserID:      user.Id,
-		Total:       10 * 1024 * 1024,
-		Used:        0,
-		UsedPercent: 0.00,
-		CreatedAt:   time.Now(),
-		UpdatedAt:   time.Now(),
+		UserID:    user.Id,
+		Total:     10 * 1024 * 1024 * 1024,
+		Used:      0,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
 	}
 	s.storageQuotaRepo.Create(storage)
 	return nil
@@ -121,7 +121,7 @@ func (s *userService) GetProfile(userId int) (*vo.UserProfileResponse, error) {
 		Id:           user.Id,
 		Username:     user.Username,
 		Email:        user.Email,
-		Phone:        user.Phone,
+		Phone:        *user.Phone,
 		Avatar:       user.Avatar,
 		OpenId:       user.OpenId,
 		RegisterTime: user.RegisterTime.Format("2006-01-02 15:04:05"),
@@ -136,7 +136,7 @@ func (s *userService) UpdateUserInfo(userId int, username, phone string) error {
 		return err
 	}
 	user.Username = username
-	user.Phone = phone
+	user.Phone = &phone
 	return s.userRepo.Update(user)
 }
 

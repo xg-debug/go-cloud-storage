@@ -34,10 +34,18 @@ export const uploadAvatar = (formData) => {
     })
 }
 
-// 获取用户存储统计信息
+// 获取用户仪表板统计信息
 export const getUserStats = () => {
     return request({
         url: '/user/stats',
+        method: 'get'
+    })
+}
+
+// 获取用户侧边栏存储配额
+export const getUserStorageQuota = () => {
+    return request({
+        url: '/user/quota',
         method: 'get'
     })
 }
@@ -48,13 +56,5 @@ export const updatePassword = (data) => {
         url: '/user/password',
         method: 'put',
         data
-    })
-}
-
-// 获取文件类型统计
-export const getFileTypeStats = () => {
-    return request({
-        url: '/me/file-stats',
-        method: 'get'
     })
 }

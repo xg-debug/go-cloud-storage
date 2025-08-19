@@ -69,7 +69,20 @@ service.interceptors.response.use(response => {
       }
 
     }
-    ElMessage.error(error.message || '请求错误')
+    
+    // 检查是否设置了静默处理标志
+    if (originalRequest.silentError) {
+      // 静默处理错误，不显示错误消息
+      return Promise.reject(error)
+    }
+    
+    // 对于404错误，显示更友好的提示
+    if (error.response && error.response.status === 404) {
+      ElMessage.warning('暂无数据')
+    } else {
+      ElMessage.error(error.message || '请求错误')
+    }
+    
     return Promise.reject(error)
   })
 

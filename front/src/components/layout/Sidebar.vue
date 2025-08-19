@@ -103,25 +103,70 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
+import {getUserStorageQuota} from '@/api/user'
+
 
 const route = useRoute()
 const activeMenu = ref(route.path)
 
-const usedStorage = 45.8
-const totalStorage = 100
-const storagePercentage = computed(() => Math.round((usedStorage / totalStorage) * 100))
-const storageColor = computed(() => {
-  const percent = storagePercentage.value
-  return percent > 90 ? '#ef4444'
-    : percent > 70 ? '#f59e0b'
-      : '#10b981'
+// 存储配额数据
+const storageQuota = ref({
+    Used: 0,
+    Total: 10737418240, // 默认 10GB
+    UsedPercent: 0,
+    UsedGB: 0,
+    TotalGB: 10
 })
+
+// 计算已使用存储（GB）
+const usedStorage = computed(() => {
+    return storageQuota.value.UsedGB.toFixed(2) // 直接使用后端返回的 UsedGB
+})
+
+// 计算总存储（GB）
+const totalStorage = computed(() => {
+    return storageQuota.value.TotalGB.toFixed(2) // 直接使用后端返回的 TotalGB
+})
+
+// 计算存储百分比
+const storagePercentage = computed(() => {
+    return storageQuota.value.UsedPercent // 直接使用后端返回的 UsedPercent
+})
+
+// 动态颜色
+const storageColor = computed(() => {
+    const percent = storagePercentage.value
+    return percent > 90 ? '#ef4444' // 红色
+        : percent > 70 ? '#f59e0b'  // 橙色
+            : '#10b981'             // 绿色
+})
+
+const loadStorageQuota = async () => {
+    try {
+        const res = await getUserStorageQuota()
+        if (res) {
+            storageQuota.value = {
+                Used: res.Used || 0,
+                Total: res.Total || 10737418240, // 默认 10GB
+                UsedPercent: res.UsedPercent || 0,
+                UsedGB: res.UsedGB || 0,
+                TotalGB: res.TotalGB || 10
+            }
+        }
+    } catch (error) {
+        console.error('加载存储配额失败:', error)
+    }
+}
 
 const handleUpgrade = () => {
   console.log('升级存储空间')
 }
+
+onMounted(() => {
+    loadStorageQuota()
+})
 
 </script>
 

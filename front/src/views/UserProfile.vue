@@ -362,9 +362,9 @@ const handleAvatarChange = async (event) => {
         // 更新本地用户信息
         userInfo.value.avatar = avatarUrl
         store.commit('setUserInfo', { ...store.state.userInfo, avatar: avatarUrl })
-        ElMessage.success('头像上传成功')
+        ElMessage.success('头像更新成功')
     } catch (error) {
-        ElMessage.error('头像上传失败')
+        ElMessage.error('头像更新失败')
     } finally {
         // 清空input
         event.target.value = ''
