@@ -316,7 +316,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import {listFiles, createFolder, renameFile, deleteFile, previewFile, uploadFile} from '@/api/file'
 import {ElMessage} from 'element-plus'
 import {
@@ -396,9 +396,10 @@ const loadFiles = async () => {
     if (res.list) {
         fileList.value = res.list
         total.value = res.total
+    } else {
+        fileList.value = []
+        total.value = 0
     }
-    // fileList.value = res.list
-    // total.value = res.total
 }
 
 const handleOpenFolder = (item) => {
@@ -407,23 +408,24 @@ const handleOpenFolder = (item) => {
         return
     }
     currentParentId.value = item.id
-    currentPath.value.push(item.name)
-    pathIdStack.value.push(item.id)
+    // 进入文件夹时，追加路径，同时将当前目录 id 入栈
+    currentPath.value = [...currentPath.value, item.name]
+    pathIdStack.value = [...pathIdStack.value, item.id]
     loadFiles()
 }
 
 const goRoot = () => {
     const rootId = store.state.userInfo.rootFolderId
     currentParentId.value = rootId
-    currentPath.value = []
-    pathIdStack.value = [rootId]
+    currentPath.value = []       // 根目录不显示名字
+    pathIdStack.value = [rootId] // 只保存 rootId
     loadFiles()
 }
 
 const handleBreadcrumbClick = (index) => {
     currentPath.value = currentPath.value.slice(0, index + 1)
-    pathIdStack.value = pathIdStack.value.slice(0, index + 1)
-    currentParentId.value = pathIdStack.value[index] || store.state.userInfo.rootFolderId
+    pathIdStack.value = pathIdStack.value.slice(0, index + 2)
+    currentParentId.value = pathIdStack.value[pathIdStack.value.length - 1]
     loadFiles()
 }
 

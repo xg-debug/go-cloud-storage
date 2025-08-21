@@ -19,9 +19,9 @@ func NewFileController(service services.FileService) *FileController {
 
 // GetFilesRequest Gin 对 JSON 解析时，json:"xxx" 的名字要和 前端传的字段一致，且大小写敏感。
 type GetFilesRequest struct {
-	ParentId string `json:"parentId"`
-	Page     int    `json:"page"`
-	PageSize int    `json:"pageSize"`
+	ParentId string `json:"parentId" form:"parentId"`
+	Page     int    `json:"page" form:"page"`
+	PageSize int    `json:"pageSize" form:"pageSize"`
 }
 
 type RenameFileRequest struct {

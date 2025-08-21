@@ -78,15 +78,3 @@ type StorageQuota struct {
 	CreatedAt time.Time `gorm:"column:created_at;default:CURRENT_TIMESTAMP" json:"created_at"`
 	UpdatedAt time.Time `gorm:"column:updated_at;default:CURRENT_TIMESTAMP" json:"updated_at"`
 }
-
-// FileChunk 文件分片模型
-type FileChunk struct {
-	Id         int64     `gorm:"primaryKey;autoIncrement;column:id" json:"id"`
-	FileId     string    `gorm:"type:varchar(40);not null;column:file_id" json:"file_id"`
-	ChunkIndex int       `gorm:"not null;column:chunk_index" json:"chunk_index"`
-	ChunkHash  string    `gorm:"type:varchar(64);not null;column:chunk_hash" json:"chunk_hash"`
-	Size       int       `gorm:"not null;column:size" json:"size"`
-	OssEtag    string    `gorm:"type:varchar(64);not null;column:oss_etag" json:"oss_etag"`
-	UploadId   string    `gorm:"type:varchar(100);not null;column:upload_id" json:"upload_id"` // 对应 OSS 上传任务的 uploadId
-	CreatedAt  time.Time `gorm:"column:created_at;autoCreateTime" json:"created_at"`
-}

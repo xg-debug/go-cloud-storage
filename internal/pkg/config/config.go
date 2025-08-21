@@ -54,6 +54,7 @@ type AliyunOssConfig struct {
 	EndPoint     string `yaml:"endPoint"`
 	AccessId     string `yaml:"accessId"`
 	AccessSecret string `yaml:"accessSecret"`
+	Region       string `yaml:"region"`
 }
 
 func LoadConfig() (*Config, error) {
