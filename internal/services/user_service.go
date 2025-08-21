@@ -118,10 +118,15 @@ func (s *userService) GetProfile(userId int) (*vo.UserProfileResponse, error) {
 		return nil, errors.New("获取当前用户信息失败")
 	}
 	profile := &vo.UserProfileResponse{
-		Id:           user.Id,
-		Username:     user.Username,
-		Email:        user.Email,
-		Phone:        *user.Phone,
+		Id:       user.Id,
+		Username: user.Username,
+		Email:    user.Email,
+		Phone: func() string { // 避免空指针的问题
+			if user.Phone != nil {
+				return *user.Phone
+			}
+			return ""
+		}(),
 		Avatar:       user.Avatar,
 		OpenId:       user.OpenId,
 		RegisterTime: user.RegisterTime.Format("2006-01-02 15:04:05"),

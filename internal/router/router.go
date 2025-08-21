@@ -36,7 +36,7 @@ func SetUpRouter(db *gorm.DB, ossService *aliyunoss.OSSService) *gin.Engine {
 	favoriteRepo := repositories.NewFavoriteRepository(db)
 	shareRepo := repositories.NewShareRepository(db)
 	storageQuotaRepo := repositories.NewStorageQuotaRepository(db)
-	fileChunkRepo := repositories.NewFileChunkRepository(db)
+	uploadRepo := repositories.NewUploadRepository(db)
 
 	// 初始化服务
 	userService := services.NewUserService(userRepo, fileRepo, storageQuotaRepo, ossService)
@@ -47,12 +47,12 @@ func SetUpRouter(db *gorm.DB, ossService *aliyunoss.OSSService) *gin.Engine {
 	shareService := services.NewShareService(shareRepo, fileRepo)
 	statsService := services.NewStatsService(fileRepo, storageQuotaRepo, shareRepo)
 	storageQuotaService := services.NewStorageQuotaService(storageQuotaRepo)
-	fileChunkService := services.NewFileChunkService(fileChunkRepo, fileRepo, ossService)
+	uploadService := services.NewUploadService(uploadRepo, ossService)
 
 	loginCtrl := controller.NewLoginController(userService)
 	fileCtrl := controller.NewFileController(fileService)
 	userCtrl := controller.NewUserController(userService)
-	uploadCtrl := controller.NewUploadController(ossService, fileService, fileChunkService, storageQuotaRepo)
+	uploadCtrl := controller.NewUploadController(ossService, fileService, uploadService, storageQuotaRepo)
 	recycleCtrl := controller.NewRecycleController(recycleService)
 	favoriteCtrl := controller.NewFavoriteController(favoriteService)
 	categoryCtrl := controller.NewCategoryController(categoryService, fileService)
@@ -63,7 +63,7 @@ func SetUpRouter(db *gorm.DB, ossService *aliyunoss.OSSService) *gin.Engine {
 	ginServer.POST("/register", loginCtrl.Register)
 	ginServer.POST("/refresh-token", loginCtrl.RefreshToken)
 
-	authGroup := ginServer.Group("/")
+	authGroup := ginServer.Group("")
 	authGroup.Use(middleware.JWTAuthMiddleware())
 	authGroup.GET("/me", userCtrl.GetProfile)
 	authGroup.POST("/logout", loginCtrl.Logout)

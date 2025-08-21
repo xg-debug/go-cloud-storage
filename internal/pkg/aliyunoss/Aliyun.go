@@ -37,7 +37,7 @@ func NewOSSService(cfg *config.AliyunOssConfig) (*OSSService, error) {
 	}
 
 	credProvider := credentials.NewStaticCredentialsProvider(cfg.AccessId, cfg.AccessSecret)
-	ossCfg := oss.LoadDefaultConfig().WithCredentialsProvider(credProvider).WithRegion("cn-beijing").WithEndpoint(cfg.EndPoint)
+	ossCfg := oss.LoadDefaultConfig().WithCredentialsProvider(credProvider).WithRegion(cfg.Region).WithEndpoint(cfg.EndPoint)
 	client := oss.NewClient(ossCfg)
 
 	return &OSSService{
@@ -247,6 +247,9 @@ func (s *OSSService) UploadPart(ctx context.Context, objectKey, uploadId string,
 		UploadId:   oss.Ptr(uploadId),     // 上传Id
 		PartNumber: int32(partNumber),     // 分片编号
 		Body:       bytes.NewReader(data), // 上传数据
+		ProgressFn: func(increment, transferred, total int64) {
+			fmt.Printf("increment:%v, transferred:%v, total:%v\n", increment, transferred, total)
+		}, // 进度回调函数，用于显示上传进度
 	}
 
 	fmt.Printf("UploadPart - Request: Bucket=%s, Key=%s, UploadId=%s, PartNumber=%d\n",
@@ -256,7 +259,9 @@ func (s *OSSService) UploadPart(ctx context.Context, objectKey, uploadId string,
 	if err != nil {
 		return "", fmt.Errorf("上传分片失败: %w", err)
 	}
-	return *resp.ETag, nil
+
+	etag := strings.Trim(*resp.ETag, `"`)
+	return etag, nil
 }
 
 // CompleteMultipartUpload 合并所有分片

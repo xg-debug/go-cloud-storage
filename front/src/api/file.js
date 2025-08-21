@@ -89,50 +89,6 @@ export const uploadFile = (formData, onUploadProgress) => {
     })
 }
 
-// 分片上传 - 上传分片
-export const uploadChunk = (formData, onUploadProgress) => {
-    return request({
-        url: '/file/chunk/upload',
-        method: 'post',
-        data: formData,
-        headers: {'Content-Type': 'multipart/form-data'},
-        timeout: 5 * 60 * 1000, // 5分钟超时
-        onUploadProgress
-    })
-}
-
-// 分片上传 - 合并分片
-export const mergeChunks = (data) => {
-    return request({
-        url: '/file/chunk/merge',
-        method: 'post',
-        data,
-        timeout: 10 * 60 * 1000 // 10分钟超时
-    })
-}
-
-// 获取已上传的分片列表
-export const getUploadedChunks = (fileId) => {
-    return request({
-        url: '/file/chunk/uploaded',
-        method: 'get',
-        params: { fileId }
-    })
-}
-
-// 检查文件是否已存在（秒传）
-export const checkFileExists = (data) => {
-    return request({
-        url: '/file/chunk/check',
-        method: 'get',
-        params: {
-            fileHash: data.fileMD5,
-            fileName: data.fileName,
-            fileSize: data.fileSize
-        }
-    })
-}
-
 // 获取最近文件
 export const getRecentFiles = (timeRange) => {
     return request({
