@@ -11,7 +11,7 @@ type Config struct {
 	Database  DatabaseConfig  `yaml:"mysql"`
 	Redis     RedisConfig     `yaml:"redis"`
 	QQ        QQConfig        `yaml:"qq"`
-	AliyunOss AliyunOssConfig `yaml:"oss"`
+	AliyunOss AliyunOssConfig `yaml:"aliyunoss"`
 }
 
 type ServerConfig struct {

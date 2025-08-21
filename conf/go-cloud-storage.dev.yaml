@@ -1,6 +1,6 @@
 # config/config.yaml
 Server:
-  port: 8080
+  port: 8081
   env: dev
   storagePath: E:/go_work/go-cloud-storage/upload
 
@@ -28,7 +28,7 @@ Redis:
 AliyunOss:
   Host: https://go-cloud-storage.oss-cn-beijing.aliyuncs.com     # 阿里云OSS资源外网访问地址
   Bucket: go-cloud-storage                               # 阿里云OSS bucket名称
-  Endpoint: oss-cn-beijing.aliyuncs.com               # 阿里云OSS Endpoint
+  Endpoint: oss-cn-beijing.aliyuncs.com                 # 阿里云OSS Endpoint
   AccessId: LTAI5tP5qSBX9LDfKrA6repv                  # 阿里云OSS accessID
   AccessSecret: JTucvrRt9LUsBFJPoXWrEgXSdW4nZ4        # 阿里云OSS accessKey
 

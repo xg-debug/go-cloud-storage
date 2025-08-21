@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"go-cloud-storage/internal/models"
 	"go-cloud-storage/internal/models/vo"
-	"go-cloud-storage/internal/pkg/oss"
+	"go-cloud-storage/internal/pkg/aliyunoss"
 	"go-cloud-storage/internal/pkg/utils"
 	"go-cloud-storage/internal/repositories"
 	"log"
@@ -30,11 +30,11 @@ type userService struct {
 	userRepo         repositories.UserRepository
 	fileRepo         repositories.FileRepository
 	storageQuotaRepo repositories.StorageQuotaRepository
-	ossService       *oss.OSSService
+	ossService       *aliyunoss.OSSService
 }
 
 func NewUserService(userRepo repositories.UserRepository, fileRepo repositories.FileRepository,
-	storage repositories.StorageQuotaRepository, aliyunOss *oss.OSSService) UserService {
+	storage repositories.StorageQuotaRepository, aliyunOss *aliyunoss.OSSService) UserService {
 	return &userService{userRepo: userRepo, fileRepo: fileRepo, ossService: aliyunOss, storageQuotaRepo: storage}
 }
 

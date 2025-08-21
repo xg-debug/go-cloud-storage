@@ -1,4 +1,4 @@
-package oss
+package aliyunoss
 
 import (
 	"bytes"
@@ -7,8 +7,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"github.com/aliyun/alibabacloud-oss-go-sdk-v2/oss"
-	"github.com/aliyun/alibabacloud-oss-go-sdk-v2/oss/credentials"
 	"go-cloud-storage/internal/models"
 	"go-cloud-storage/internal/pkg/config"
 	"go-cloud-storage/internal/pkg/utils"
@@ -18,6 +16,9 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/aliyun/alibabacloud-oss-go-sdk-v2/oss"
+	"github.com/aliyun/alibabacloud-oss-go-sdk-v2/oss/credentials"
 )
 
 type OSSService struct {
@@ -47,7 +48,7 @@ func NewOSSService(cfg *config.AliyunOssConfig) (*OSSService, error) {
 }
 
 // UploadFromStream 上传文件
-// 注意：这里会把文件读入内存（io.ReadAll）。如果需要支持超大文件，后续可改成分片上传（MultipartUpload）。
+// 注意：这里会把文件读入内存（io.ReadAll）。（适合小文件）
 func (s *OSSService) UploadFromStream(ctx context.Context, r io.Reader, fileName string, userId int, parentId string, maxSize int64) (*models.File, error) {
 	if fileName == "" {
 		return nil, errors.New("文件名不能为空")
@@ -121,6 +122,11 @@ func (s *OSSService) UploadFromStream(ctx context.Context, r io.Reader, fileName
 
 func (s *OSSService) generateObjectURL(objectKey string) string {
 	return fmt.Sprintf("https://%s.%s/%s", s.bucket, s.endpoint, objectKey)
+}
+
+// GenerateObjectURL 生成对象URL（公开方法）
+func (s *OSSService) GenerateObjectURL(objectKey string) string {
+	return s.generateObjectURL(objectKey)
 }
 
 // 上传头像
@@ -215,5 +221,57 @@ func (s *OSSService) DeleteFiles(ctx context.Context, objectKeys []string) error
 
 	// 打印删除多个对象的结果
 	log.Printf("delete multiple objects result:%#v\n", result)
+	return nil
+}
+
+// InitiateMultipartUpload 初始化分片上传，返回 uploadId
+func (s *OSSService) InitiateMultipartUpload(ctx context.Context, objectKey string) (string, error) {
+	req := &oss.InitiateMultipartUploadRequest{
+		Bucket: oss.Ptr(s.bucket),
+		Key:    oss.Ptr(objectKey),
+	}
+	resp, err := s.client.InitiateMultipartUpload(ctx, req)
+	if err != nil {
+		return "", fmt.Errorf("初始化分片上传失败: %w", err)
+	}
+	return *resp.UploadId, nil
+}
+
+// UploadPart 上传单个分片
+func (s *OSSService) UploadPart(ctx context.Context, objectKey, uploadId string, partNumber int, data []byte) (string, error) {
+	fmt.Printf("UploadPart - objectKey: %s, uploadId: %s, partNumber: %d, dataSize: %d\n", objectKey, uploadId, partNumber, len(data))
+
+	req := &oss.UploadPartRequest{
+		Bucket:     oss.Ptr(s.bucket),
+		Key:        oss.Ptr(objectKey),
+		UploadId:   oss.Ptr(uploadId),     // 上传Id
+		PartNumber: int32(partNumber),     // 分片编号
+		Body:       bytes.NewReader(data), // 上传数据
+	}
+
+	fmt.Printf("UploadPart - Request: Bucket=%s, Key=%s, UploadId=%s, PartNumber=%d\n",
+		*req.Bucket, *req.Key, *req.UploadId, req.PartNumber)
+
+	resp, err := s.client.UploadPart(ctx, req)
+	if err != nil {
+		return "", fmt.Errorf("上传分片失败: %w", err)
+	}
+	return *resp.ETag, nil
+}
+
+// CompleteMultipartUpload 合并所有分片
+func (s *OSSService) CompleteMultipartUpload(ctx context.Context, objectKey, uploadId string, parts []oss.UploadPart) error {
+	req := &oss.CompleteMultipartUploadRequest{
+		Bucket:   oss.Ptr(s.bucket),
+		Key:      oss.Ptr(objectKey),
+		UploadId: oss.Ptr(uploadId),
+		CompleteMultipartUpload: &oss.CompleteMultipartUpload{
+			Parts: parts,
+		},
+	}
+	_, err := s.client.CompleteMultipartUpload(ctx, req)
+	if err != nil {
+		return fmt.Errorf("完成分片上传失败: %w", err)
+	}
 	return nil
 }

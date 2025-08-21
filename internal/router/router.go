@@ -9,19 +9,19 @@ import (
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 
-	"go-cloud-storage/internal/pkg/oss"
+	"go-cloud-storage/internal/pkg/aliyunoss"
 	"go-cloud-storage/internal/services"
 
 	"gorm.io/gorm"
 )
 
-func SetUpRouter(db *gorm.DB, ossService *oss.OSSService) *gin.Engine {
+func SetUpRouter(db *gorm.DB, ossService *aliyunoss.OSSService) *gin.Engine {
 	// 创建一个服务
 	ginServer := gin.Default()
 
 	// 配置 CORS 中间件
 	ginServer.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"http://localhost:8080"}, // 你的前端地址
+		AllowOrigins:     []string{"http://localhost:8080", "http://localhost:8081"}, // 你的前端地址
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
 		ExposeHeaders:    []string{"Content-Length"},
@@ -35,9 +35,8 @@ func SetUpRouter(db *gorm.DB, ossService *oss.OSSService) *gin.Engine {
 	recycleRepo := repositories.NewRecycleRepository(db)
 	favoriteRepo := repositories.NewFavoriteRepository(db)
 	shareRepo := repositories.NewShareRepository(db)
-
-	// 初始化仓库
 	storageQuotaRepo := repositories.NewStorageQuotaRepository(db)
+	fileChunkRepo := repositories.NewFileChunkRepository(db)
 
 	// 初始化服务
 	userService := services.NewUserService(userRepo, fileRepo, storageQuotaRepo, ossService)
@@ -48,11 +47,12 @@ func SetUpRouter(db *gorm.DB, ossService *oss.OSSService) *gin.Engine {
 	shareService := services.NewShareService(shareRepo, fileRepo)
 	statsService := services.NewStatsService(fileRepo, storageQuotaRepo, shareRepo)
 	storageQuotaService := services.NewStorageQuotaService(storageQuotaRepo)
+	fileChunkService := services.NewFileChunkService(fileChunkRepo, fileRepo, ossService)
 
 	loginCtrl := controller.NewLoginController(userService)
 	fileCtrl := controller.NewFileController(fileService)
 	userCtrl := controller.NewUserController(userService)
-	uploadCtrl := controller.NewUploadController(ossService, fileService, storageQuotaRepo)
+	uploadCtrl := controller.NewUploadController(ossService, fileService, fileChunkService, storageQuotaRepo)
 	recycleCtrl := controller.NewRecycleController(recycleService)
 	favoriteCtrl := controller.NewFavoriteController(favoriteService)
 	categoryCtrl := controller.NewCategoryController(categoryService, fileService)
@@ -67,6 +67,17 @@ func SetUpRouter(db *gorm.DB, ossService *oss.OSSService) *gin.Engine {
 	authGroup.Use(middleware.JWTAuthMiddleware())
 	authGroup.GET("/me", userCtrl.GetProfile)
 	authGroup.POST("/logout", loginCtrl.Logout)
+
+	// API路由组 - 分片上传接口
+	api := ginServer.Group("/api")
+	api.Use(middleware.JWTAuthMiddleware())
+	{
+		api.POST("/upload/init", uploadCtrl.InitUpload)         // 初始化分片上传
+		api.POST("/upload/chunk", uploadCtrl.UploadChunk)       // 上传分片
+		api.POST("/upload/merge", uploadCtrl.MergeChunks)       // 合并分片
+		api.GET("/upload/chunks", uploadCtrl.GetUploadedChunks) // 获取已上传分片
+		api.GET("/upload/check", uploadCtrl.CheckFileExists)    // 检查文件是否存在（秒传）
+	}
 
 	user := ginServer.Group("user")
 	user.Use(middleware.JWTAuthMiddleware())
@@ -89,6 +100,7 @@ func SetUpRouter(db *gorm.DB, ossService *oss.OSSService) *gin.Engine {
 		file.POST("/move")
 		file.GET("/preview/:fileId", fileCtrl.PreviewFile)
 		file.GET("/recent", fileCtrl.GetRecentFiles)
+
 	}
 
 	favorite := ginServer.Group("favorite")
@@ -112,14 +124,14 @@ func SetUpRouter(db *gorm.DB, ossService *oss.OSSService) *gin.Engine {
 		recycle.PUT("/batch", recycleCtrl.RestoreSelected)
 	}
 
-	// 添加分类路由
+	// 分类路由
 	category := ginServer.Group("category")
 	category.Use(middleware.JWTAuthMiddleware())
 	{
 		category.POST("/files", categoryCtrl.GetFilesByCategory)
 	}
 
-	// 添加分享路由
+	// 分享路由
 	share := ginServer.Group("share")
 	share.Use(middleware.JWTAuthMiddleware())
 	{

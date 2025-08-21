@@ -64,6 +64,7 @@ type FileService interface {
 	GetRecentFiles(userId int, timeRange string) ([]*RecentFile, error)
 	GetFilePath(file *models.File) (string, error)
 	PreviewFile(ctx context.Context, userId int, fileId string) (*FilePreview, error)
+	CheckFileExistsByMD5(userId int, fileMD5 string) (bool, *models.File, error)
 }
 
 type fileService struct {
@@ -382,4 +383,22 @@ func (s *fileService) PreviewFile(ctx context.Context, userId int, fileId string
 		Modified:     file.UpdatedAt.Format("2006-01-02 15:04:05"),
 		FilePath:     filePath,
 	}, nil
+}
+
+// 检查文件是否存在（通过MD5）
+func (s *fileService) CheckFileExistsByMD5(userId int, fileMD5 string) (bool, *models.File, error) {
+	file, err := s.fileRepo.GetFileByMD5(userId, fileMD5)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return false, nil, nil
+		}
+		return false, nil, err
+	}
+
+	// 检查文件是否已删除
+	if file.IsDeleted {
+		return false, nil, nil
+	}
+
+	return true, file, nil
 }

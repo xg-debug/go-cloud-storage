@@ -1,10 +1,11 @@
 package main
 
 import (
+	"fmt"
+	"go-cloud-storage/internal/pkg/aliyunoss"
 	"go-cloud-storage/internal/pkg/cache"
 	"go-cloud-storage/internal/pkg/config"
 	"go-cloud-storage/internal/pkg/mysql"
-	"go-cloud-storage/internal/pkg/oss"
 	"go-cloud-storage/internal/router"
 	"log"
 )
@@ -29,7 +30,7 @@ func main() {
 	defer cache.Close() // 确保程序退出时关闭Redis连接
 
 	// 初始化Oss
-	ossService, err := oss.NewOSSService(&cfg.AliyunOss)
+	ossService, err := aliyunoss.NewOSSService(&cfg.AliyunOss)
 	if err != nil {
 		log.Fatalf("OSS初始化失败: " + err.Error())
 	}
@@ -39,7 +40,8 @@ func main() {
 	r := router.SetUpRouter(mysql.GormDB, ossService)
 
 	// 将ossService注入HTTP服务器
-	if err := r.Run(":8081"); err != nil {
+	port := fmt.Sprintf(":%d", cfg.Server.Port)
+	if err := r.Run(port); err != nil {
 		log.Fatal("服务器启动失败...")
 	}
 }

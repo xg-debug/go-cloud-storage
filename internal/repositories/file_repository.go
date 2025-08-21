@@ -23,6 +23,7 @@ type FileRepository interface {
 	GetFileById(id string) (*models.File, error)
 	GetFileByIds(fileIds []string) ([]models.File, error)
 	GetUserFileByID(userId int, fileId string) (*models.File, error)
+	GetFileByMD5(userId int, fileMD5 string) (*models.File, error)
 	UpdateFile(file *models.File, updateFields map[string]interface{}) error
 	UpdateFileNameById(fileId, newName string) error
 
@@ -302,4 +303,11 @@ func (r *fileRepo) GetAllUserFiles(userId int) ([]models.File, error) {
 	var files []models.File
 	err := r.db.Where("user_id = ? AND is_deleted = ?", userId, false).Find(&files).Error
 	return files, err
+}
+
+// GetFileByMD5 根据MD5查找用户文件（用于秒传）
+func (r *fileRepo) GetFileByMD5(userId int, fileMD5 string) (*models.File, error) {
+	var file models.File
+	err := r.db.Where("user_id = ? AND file_hash = ? AND is_deleted = ?", userId, fileMD5, false).First(&file).Error
+	return &file, err
 }

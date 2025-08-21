@@ -2,7 +2,7 @@
     <div class="header-container">
         <!-- 左侧：Logo -->
         <div class="header-left">
-            <div class="logo">CloudLite</div>
+            <div class="logo">CloudDisk</div>
         </div>
 
         <!-- 右侧：搜索框 + 通知 + 用户菜单 -->

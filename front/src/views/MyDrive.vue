@@ -48,7 +48,28 @@
         <!-- 工具栏 -->
         <div class="toolbar">
             <div class="toolbar-left">
+                <el-dropdown @command="handleUploadCommand">
+                    <el-button type="primary" :icon="Upload">
+                        上传文件
+                        <el-icon class="el-icon--right"><arrow-down /></el-icon>
+                    </el-button>
+                    <template #dropdown>
+                        <el-dropdown-menu>
+                            <el-dropdown-item command="normal">
+                                <el-icon><Upload /></el-icon>
+                                普通上传
+                            </el-dropdown-item>
+                            <el-dropdown-item command="chunk">
+                                <el-icon><Upload /></el-icon>
+                                大文件上传
+                            </el-dropdown-item>
+                        </el-dropdown-menu>
+                    </template>
+                </el-dropdown>
+                
+                <!-- 隐藏的普通上传组件 -->
                 <el-upload
+                    ref="normalUploadRef"
                     :http-request="uploadRequest"
                     :data="{ parentId: currentParentId }"
                     :multiple="true"
@@ -56,11 +77,10 @@
                     :before-upload="beforeUpload"
                     :on-success="handleUploadSuccess"
                     :on-error="handleUploadError"
+                    style="display: none"
                 >
-                    <el-button type="primary" :icon="Upload">
-                        上传文件
-                    </el-button>
                 </el-upload>
+                
                 <el-button :icon="FolderAdd" @click="handleNewFolder">
                     新建文件夹
                 </el-button>
@@ -247,6 +267,25 @@
             @success="handleShareSuccess"
         />
 
+        <!-- 大文件上传对话框 -->
+        <el-dialog
+            v-model="chunkUploadDialogVisible"
+            title="大文件上传"
+            width="600px"
+            :close-on-click-modal="false"
+        >
+            <ChunkUpload
+                :folder-id="currentParentId"
+                :chunk-size="2 * 1024 * 1024"
+                :max-file-size="5 * 1024 * 1024 * 1024"
+                @upload-success="handleChunkUploadSuccess"
+                @upload-error="handleChunkUploadError"
+            />
+            <template #footer>
+                <el-button @click="chunkUploadDialogVisible = false">关闭</el-button>
+            </template>
+        </el-dialog>
+
         <el-dialog
             v-model="newFolderDialogVisible"
             title="新建文件夹"
@@ -299,6 +338,7 @@ import {
 import { useStore } from 'vuex'
 import {addFavorite} from "@/api/favorite";
 import CreateShareDialog from '@/components/CreateShareDialog.vue'
+import ChunkUpload from '@/components/ChunkUpload.vue'
 
 const store = useStore()
 const viewMode = ref('grid')
@@ -322,6 +362,8 @@ const deleteTarget = ref({})
 const deleting = ref(false)
 const shareDialogVisible = ref(false)
 const shareFileInfo = ref({})
+const chunkUploadDialogVisible = ref(false)
+const normalUploadRef = ref()
 let tempFolderId = null
 let hoverTimeout = null
 
@@ -583,6 +625,28 @@ const handleDownload = (item) => {
 const handleMove = (item) => {
     ElMessage.info(`移动文件: ${item.name}`)
     // TODO: 实现移动逻辑
+}
+
+// 处理上传命令
+const handleUploadCommand = (command) => {
+    if (command === 'normal') {
+        // 触发普通上传
+        normalUploadRef.value.$el.querySelector('input').click()
+    } else if (command === 'chunk') {
+        // 打开大文件上传对话框
+        chunkUploadDialogVisible.value = true
+    }
+}
+
+// 分片上传成功回调
+const handleChunkUploadSuccess = (fileInfo) => {
+    ElMessage.success(`文件 ${fileInfo.fileName} 上传成功！`)
+    loadFiles() // 刷新文件列表
+}
+
+// 分片上传错误回调
+const handleChunkUploadError = (error) => {
+    ElMessage.error(`上传失败: ${error.message}`)
 }
 </script>
 

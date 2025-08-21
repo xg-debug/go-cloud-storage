@@ -5,7 +5,7 @@ import store from '@/store'
 
 const service = axios.create({
   baseURL: 'http://localhost:8081',
-  timeout: 5000,
+  timeout: 30 * 60 * 1000, // 30分钟超时，适合大文件上传
   withCredentials: true, // 允许携带 Cookie
 })
 
