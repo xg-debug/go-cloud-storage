@@ -79,7 +79,7 @@
               <el-icon><Download /></el-icon>
               下载
             </el-button>
-            <el-button size="small" type="danger" link @click="unfavorite(row)">
+            <el-button size="small" type="danger" link @click="unFavorite(row)">
               <el-icon><Delete /></el-icon>
               取消收藏
             </el-button>
@@ -160,7 +160,7 @@ const onPageChange = (page) => {
 const openFile = (row) => {
   if (row.is_dir) {
     // 跳转到目录页面
-    router.push({ name: 'FileList', query: { parentId: row.id } })
+    router.push({ name: 'FileList', query: { parentId: row.file_id } })
   } else {
     // 文件预览，可以在新窗口打开或者使用内置预览组件
     window.open(row.file_url, '_blank')
@@ -176,10 +176,11 @@ const downloadFile = (row) => {
   }
 }
 
-const unfavorite = async (row) => {
+const unFavorite = async (row) => {
   try {
-    await cancelFavorite(row.id)
-    starredItems.value = starredItems.value.filter(i => i.id !== row.id)
+      console.log(row.file_id)
+    await cancelFavorite(row.file_id)
+    starredItems.value = starredItems.value.filter(i => i.file_id !== row.file_id)
     totalCount.value = totalCount.value - 1
   } catch (err) {
     console.error('取消收藏失败', err)
@@ -190,7 +191,7 @@ const locateFile = (row) => {
   // 跳转到所在目录，并传 fileId 用于高亮
   router.push({
     name: 'FileList',
-    query: { parentId: row.parentId, highlightFileId: row.id }
+    query: { parentId: row.parentId, highlightFileId: row.file_id }
   })
 }
 
@@ -207,7 +208,7 @@ const previewFile = (row) => {
     // 可预览的文件类型
     if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'mp4', 'avi', 'mov', 'mp3', 'wav', 'pdf', 'txt', 'doc', 'docx'].includes(ext)) {
       // 构建预览URL - 需要后端提供 /api/files/preview/:id 接口
-      const previewUrl = `/api/files/preview/${row.id}`
+      const previewUrl = `/api/files/preview/${row.file_id}`
       window.open(previewUrl, '_blank')
     } else {
       // 不支持预览的文件类型提示用户

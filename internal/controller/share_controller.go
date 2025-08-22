@@ -21,10 +21,10 @@ func NewShareController(shareService services.ShareService) *ShareController {
 
 // CreateShare 创建分享
 func (c *ShareController) CreateShare(ctx *gin.Context) {
-	userID := ctx.GetInt("user_id")
+	userId := ctx.GetInt("userId")
 
 	var req struct {
-		FileID         string `json:"file_id" binding:"required"`
+		FileId         string `json:"file_id" binding:"required"`
 		ExtractionCode string `json:"extraction_code"`
 		ExpireDays     int    `json:"expire_days"` // 0表示永久有效
 	}
@@ -34,7 +34,7 @@ func (c *ShareController) CreateShare(ctx *gin.Context) {
 		return
 	}
 
-	share, err := c.shareService.CreateShare(userID, req.FileID, req.ExtractionCode, req.ExpireDays)
+	share, err := c.shareService.CreateShare(userId, req.FileId, req.ExtractionCode, req.ExpireDays)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -49,9 +49,9 @@ func (c *ShareController) CreateShare(ctx *gin.Context) {
 
 // GetUserShares 获取用户的分享列表
 func (c *ShareController) GetUserShares(ctx *gin.Context) {
-	userID := ctx.GetInt("user_id")
+	userId := ctx.GetInt("userId")
 
-	shares, err := c.shareService.GetUserShares(userID)
+	shares, err := c.shareService.GetUserShares(userId)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -66,15 +66,15 @@ func (c *ShareController) GetUserShares(ctx *gin.Context) {
 
 // GetShareDetail 获取分享详情
 func (c *ShareController) GetShareDetail(ctx *gin.Context) {
-	shareID, err := strconv.Atoi(ctx.Param("shareId"))
+	shareId, err := strconv.Atoi(ctx.Param("shareId"))
 	if err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": "无效的分享ID"})
 		return
 	}
 
-	userID := ctx.GetInt("user_id")
+	userId := ctx.GetInt("userId")
 
-	share, err := c.shareService.GetShareDetail(shareID, userID)
+	share, err := c.shareService.GetShareDetail(shareId, userId)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -89,15 +89,15 @@ func (c *ShareController) GetShareDetail(ctx *gin.Context) {
 
 // CancelShare 取消分享
 func (c *ShareController) CancelShare(ctx *gin.Context) {
-	shareID, err := strconv.Atoi(ctx.Param("shareId"))
+	shareId, err := strconv.Atoi(ctx.Param("shareId"))
 	if err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": "无效的分享ID"})
 		return
 	}
 
-	userID := ctx.GetInt("user_id")
+	userId := ctx.GetInt("userId")
 
-	err = c.shareService.CancelShare(shareID, userID)
+	err = c.shareService.CancelShare(shareId, userId)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -117,9 +117,9 @@ func (c *ShareController) DeleteShare(ctx *gin.Context) {
 		return
 	}
 
-	userID := ctx.GetInt("user_id")
+	userId := ctx.GetInt("userId")
 
-	err = c.shareService.DeleteShare(shareID, userID)
+	err = c.shareService.DeleteShare(shareID, userId)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
