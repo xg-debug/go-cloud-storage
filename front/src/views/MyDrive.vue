@@ -160,7 +160,7 @@
                                 <Folder />
                             </el-icon>
                             <el-image
-                                v-else-if="['jpg', 'png', 'gif'].includes(item.extension)"
+                                v-else-if="['jpg','png','gif','jpeg','webp',].includes(item.extension)"
                                 :src="item.thumbnail_url"
                                 fit="cover"
                                 class="thumbnail-image"

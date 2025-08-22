@@ -167,7 +167,7 @@ func (s *OSSService) UploadAvatarFromStream(ctx context.Context, r io.Reader, us
 	return avatarURL, nil
 }
 
-// DownloadFile 下载OSS文件
+// DownloadFile 下载 OSS文件
 func (s *OSSService) DownloadFile(ctx context.Context, objectKey string) (io.ReadCloser, error) {
 	request := &oss.GetObjectRequest{
 		Bucket: oss.Ptr(s.bucket),
@@ -180,7 +180,7 @@ func (s *OSSService) DownloadFile(ctx context.Context, objectKey string) (io.Rea
 	return resp.Body, nil
 }
 
-// DeleteFile 删除OSS文件
+// DeleteFile 删除 OSS文件
 func (s *OSSService) DeleteFile(ctx context.Context, objectKey string) error {
 	request := &oss.DeleteObjectRequest{
 		Bucket: oss.Ptr(s.bucket),
@@ -214,13 +214,11 @@ func (s *OSSService) DeleteFiles(ctx context.Context, objectKeys []string) error
 	}
 
 	// 执行删除多个对象的操作并处理结果
-	result, err := s.client.DeleteMultipleObjects(ctx, request)
+	_, err := s.client.DeleteMultipleObjects(ctx, request)
 	if err != nil {
 		return fmt.Errorf("删除多个 OSS 文件失败: %v", err)
 	}
 
-	// 打印删除多个对象的结果
-	log.Printf("delete multiple objects result:%#v\n", result)
 	return nil
 }
 

@@ -41,7 +41,7 @@ func SetUpRouter(db *gorm.DB, ossService *aliyunoss.OSSService) *gin.Engine {
 	// 初始化服务
 	userService := services.NewUserService(userRepo, fileRepo, storageQuotaRepo, ossService)
 	fileService := services.NewFileService(db, fileRepo, storageQuotaRepo)
-	recycleService := services.NewRecycleService(db, recycleRepo, fileRepo)
+	recycleService := services.NewRecycleService(db, ossService, recycleRepo, fileRepo)
 	favoriteService := services.NewFavoriteService(favoriteRepo, fileService)
 	categoryService := services.NewCategoryService(db, fileRepo)
 	shareService := services.NewShareService(shareRepo, fileRepo)

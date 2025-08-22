@@ -36,7 +36,7 @@ func (rc *RecycleController) DeletePermanent(c *gin.Context) {
 		return
 	}
 
-	err := rc.recycleService.DeleteOne(fileId)
+	err := rc.recycleService.DeleteOne(c.Request.Context(), fileId)
 	if err != nil {
 		utils.Fail(c, http.StatusInternalServerError, "删除文件失败")
 		return
@@ -55,7 +55,7 @@ func (rc *RecycleController) DeleteSelected(c *gin.Context) {
 		utils.Fail(c, http.StatusBadRequest, "文件ID列表不能为空")
 		return
 	}
-	if err := rc.recycleService.DeleteSelected(fileIDs); err != nil {
+	if err := rc.recycleService.DeleteSelected(c.Request.Context(), fileIDs); err != nil {
 		utils.Fail(c, http.StatusInternalServerError, "批量删除失败")
 		return
 	}
@@ -65,7 +65,7 @@ func (rc *RecycleController) DeleteSelected(c *gin.Context) {
 func (rc *RecycleController) ClearRecycleBin(c *gin.Context) {
 	userId := c.GetInt("userId")
 
-	if err := rc.recycleService.ClearRecycles(userId); err != nil {
+	if err := rc.recycleService.ClearRecycles(c.Request.Context(), userId); err != nil {
 		utils.Fail(c, http.StatusInternalServerError, "清空回收站失败")
 		return
 	}

@@ -26,6 +26,8 @@ type FileRepository interface {
 	GetFileByMD5(userId int, fileMD5 string) (*models.File, error)
 	UpdateFile(file *models.File, updateFields map[string]interface{}) error
 	UpdateFileNameById(fileId, newName string) error
+	GetObjectKeysByIds(fileIds []string) ([]string, error)
+	GetObjectKeysByUserId(userId int) ([]string, error)
 
 	SoftDeleteFile(db *gorm.DB, userId int, fileId string) error
 	AddToRecycle(db *gorm.DB, recycleEntry *models.RecycleBin) error
@@ -162,6 +164,18 @@ func (r *fileRepo) UpdateFile(file *models.File, updateFields map[string]interfa
 
 func (r *fileRepo) UpdateFileNameById(fileId, newName string) error {
 	return r.db.Model(&models.File{}).Where("id = ?", fileId).Update("name", newName).Error
+}
+
+func (r *fileRepo) GetObjectKeysByIds(fileIds []string) ([]string, error) {
+	var objectKeys []string
+	err := r.db.Model(&models.File{}).Select("oss_object_key").Where("id IN ?", fileIds).Find(&objectKeys).Error
+	return objectKeys, err
+}
+
+func (r *fileRepo) GetObjectKeysByUserId(userId int) ([]string, error) {
+	var objectKeys []string
+	err := r.db.Model(&models.File{}).Select("oss_object_key").Where("user_id = ? AND is_deleted = ?", userId, true).Find(&objectKeys).Error
+	return objectKeys, err
 }
 
 // SoftDeleteFile 软删除文件
