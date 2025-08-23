@@ -2,17 +2,17 @@ package repositories
 
 import (
 	"go-cloud-storage/internal/models"
+
 	"gorm.io/gorm"
 )
 
 type UploadRepository interface {
-	CreateTask(task *models.UploadTask) error
-	GetTask(taskId string) (*models.UploadTask, error)
-	UpdateTaskStatus(taskId string, status int) error
-
-	CreateChunks(chunks []models.FileChunk) error
-	UpdateChunk(taskId string, index int, etag string, size int64) error
-	GetChunks(taskId string) ([]models.FileChunk, error)
+	Create(task *models.UploadTask) error
+	Update(task *models.UploadTask) error
+	GetById(id string) (*models.UploadTask, error)
+	FindByUserAndHash(userId int, fileHash string) (*models.UploadTask, error)
+	GetIncompleteByUserId(userId int) ([]models.UploadTask, error)
+	Delete(id string) error
 }
 
 type uploadRepo struct {
@@ -23,32 +23,55 @@ func NewUploadRepository(db *gorm.DB) UploadRepository {
 	return &uploadRepo{db: db}
 }
 
-func (r *uploadRepo) CreateTask(task *models.UploadTask) error {
+func (r *uploadRepo) Create(task *models.UploadTask) error {
 	return r.db.Create(task).Error
 }
 
-func (r *uploadRepo) GetTask(taskId string) (*models.UploadTask, error) {
-	var task *models.UploadTask
-	err := r.db.Where("id = ?", taskId).First(&task).Error
-	return task, err
+func (r *uploadRepo) Update(task *models.UploadTask) error {
+	return r.db.Save(task).Error
 }
 
-func (r *uploadRepo) UpdateTaskStatus(taskId string, status int) error {
-	return r.db.Model(&models.UploadTask{}).Where("id = ?", taskId).Update("status", status).Error
+func (r *uploadRepo) GetById(id string) (*models.UploadTask, error) {
+	var task models.UploadTask
+	err := r.db.First(&task, "id = ?", id).Error
+	if err != nil {
+		return nil, err
+	}
+	if task.UploadedChunks == nil {
+		task.UploadedChunks = []models.UploadedChunk{}
+	}
+	return &task, nil
 }
 
-func (r *uploadRepo) CreateChunks(chunks []models.FileChunk) error {
-	return r.db.Create(&chunks).Error
+func (r *uploadRepo) FindByUserAndHash(userId int, fileHash string) (*models.UploadTask, error) {
+	var task models.UploadTask
+	err := r.db.First(&task, "user_id = ? AND file_hash = ?", userId, fileHash).Error
+	if err != nil {
+		return nil, err
+	}
+	if task.UploadedChunks == nil {
+		task.UploadedChunks = []models.UploadedChunk{}
+	}
+	return &task, nil
 }
 
-func (r *uploadRepo) UpdateChunk(taskId string, index int, etag string, size int64) error {
-	return r.db.Model(&models.FileChunk{}).
-		Where("task_id = ? AND chunk_index = ?", taskId, index).
-		Updates(map[string]interface{}{"etag": etag, "size": size, "status": 1}).Error
+func (r *uploadRepo) GetIncompleteByUserId(userId int) ([]models.UploadTask, error) {
+	var tasks []models.UploadTask
+	err := r.db.Where("user_id = ? AND status = ?", userId, 0).Find(&tasks).Error
+	if err != nil {
+		return nil, err
+	}
+
+	// 确保每个任务的UploadedChunks不为nil
+	for i := range tasks {
+		if tasks[i].UploadedChunks == nil {
+			tasks[i].UploadedChunks = []models.UploadedChunk{}
+		}
+	}
+
+	return tasks, nil
 }
 
-func (r *uploadRepo) GetChunks(taskId string) ([]models.FileChunk, error) {
-	var chunks []models.FileChunk
-	err := r.db.Where("task_id = ?", taskId).Find(&chunks).Error
-	return chunks, err
+func (r *uploadRepo) Delete(id string) error {
+	return r.db.Delete(&models.UploadTask{}, "id = ?", id).Error
 }

@@ -69,14 +69,16 @@ func SetUpRouter(db *gorm.DB, ossService *aliyunoss.OSSService) *gin.Engine {
 	authGroup.POST("/logout", loginCtrl.Logout)
 
 	// API路由组 - 分片上传接口
-	api := ginServer.Group("/api")
-	api.Use(middleware.JWTAuthMiddleware())
+	upload := ginServer.Group("/upload-tasks")
+	upload.Use(middleware.JWTAuthMiddleware())
 	{
-		api.POST("/upload/init", uploadCtrl.InitUpload)         // 初始化分片上传
-		api.POST("/upload/chunk", uploadCtrl.UploadChunk)       // 上传分片
-		api.POST("/upload/merge", uploadCtrl.MergeChunks)       // 合并分片
-		api.GET("/upload/chunks", uploadCtrl.GetUploadedChunks) // 获取已上传分片
-		api.GET("/upload/check", uploadCtrl.CheckFileExists)    // 检查文件是否存在（秒传）
+		upload.POST("", uploadCtrl.InitUpload) // 初始化分片上传
+		upload.GET("/:taskId/chunks/:partNumber/url", uploadCtrl.GetChunkPresignedURL)
+		upload.PATCH("/:taskId/chunks/:partNumber", uploadCtrl.MarkChunkUploaded)
+		upload.GET("/:taskId", uploadCtrl.GetTask)
+		upload.POST("/:taskId/complete", uploadCtrl.CompleteUpload)
+		upload.GET("/incomplete", uploadCtrl.GetIncompleteTasks) // 获取未完成的上传任务
+		upload.DELETE("/:taskId", uploadCtrl.DeleteTask)         // 删除上传任务
 	}
 
 	user := ginServer.Group("user")
@@ -100,7 +102,13 @@ func SetUpRouter(db *gorm.DB, ossService *aliyunoss.OSSService) *gin.Engine {
 		file.POST("/move")
 		file.GET("/preview/:fileId", fileCtrl.PreviewFile)
 		file.GET("/recent", fileCtrl.GetRecentFiles)
+	}
 
+	// 文件检查API
+	files := ginServer.Group("files")
+	files.Use(middleware.JWTAuthMiddleware())
+	{
+		files.POST("/check-exists", uploadCtrl.CheckFileExists) // 检查文件是否存在
 	}
 
 	favorite := ginServer.Group("favorite")

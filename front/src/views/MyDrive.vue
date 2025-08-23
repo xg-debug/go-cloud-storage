@@ -305,7 +305,7 @@
         >
             <ChunkUpload
                     :folder-id="currentParentId"
-                    :chunk-size="2 * 1024 * 1024"
+                    :chunk-size="20 * 1024 * 1024"
                     :max-file-size="5 * 1024 * 1024 * 1024"
                     @upload-success="handleChunkUploadSuccess"
                     @upload-error="handleChunkUploadError"
@@ -528,9 +528,9 @@ const confirmNewFolder = async () => {
 }
 
 const beforeUpload = (file) => {
-    const maxSize = 1024 * 1024 * 1024 // 1GB
+    const maxSize = 10 * 1024 * 1024 // 50MB
     if (file.size > maxSize) {
-        ElMessage.error('文件大小不能超过1GB')
+        ElMessage.error('文件大小不能超过10MB')
         return false
     }
     return true

@@ -39,7 +39,6 @@ func main() {
 
 	r := router.SetUpRouter(mysql.GormDB, ossService)
 
-	// 将ossService注入HTTP服务器
 	port := fmt.Sprintf(":%d", cfg.Server.Port)
 	if err := r.Run(port); err != nil {
 		log.Fatal("服务器启动失败...")

@@ -148,11 +148,11 @@ const loadStorageQuota = async () => {
         const res = await getUserStorageQuota()
         if (res) {
             storageQuota.value = {
-                Used: res.Used || 0,
-                Total: res.Total || 10737418240, // 默认 10GB
-                UsedPercent: res.UsedPercent || 0,
-                UsedGB: res.UsedGB || 0,
-                TotalGB: res.TotalGB || 10
+                Used: res.used || 0,
+                Total: res.total || 10737418240, // 默认 10GB
+                UsedPercent: res.used_percent || 0,
+                UsedGB: res.used_gb || 0,
+                TotalGB: res.total_gb || 10
             }
         }
     } catch (error) {

@@ -402,3 +402,8 @@ func (s *fileService) CheckFileExistsByMD5(userId int, fileMD5 string) (bool, *m
 
 	return true, file, nil
 }
+
+// 检查文件是否存在（通过Hash）
+func (s *fileService) CheckFileExistsByHash(fileHash string, userId int) (bool, *models.File, error) {
+	return s.CheckFileExistsByMD5(userId, fileHash)
+}

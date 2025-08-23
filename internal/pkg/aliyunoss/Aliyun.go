@@ -235,46 +235,74 @@ func (s *OSSService) InitiateMultipartUpload(ctx context.Context, objectKey stri
 	return *resp.UploadId, nil
 }
 
-// UploadPart 上传单个分片
-func (s *OSSService) UploadPart(ctx context.Context, objectKey, uploadId string, partNumber int, data []byte) (string, error) {
-	fmt.Printf("UploadPart - objectKey: %s, uploadId: %s, partNumber: %d, dataSize: %d\n", objectKey, uploadId, partNumber, len(data))
-
-	req := &oss.UploadPartRequest{
-		Bucket:     oss.Ptr(s.bucket),
-		Key:        oss.Ptr(objectKey),
-		UploadId:   oss.Ptr(uploadId),     // 上传Id
-		PartNumber: int32(partNumber),     // 分片编号
-		Body:       bytes.NewReader(data), // 上传数据
-		ProgressFn: func(increment, transferred, total int64) {
-			fmt.Printf("increment:%v, transferred:%v, total:%v\n", increment, transferred, total)
-		}, // 进度回调函数，用于显示上传进度
-	}
-
-	fmt.Printf("UploadPart - Request: Bucket=%s, Key=%s, UploadId=%s, PartNumber=%d\n",
-		*req.Bucket, *req.Key, *req.UploadId, req.PartNumber)
-
-	resp, err := s.client.UploadPart(ctx, req)
+// GeneratePresignedURL 生成某个分片的预签名
+func (s *OSSService) GeneratePresignedURL(ctx context.Context, objectKey, uploadId string, partNumber int, expire time.Duration) (string, error) {
+	signedResult, err := s.client.Presign(ctx, &oss.UploadPartRequest{
+		Bucket:     &s.bucket,
+		Key:        &objectKey,
+		UploadId:   &uploadId,
+		PartNumber: int32(partNumber),
+	}, oss.PresignExpiration(time.Now().Add(expire)))
 	if err != nil {
-		return "", fmt.Errorf("上传分片失败: %w", err)
+		return "", err
 	}
-
-	etag := strings.Trim(*resp.ETag, `"`)
-	return etag, nil
+	return signedResult.URL, nil
 }
 
-// CompleteMultipartUpload 合并所有分片
+// CompleteMultipartUpload 完成分片上传
 func (s *OSSService) CompleteMultipartUpload(ctx context.Context, objectKey, uploadId string, parts []oss.UploadPart) error {
-	req := &oss.CompleteMultipartUploadRequest{
-		Bucket:   oss.Ptr(s.bucket),
-		Key:      oss.Ptr(objectKey),
-		UploadId: oss.Ptr(uploadId),
+	_, err := s.client.CompleteMultipartUpload(ctx, &oss.CompleteMultipartUploadRequest{
+		Bucket:   &s.bucket,
+		Key:      &objectKey,
+		UploadId: &uploadId,
 		CompleteMultipartUpload: &oss.CompleteMultipartUpload{
 			Parts: parts,
 		},
-	}
-	_, err := s.client.CompleteMultipartUpload(ctx, req)
-	if err != nil {
-		return fmt.Errorf("完成分片上传失败: %w", err)
-	}
-	return nil
+	})
+	return err
 }
+
+// 下面方法弃用--不再采用后端上传分片，而是前端上传，后端生成预签名URL这种方式。
+// UploadPart 上传单个分片
+//func (s *OSSService) UploadPart(ctx context.Context, objectKey, uploadId string, partNumber int, data []byte) (string, error) {
+//	fmt.Printf("UploadPart - objectKey: %s, uploadId: %s, partNumber: %d, dataSize: %d\n", objectKey, uploadId, partNumber, len(data))
+//
+//	req := &oss.UploadPartRequest{
+//		Bucket:     oss.Ptr(s.bucket),
+//		Key:        oss.Ptr(objectKey),
+//		UploadId:   oss.Ptr(uploadId),     // 上传Id
+//		PartNumber: int32(partNumber),     // 分片编号
+//		Body:       bytes.NewReader(data), // 上传数据
+//		ProgressFn: func(increment, transferred, total int64) {
+//			fmt.Printf("increment:%v, transferred:%v, total:%v\n", increment, transferred, total)
+//		}, // 进度回调函数，用于显示上传进度
+//	}
+//
+//	fmt.Printf("UploadPart - Request: Bucket=%s, Key=%s, UploadId=%s, PartNumber=%d\n",
+//		*req.Bucket, *req.Key, *req.UploadId, req.PartNumber)
+//
+//	resp, err := s.client.UploadPart(ctx, req)
+//	if err != nil {
+//		return "", fmt.Errorf("上传分片失败: %w", err)
+//	}
+//
+//	etag := strings.Trim(*resp.ETag, `"`)
+//	return etag, nil
+//}
+
+// CompleteMultipartUpload 合并所有分片
+//func (s *OSSService) CompleteMultipartUpload(ctx context.Context, objectKey, uploadId string, parts []oss.UploadPart) error {
+//	req := &oss.CompleteMultipartUploadRequest{
+//		Bucket:   oss.Ptr(s.bucket),
+//		Key:      oss.Ptr(objectKey),
+//		UploadId: oss.Ptr(uploadId),
+//		CompleteMultipartUpload: &oss.CompleteMultipartUpload{
+//			Parts: parts,
+//		},
+//	}
+//	_, err := s.client.CompleteMultipartUpload(ctx, req)
+//	if err != nil {
+//		return fmt.Errorf("完成分片上传失败: %w", err)
+//	}
+//	return nil
+//}
