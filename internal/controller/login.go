@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"github.com/gin-gonic/gin"
 	"go-cloud-storage/internal/pkg/cache"
-	utils2 "go-cloud-storage/internal/pkg/utils"
+	"go-cloud-storage/internal/pkg/utils"
 	"go-cloud-storage/internal/services"
 	"net/http"
 	"time"
@@ -41,14 +41,14 @@ func (c *LoginController) Login(ctx *gin.Context) {
 	var req LoginRequest
 
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils2.Fail(ctx, http.StatusBadRequest, err.Error())
+		utils.Fail(ctx, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	// 调用认证服务
 	user, err := c.userService.AuthenticateUser(req.Account, req.Password)
 	if err != nil {
-		utils2.Fail(ctx, http.StatusUnauthorized, "认证失败")
+		utils.Fail(ctx, http.StatusUnauthorized, "认证失败")
 		return
 	}
 	user.Password = ""
@@ -62,8 +62,8 @@ func (c *LoginController) Login(ctx *gin.Context) {
 	}
 
 	// 生成JWT Token
-	accessToken, err := utils2.GenerateAccessToken(user.Id, 2*time.Hour)          // 访问令牌
-	refreshToken, err := utils2.GenerateRefreshToken(user.Id, refreshTokenExpire) // 刷新令牌
+	accessToken, err := utils.GenerateAccessToken(user.Id, 2*time.Hour)          // 访问令牌
+	refreshToken, err := utils.GenerateRefreshToken(user.Id, refreshTokenExpire) // 刷新令牌
 
 	// 存入redis
 	rdb := cache.GetClient()
@@ -72,7 +72,7 @@ func (c *LoginController) Login(ctx *gin.Context) {
 	// 仅存储刷新令牌，访问令牌无需存储（无状态JWT）
 	err = rdb.Set(ctx.Request.Context(), refreshKey, refreshToken, refreshTokenExpire).Err()
 	if err != nil {
-		utils2.Fail(ctx, http.StatusInternalServerError, "刷新令牌存储失败")
+		utils.Fail(ctx, http.StatusInternalServerError, "刷新令牌存储失败")
 		return
 	}
 
@@ -90,7 +90,7 @@ func (c *LoginController) Login(ctx *gin.Context) {
 		true,                              // Secure，只允许HTTPS请求携带
 		true,                              // HttpOnly，前端JS无法读取，防止XSS窃取
 	)
-	utils2.Success(ctx, loginResp)
+	utils.Success(ctx, loginResp)
 }
 
 func (c *LoginController) RefreshToken(ctx *gin.Context) {
@@ -100,25 +100,25 @@ func (c *LoginController) RefreshToken(ctx *gin.Context) {
 		return
 	}
 	// 解析并验证刷新令牌
-	claims, err := utils2.ParseTokenWithType(refreshToken, "refresh")
+	claims, err := utils.ParseTokenWithType(refreshToken, "refresh")
 	if err != nil {
-		utils2.Fail(ctx, http.StatusUnauthorized, "无效RefreshToken")
+		utils.Fail(ctx, http.StatusUnauthorized, "无效RefreshToken")
 		return
 	}
 	// 检查refresh_token是否存在于Redis
 	refreshKey := fmt.Sprintf("user:%d:refresh_token", claims.UserId)
 	storedToken, err := cache.GetClient().Get(ctx.Request.Context(), refreshKey).Result()
 	if err != nil || storedToken != refreshToken {
-		utils2.Fail(ctx, http.StatusUnauthorized, "RefreshToken已失效")
+		utils.Fail(ctx, http.StatusUnauthorized, "RefreshToken已失效")
 		return
 	}
 	// 生成新的 访问令牌（始终2小时）
-	newToken, err := utils2.GenerateAccessToken(claims.UserId, 2*time.Hour)
+	newToken, err := utils.GenerateAccessToken(claims.UserId, 2*time.Hour)
 	if err != nil {
-		utils2.Fail(ctx, http.StatusInternalServerError, "生成新令牌失败")
+		utils.Fail(ctx, http.StatusInternalServerError, "生成新令牌失败")
 		return
 	}
-	utils2.Success(ctx, gin.H{"token": newToken})
+	utils.Success(ctx, gin.H{"token": newToken})
 }
 
 func (c *LoginController) Register(ctx *gin.Context) {
@@ -130,11 +130,11 @@ func (c *LoginController) Register(ctx *gin.Context) {
 	// 调用注册服务
 	err := c.userService.RegisterUser(req.Email, req.Password, req.PasswordConfirm)
 	if err != nil {
-		utils2.Fail(ctx, http.StatusBadRequest, err.Error())
+		utils.Fail(ctx, http.StatusBadRequest, err.Error())
 		return
 	}
 	// 注册成功
-	utils2.Success(ctx, gin.H{"message": "注册成功"})
+	utils.Success(ctx, gin.H{"message": "注册成功"})
 }
 
 func (c *LoginController) Logout(ctx *gin.Context) {
@@ -143,5 +143,5 @@ func (c *LoginController) Logout(ctx *gin.Context) {
 	refreshKey := fmt.Sprintf("user:%d:refresh_token", userId)
 	cache.GetClient().Del(ctx.Request.Context(), refreshKey)
 	ctx.SetCookie("refresh_token", "", -1, "/", "", true, true) // 删除浏览器 Cookie
-	utils2.Success(ctx, gin.H{"message": "退出成功"})
+	utils.Success(ctx, gin.H{"message": "退出成功"})
 }

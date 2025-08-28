@@ -3,14 +3,14 @@
         <!-- 上传区域 -->
         <div class="upload-section">
             <el-upload
-                    ref="uploadRef"
-                    action=""
-                    :auto-upload="false"
-                    :show-file-list="false"
-                    :before-upload="beforeUpload"
-                    :on-remove="handleRemove"
-                    :on-change="handleChange"
-                    class="upload-dragger"
+                ref="uploadRef"
+                action=""
+                :auto-upload="false"
+                :show-file-list="false"
+                :before-upload="beforeUpload"
+                :on-remove="handleRemove"
+                :on-change="handleChange"
+                class="upload-dragger"
             >
                 <template #trigger>
                     <div class="upload-trigger">
@@ -29,11 +29,11 @@
 
             <div class="upload-actions">
                 <el-button
-                        type="primary"
-                        size="large"
-                        @click="submitUpload"
-                        :disabled="!fileList.length"
-                        class="upload-btn"
+                    type="primary"
+                    size="large"
+                    @click="submitUpload"
+                    :disabled="!fileList.length"
+                    class="upload-btn"
                 >
                     <span class="btn-icon">↑</span>
                     开始上传
@@ -85,38 +85,38 @@
                         </div>
                         <div class="upload-controls">
                             <el-button
-                                    v-if="item.status === 'uploading' && item.status != 'mergeing'"
-                                    @click="pauseUpload(item)"
-                                    size="small"
-                                    type="warning"
-                                    class="control-btn"
+                                v-if="item.status === 'uploading' && item.status != 'mergeing'"
+                                @click="pauseUpload(item)"
+                                size="small"
+                                type="warning"
+                                class="control-btn"
                             >
                                 ⏸ 暂停
                             </el-button>
                             <el-button
-                                    v-if="item.status === 'paused'"
-                                    @click="resumeUpload(item)"
-                                    size="small"
-                                    type="success"
-                                    class="control-btn"
+                                v-if="item.status === 'paused'"
+                                @click="resumeUpload(item)"
+                                size="small"
+                                type="success"
+                                class="control-btn"
                             >
                                 ▶ 继续
                             </el-button>
                             <el-button
-                                    v-if="item.status === 'paused'"
-                                    @click="cancelUpload(item)"
-                                    size="small"
-                                    type="danger"
-                                    class="control-btn"
+                                v-if="item.status === 'paused'"
+                                @click="cancelUpload(item)"
+                                size="small"
+                                type="danger"
+                                class="control-btn"
                             >
                                 ✕ 取消
                             </el-button>
                             <el-button
-                                    v-if="item.status === 'success'"
-                                    @click="openFile(item)"
-                                    size="small"
-                                    type="danger"
-                                    class="control-btn open-btn"
+                                v-if="item.status === 'success'"
+                                @click="openFile(item)"
+                                size="small"
+                                type="danger"
+                                class="control-btn open-btn"
                             >
                                 📂 打开
                             </el-button>
@@ -131,11 +131,11 @@
               </span>
                         </div>
                         <el-progress
-                                :status="getProgressStatus(item.status)"
-                                :stroke-width="8"
-                                :percentage="item.percentage"
-                                :show-text="false"
-                                class="custom-progress"
+                            :status="getProgressStatus(item.status)"
+                            :stroke-width="8"
+                            :percentage="item.percentage"
+                            :show-text="false"
+                            class="custom-progress"
                         />
                     </div>
                 </div>
@@ -146,8 +146,8 @@
 
 <script setup>
 import { reactive, ref } from 'vue'
-import { upload, chunkFileCheck, chunkFileUpload, mergeChunkFile, getLoginInfo } from '@/api/index'
-import { FileUploadUtils } from '@/utils/fileUploadUtils'
+import { chunkFileCheck, chunkFileUpload, mergeChunkFile, getLoginInfo, cancelChunkUpload, pauseChunkUpload, resumeChunkUpload } from '@/api/upload'
+import { FileUploadUtils } from '@/utils/fileUpload'
 import { ElMessage } from 'element-plus'
 
 const fileList = ref([])
@@ -398,12 +398,23 @@ const uploadChunkWorker = async (uploadFile, pendingChunks) => {
 }
 
 // 暂停上传
-const pauseUpload = (uploadFile) => {
+const pauseUpload = async (uploadFile) => {
     console.log('暂停上传');
-    uploadFile.isPaused = true
-    uploadFile.abortController.abort()
-    uploadFile.status = 'paused'
+    try {
+        uploadFile.isPaused = true
+        uploadFile.abortController.abort()
+        uploadFile.status = 'paused'
+        
+        // 调用后端暂停API
+        await pauseChunkUpload({
+            fileHash: uploadFile.fileHash
+        })
+        console.log('后端暂停状态已更新')
+    } catch (error) {
+        console.error('暂停上传失败:', error)
+    }
 }
+
 // 继续上传
 const resumeUpload = async (uploadFile) => {
     console.log('继续上传');
@@ -411,6 +422,12 @@ const resumeUpload = async (uploadFile) => {
         uploadFile.isPaused = false
         uploadFile.status = 'uploading'
         uploadFile.abortController = new AbortController()
+
+        // 调用后端继续API
+        await resumeChunkUpload({
+            fileHash: uploadFile.fileHash
+        })
+        console.log('后端继续状态已更新')
 
         // 上传分片
         await uploadFileChunks(uploadFile)
@@ -435,33 +452,49 @@ const resumeUpload = async (uploadFile) => {
 }
 
 // 取消上传
-const cancelUpload = (uploadFile) => {
-    pauseUpload(uploadFile)
-    const index = uploadingFiles.value.findIndex((item) => item.uid  === uploadFile.uid )
-    if(index > -1){
-        uploadingFiles.value.splice(index, 1)
+const cancelUpload = async (uploadFile) => {
+    try {
+        uploadFile.isPaused = true
+        uploadFile.abortController.abort()
+        
+        // 调用后端取消API
+        await cancelChunkUpload({
+            fileHash: uploadFile.fileHash
+        })
+        console.log('后端取消状态已更新')
+        
+        // 从上传列表中移除
+        const index = uploadingFiles.value.findIndex((item) => item.uid === uploadFile.uid)
+        if(index > -1){
+            uploadingFiles.value.splice(index, 1)
+        }
+    } catch (error) {
+        console.error('取消上传失败:', error)
+        // 即使后端调用失败，也要从前端列表中移除
+        const index = uploadingFiles.value.findIndex((item) => item.uid === uploadFile.uid)
+        if(index > -1){
+            uploadingFiles.value.splice(index, 1)
+        }
     }
 }
 </script>
 
 <style scoped>
 .upload-container {
-    /* max-width: 800px; */
     margin: 0 auto;
-    padding: 24px;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    min-height: 100vh;
+    padding: 16px;
+    background: #f8fafc;
+    max-height: 500px;
+    overflow-y: auto;
 }
 
 /* 上传区域 */
 .upload-section {
-    background: rgba(255, 255, 255, 0.95);
-    backdrop-filter: blur(10px);
-    border-radius: 20px;
-    padding: 40px;
-    margin-bottom: 24px;
-    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
-    border: 1px solid rgba(255, 255, 255, 0.2);
+    background: white;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 16px;
 }
 
 .upload-dragger :deep(.el-upload) {
@@ -470,55 +503,47 @@ const cancelUpload = (uploadFile) => {
 
 .upload-trigger {
     display: flex;
-    flex-direction: column;
     align-items: center;
-    padding: 60px 40px;
+    justify-content: center;
+    gap: 16px;
+    padding: 20px;
     border: 2px dashed #d1d5db;
-    border-radius: 16px;
-    background: linear-gradient(145deg, #f8fafc, #f1f5f9);
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    border-radius: 8px;
+    background: #fafafa;
     cursor: pointer;
 }
 
 .upload-trigger:hover {
-    border-color: #667eea;
-    background: linear-gradient(145deg, #f0f4ff, #e0e7ff);
-    transform: translateY(-2px);
-    box-shadow: 0 10px 25px rgba(102, 126, 234, 0.15);
+    border-color: #3b82f6;
+    background: #f0f9ff;
 }
 
 .upload-icon {
-    width: 64px;
-    height: 64px;
-    background: linear-gradient(135deg, #667eea, #764ba2);
-    border-radius: 50%;
+    width: 40px;
+    height: 40px;
+    background: #3b82f6;
+    border-radius: 8px;
     display: flex;
     align-items: center;
     justify-content: center;
-    margin-bottom: 16px;
-    animation: float 3s ease-in-out infinite;
-}
-
-@keyframes float {
-    0%, 100% { transform: translateY(0px); }
-    50% { transform: translateY(-10px); }
+    flex-shrink: 0;
 }
 
 .upload-icon svg {
-    width: 32px;
-    height: 32px;
+    width: 24px;
+    height: 24px;
     color: white;
 }
 
 .upload-text {
-    text-align: center;
+    text-align: left;
 }
 
 .upload-title {
-    font-size: 20px;
+    font-size: 16px;
     font-weight: 600;
     color: #1f2937;
-    margin: 0 0 8px 0;
+    margin: 0 0 4px 0;
 }
 
 .upload-desc {
@@ -528,88 +553,82 @@ const cancelUpload = (uploadFile) => {
 }
 
 .upload-actions {
-    margin-top: 24px;
+    margin-top: 16px;
     text-align: center;
 }
 
 .upload-btn {
-    padding: 12px 32px;
-    font-size: 16px;
-    font-weight: 600;
-    border-radius: 12px;
-    background: linear-gradient(135deg, #667eea, #764ba2);
+    padding: 8px 24px;
+    font-size: 14px;
+    font-weight: 500;
+    border-radius: 6px;
+    background: #3b82f6;
     border: none;
-    box-shadow: 0 8px 20px rgba(102, 126, 234, 0.3);
-    transition: all 0.3s ease;
+    color: white;
 }
 
 .upload-btn:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 12px 30px rgba(102, 126, 234, 0.4);
+    background: #2563eb;
 }
 
 .upload-btn:disabled {
     opacity: 0.5;
-    transform: none;
-    box-shadow: none;
+    background: #9ca3af;
 }
 
 .btn-icon {
-    margin-right: 8px;
-    font-size: 18px;
+    margin-right: 6px;
+    font-size: 16px;
 }
 
 /* 文件列表区域 */
 .file-queue, .uploading-section {
-    background: rgba(255, 255, 255, 0.95);
-    backdrop-filter: blur(10px);
-    border-radius: 16px;
-    padding: 24px;
-    margin-bottom: 24px;
-    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.08);
-    border: 1px solid rgba(255, 255, 255, 0.2);
+    background: white;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 16px;
+    max-height: 200px;
+    overflow-y: auto;
 }
 
 .section-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 20px;
-    padding-bottom: 12px;
-    border-bottom: 2px solid #f1f5f9;
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #f1f5f9;
 }
 
 .section-header h3 {
-    font-size: 18px;
+    font-size: 16px;
     font-weight: 600;
     color: #1f2937;
     margin: 0;
 }
 
 .file-count {
-    background: linear-gradient(135deg, #667eea, #764ba2);
+    background: #3b82f6;
     color: white;
-    padding: 4px 12px;
-    border-radius: 20px;
+    padding: 2px 8px;
+    border-radius: 12px;
     font-size: 12px;
     font-weight: 500;
 }
 
 /* 文件项样式 */
 .file-item, .upload-item {
-    background: #f8fafc;
+    background: #f9fafb;
     border: 1px solid #e5e7eb;
-    border-radius: 12px;
-    padding: 16px;
-    margin-bottom: 12px;
-    transition: all 0.3s ease;
+    border-radius: 6px;
+    padding: 12px;
+    margin-bottom: 8px;
 }
 
 .file-item:hover, .upload-item:hover {
-    background: #f1f5f9;
+    background: #f3f4f6;
     border-color: #d1d5db;
-    transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
 }
 
 .file-info {
@@ -619,24 +638,29 @@ const cancelUpload = (uploadFile) => {
 }
 
 .file-icon {
-    font-size: 24px;
-    width: 40px;
-    height: 40px;
-    background: linear-gradient(135deg, #667eea, #764ba2);
-    border-radius: 8px;
+    font-size: 20px;
+    width: 32px;
+    height: 32px;
+    background: #3b82f6;
+    border-radius: 6px;
     display: flex;
     align-items: center;
     justify-content: center;
+    flex-shrink: 0;
 }
 
 .file-details {
     flex: 1;
+    min-width: 0;
 }
 
 .file-name {
     font-weight: 500;
     color: #1f2937;
-    margin-bottom: 4px;
+    margin-bottom: 2px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .file-size {
@@ -646,9 +670,10 @@ const cancelUpload = (uploadFile) => {
 
 .file-meta {
     display: flex;
-    gap: 16px;
+    gap: 12px;
     font-size: 12px;
     color: #6b7280;
+    flex-wrap: wrap;
 }
 
 .upload-speed {
@@ -662,8 +687,8 @@ const cancelUpload = (uploadFile) => {
 
 /* 状态标签 */
 .status-badge {
-    padding: 4px 8px;
-    border-radius: 6px;
+    padding: 2px 6px;
+    border-radius: 4px;
     font-size: 11px;
     font-weight: 500;
     text-transform: uppercase;
@@ -700,77 +725,83 @@ const cancelUpload = (uploadFile) => {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 16px;
+    margin-bottom: 12px;
 }
 
 .upload-controls {
     display: flex;
-    gap: 8px;
+    gap: 6px;
 }
 
 .control-btn {
-    padding: 6px 12px !important;
+    padding: 4px 8px !important;
     font-size: 12px !important;
-    border-radius: 6px !important;
+    border-radius: 4px !important;
     min-width: auto !important;
 }
 
 /* 进度区域 */
 .progress-section {
-    margin-top: 12px;
+    margin-top: 8px;
 }
 
 .progress-info {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 8px;
+    margin-bottom: 6px;
 }
 
 .progress-text {
     font-weight: 600;
     color: #1f2937;
+    font-size: 12px;
 }
 
 .custom-progress :deep(.el-progress-bar__outer) {
     background-color: #f3f4f6;
-    border-radius: 10px;
+    border-radius: 6px;
     overflow: hidden;
 }
 
 .custom-progress :deep(.el-progress-bar__inner) {
-    background: linear-gradient(90deg, #667eea, #764ba2);
-    border-radius: 10px;
-    transition: all 0.3s ease;
+    background: #3b82f6;
+    border-radius: 6px;
 }
 
 .open-btn {
-    background: linear-gradient(135deg, #10b981, #059669) !important;
+    background: #10b981 !important;
     border: none !important;
     color: white !important;
 }
 
 .open-btn:hover {
-    background: linear-gradient(135deg, #059669, #047857) !important;
+    background: #059669 !important;
 }
 
 /* 响应式设计 */
 @media (max-width: 768px) {
     .upload-container {
-        padding: 16px;
+        padding: 12px;
     }
 
     .upload-section {
-        padding: 24px;
+        padding: 16px;
     }
 
     .upload-trigger {
-        padding: 40px 20px;
+        flex-direction: column;
+        gap: 12px;
+        padding: 16px;
+    }
+
+    .upload-text {
+        text-align: center;
     }
 
     .upload-header {
         flex-direction: column;
-        gap: 12px;
+        gap: 8px;
         align-items: stretch;
     }
 

@@ -52,44 +52,9 @@
         <!-- 工具栏 -->
         <div class="toolbar">
             <div class="toolbar-left">
-                <el-dropdown @command="handleUploadCommand">
-                    <el-button type="primary" :icon="Upload">
-                        上传文件
-                        <el-icon class="el-icon--right">
-                            <arrow-down/>
-                        </el-icon>
-                    </el-button>
-                    <template #dropdown>
-                        <el-dropdown-menu>
-                            <el-dropdown-item command="normal">
-                                <el-icon>
-                                    <Upload/>
-                                </el-icon>
-                                普通上传
-                            </el-dropdown-item>
-                            <el-dropdown-item command="chunk">
-                                <el-icon>
-                                    <Upload/>
-                                </el-icon>
-                                大文件上传
-                            </el-dropdown-item>
-                        </el-dropdown-menu>
-                    </template>
-                </el-dropdown>
-
-                <!-- 隐藏的普通上传组件 -->
-                <el-upload
-                        ref="normalUploadRef"
-                        :http-request="uploadRequest"
-                        :data="{ parentId: currentParentId }"
-                        :multiple="true"
-                        :show-file-list="false"
-                        :before-upload="beforeUpload"
-                        :on-success="handleUploadSuccess"
-                        :on-error="handleUploadError"
-                        style="display: none"
-                >
-                </el-upload>
+                <el-button type="primary" :icon="Upload" @click="chunkUploadDialogVisible = true">
+                    上传文件
+                </el-button>
 
                 <el-button :icon="FolderAdd" @click="handleNewFolder">
                     新建文件夹
@@ -299,14 +264,14 @@
         <!-- 大文件上传对话框 -->
         <el-dialog
                 v-model="chunkUploadDialogVisible"
-                title="大文件上传"
+                title="文件上传"
                 width="600px"
                 :close-on-click-modal="false"
         >
             <ChunkUpload
                     :folder-id="currentParentId"
-                    :chunk-size="20 * 1024 * 1024"
-                    :max-file-size="5 * 1024 * 1024 * 1024"
+                    :chunk-size="10 * 1024 * 1024"
+                    :max-file-size="2 * 1024 * 1024 * 1024"
                     @upload-success="handleChunkUploadSuccess"
                     @upload-error="handleChunkUploadError"
             />

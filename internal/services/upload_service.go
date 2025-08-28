@@ -16,7 +16,6 @@ import (
 
 type UploadService interface {
 	InitUpload(ctx context.Context, userId int, fileName string, fileSize, chunkSize int64, fileHash string) (*models.UploadTask, error)
-	GetChunkPresignedURL(ctx context.Context, taskId string, partNumber int) (string, error)
 	MarkChunkUploaded(ctx context.Context, taskId string, partNumber int, etag string) error
 	GetTask(taskId string) (*models.UploadTask, error)
 	CompleteUpload(ctx context.Context, taskId string) error
@@ -63,18 +62,6 @@ func (s *uploadService) InitUpload(ctx context.Context, userId int, fileName str
 		return nil, err
 	}
 	return task, nil
-}
-
-// 获取某个分片预签名 URL
-func (s *uploadService) GetChunkPresignedURL(ctx context.Context, taskId string, partNumber int) (string, error) {
-	task, err := s.repo.GetById(taskId)
-	if err != nil {
-		return "", err
-	}
-	if partNumber < 1 || partNumber > task.ChunkCount {
-		return "", errors.New("invalid part number")
-	}
-	return s.ossService.GeneratePresignedURL(ctx, task.ObjectKey, task.UploadId, partNumber, 1*time.Hour)
 }
 
 // 标记分片已上传

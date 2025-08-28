@@ -235,18 +235,57 @@ func (s *OSSService) InitiateMultipartUpload(ctx context.Context, objectKey stri
 	return *resp.UploadId, nil
 }
 
-// GeneratePresignedURL 生成某个分片的预签名
-func (s *OSSService) GeneratePresignedURL(ctx context.Context, objectKey, uploadId string, partNumber int, expire time.Duration) (string, error) {
-	signedResult, err := s.client.Presign(ctx, &oss.UploadPartRequest{
-		Bucket:     &s.bucket,
-		Key:        &objectKey,
-		UploadId:   &uploadId,
+// UploadPart 上传单个分片
+func (s *OSSService) UploadPart(ctx context.Context, objectKey, uploadId string, partNumber int, data []byte) (*oss.UploadPart, error) {
+	body := bytes.NewReader(data)
+	req := &oss.UploadPartRequest{
+		Bucket:     oss.Ptr(s.bucket),
+		Key:        oss.Ptr(objectKey),
+		UploadId:   oss.Ptr(uploadId),
 		PartNumber: int32(partNumber),
-	}, oss.PresignExpiration(time.Now().Add(expire)))
-	if err != nil {
-		return "", err
+		Body:       body,
 	}
-	return signedResult.URL, nil
+
+	resp, err := s.client.UploadPart(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("上传分片失败: %w", err)
+	}
+
+	return &oss.UploadPart{
+		PartNumber: int32(partNumber),
+		ETag:       resp.ETag,
+	}, nil
+}
+
+// AbortMultipartUpload 取消分片上传
+func (s *OSSService) AbortMultipartUpload(ctx context.Context, objectKey, uploadId string) error {
+	req := &oss.AbortMultipartUploadRequest{
+		Bucket:   oss.Ptr(s.bucket),
+		Key:      oss.Ptr(objectKey),
+		UploadId: oss.Ptr(uploadId),
+	}
+
+	_, err := s.client.AbortMultipartUpload(ctx, req)
+	if err != nil {
+		return fmt.Errorf("取消分片上传失败: %w", err)
+	}
+	return nil
+}
+
+// ListParts 列出已上传的分片
+func (s *OSSService) ListParts(ctx context.Context, objectKey, uploadId string) ([]oss.Part, error) {
+	req := &oss.ListPartsRequest{
+		Bucket:   oss.Ptr(s.bucket),
+		Key:      oss.Ptr(objectKey),
+		UploadId: oss.Ptr(uploadId),
+	}
+
+	resp, err := s.client.ListParts(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("列出分片失败: %w", err)
+	}
+
+	return resp.Parts, nil
 }
 
 // CompleteMultipartUpload 完成分片上传
@@ -262,47 +301,20 @@ func (s *OSSService) CompleteMultipartUpload(ctx context.Context, objectKey, upl
 	return err
 }
 
-// 下面方法弃用--不再采用后端上传分片，而是前端上传，后端生成预签名URL这种方式。
-// UploadPart 上传单个分片
-//func (s *OSSService) UploadPart(ctx context.Context, objectKey, uploadId string, partNumber int, data []byte) (string, error) {
-//	fmt.Printf("UploadPart - objectKey: %s, uploadId: %s, partNumber: %d, dataSize: %d\n", objectKey, uploadId, partNumber, len(data))
-//
-//	req := &oss.UploadPartRequest{
-//		Bucket:     oss.Ptr(s.bucket),
-//		Key:        oss.Ptr(objectKey),
-//		UploadId:   oss.Ptr(uploadId),     // 上传Id
-//		PartNumber: int32(partNumber),     // 分片编号
-//		Body:       bytes.NewReader(data), // 上传数据
-//		ProgressFn: func(increment, transferred, total int64) {
-//			fmt.Printf("increment:%v, transferred:%v, total:%v\n", increment, transferred, total)
-//		}, // 进度回调函数，用于显示上传进度
-//	}
-//
-//	fmt.Printf("UploadPart - Request: Bucket=%s, Key=%s, UploadId=%s, PartNumber=%d\n",
-//		*req.Bucket, *req.Key, *req.UploadId, req.PartNumber)
-//
-//	resp, err := s.client.UploadPart(ctx, req)
-//	if err != nil {
-//		return "", fmt.Errorf("上传分片失败: %w", err)
-//	}
-//
-//	etag := strings.Trim(*resp.ETag, `"`)
-//	return etag, nil
-//}
+// CheckFileExists 检查文件是否已存在（通过文件哈希）
+func (s *OSSService) CheckFileExists(ctx context.Context, fileHash string, userId int) (*models.File, error) {
+	// 这里需要查询数据库，检查是否已有相同哈希的文件
+	// 由于这个方法在OSS服务中，我们返回nil表示需要在上层处理
+	return nil, nil
+}
 
-// CompleteMultipartUpload 合并所有分片
-//func (s *OSSService) CompleteMultipartUpload(ctx context.Context, objectKey, uploadId string, parts []oss.UploadPart) error {
-//	req := &oss.CompleteMultipartUploadRequest{
-//		Bucket:   oss.Ptr(s.bucket),
-//		Key:      oss.Ptr(objectKey),
-//		UploadId: oss.Ptr(uploadId),
-//		CompleteMultipartUpload: &oss.CompleteMultipartUpload{
-//			Parts: parts,
-//		},
-//	}
-//	_, err := s.client.CompleteMultipartUpload(ctx, req)
-//	if err != nil {
-//		return fmt.Errorf("完成分片上传失败: %w", err)
-//	}
-//	return nil
-//}
+// GenerateObjectKey 生成OSS对象键
+func (s *OSSService) GenerateObjectKey(userId int, parentId, fileName string) string {
+	fileId := utils.NewUUID()
+	ossPath := fmt.Sprintf("files/%d", userId)
+	if parentId != "" {
+		ossPath = ossPath + "/" + parentId
+	}
+	ext := filepath.Ext(fileName)
+	return fmt.Sprintf("%s/%s%s", ossPath, fileId, ext)
+}

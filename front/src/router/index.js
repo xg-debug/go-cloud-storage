@@ -37,7 +37,6 @@ const routes = [
         },
         {path: 'shared', name: 'Shared', component: () => import('@/views/SharedFiles.vue'), meta: {title: '我的分享'}},
         {path: 'recycle', name: 'Recycle', component: () => import('@/views/Recycle.vue'), meta: {title: '回收站'}},
-        {path: 'search', name: 'Search', component: () => import('@/views/Search.vue'), meta: {title: '搜索结果'}},
         {
             path: 'user',
             name: 'UserProfile',

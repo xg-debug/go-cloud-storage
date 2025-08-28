@@ -21,7 +21,7 @@ func SetUpRouter(db *gorm.DB, ossService *aliyunoss.OSSService) *gin.Engine {
 
 	// 配置 CORS 中间件
 	ginServer.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"http://localhost:8080", "http://localhost:8081"}, // 你的前端地址
+		AllowOrigins:     []string{"http://localhost:8080"}, // 你的前端地址
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
 		ExposeHeaders:    []string{"Content-Length"},
@@ -68,17 +68,17 @@ func SetUpRouter(db *gorm.DB, ossService *aliyunoss.OSSService) *gin.Engine {
 	authGroup.GET("/me", userCtrl.GetProfile)
 	authGroup.POST("/logout", loginCtrl.Logout)
 
-	// API路由组 - 分片上传接口
-	upload := ginServer.Group("/upload-tasks")
+	// API路由组 - 上传文件接口
+	upload := ginServer.Group("/api")
 	upload.Use(middleware.JWTAuthMiddleware())
 	{
-		upload.POST("", uploadCtrl.InitUpload) // 初始化分片上传
-		upload.GET("/:taskId/chunks/:partNumber/url", uploadCtrl.GetChunkPresignedURL)
-		upload.PATCH("/:taskId/chunks/:partNumber", uploadCtrl.MarkChunkUploaded)
-		upload.GET("/:taskId", uploadCtrl.GetTask)
-		upload.POST("/:taskId/complete", uploadCtrl.CompleteUpload)
-		upload.GET("/incomplete", uploadCtrl.GetIncompleteTasks) // 获取未完成的上传任务
-		upload.DELETE("/:taskId", uploadCtrl.DeleteTask)         // 删除上传任务
+		upload.POST("/file/check/:fileHash", uploadCtrl.CheckChunkFileStatus)
+		upload.POST("/chunk/upload", uploadCtrl.ChunkUpload)
+		upload.POST("/chunk/merge", uploadCtrl.MergeChunkFile)
+		upload.POST("/chunk/cancel", uploadCtrl.CancelChunkUpload)
+		upload.POST("/chunk/pause", uploadCtrl.PauseChunkUpload)
+		upload.POST("/chunk/resume", uploadCtrl.ResumeChunkUpload)
+		upload.GET("/user/get/login", uploadCtrl.GetLoginInfo)
 	}
 
 	user := ginServer.Group("user")
@@ -96,7 +96,7 @@ func SetUpRouter(db *gorm.DB, ossService *aliyunoss.OSSService) *gin.Engine {
 	{
 		file.POST("/list", fileCtrl.GetFiles)
 		file.POST("/create-folder", fileCtrl.CreateFolder)
-		file.POST("/upload", uploadCtrl.Upload)
+		//file.POST("/upload", uploadCtrl.Upload)
 		file.DELETE("/:fileId", fileCtrl.Delete)
 		file.POST("/rename", fileCtrl.Rename)
 		file.POST("/move")

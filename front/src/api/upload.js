@@ -1,68 +1,98 @@
 import request from '@/utils/request'
 
-// 创建上传任务
-export function createUploadTask(data) {
+export const getLoginInfo = () =>{
     return request({
-        url: '/upload-tasks',
+        url: '/api/user/get/login',
+        method: 'get'
+    })
+}
+
+export const upload = (data) =>{
+    return request({
+        url: '/api/upload',
         method: 'post',
         data
     })
 }
 
-// 获取上传任务详情（断点续传用）
-export function getUploadTask(taskId) {
+/**
+ * 检查文件上传状态
+ * @param {Object} data
+ * @returns
+ */
+export const chunkFileCheck  = (fileHash) =>{
     return request({
-        url: `/upload-tasks/${taskId}`,
-        method: 'get'
+        url: '/api/file/check/'+fileHash,
+        method: 'post',
     })
 }
 
-// 获取分片预签名 URL
-export function getChunkURL(taskId, partNumber) {
+/**
+ * 分片文件上传
+ * @param {Object} data
+ * @param {Function} onUploadProgress
+ * @returns
+ */
+export const chunkFileUpload = (data,onUploadProgress) =>{
     return request({
-        url: `/upload-tasks/${taskId}/chunks/${partNumber}/url`,
-        method: 'get'
+        url: '/api/chunk/upload',
+        method: 'post',
+        data,
+        headers: {
+            'Content-Type': 'multipart/form-data'
+        },
+        onUploadProgress
     })
 }
 
-// 标记分片已上传
-export function markChunkUploaded(taskId, partNumber, data) {
+/**
+ * 合并分片文件
+ * @param {Object} data
+ * @returns
+ */
+export const mergeChunkFile = (data) =>{
     return request({
-        url: `/upload-tasks/${taskId}/chunks/${partNumber}`,
-        method: 'patch',
+        url: '/api/chunk/merge',
+        method: 'post',
         data
     })
 }
 
-// 完成上传
-export function completeUpload(taskId) {
+/**
+ * 取消分片上传
+ * @param {Object} data
+ * @returns
+ */
+export const cancelChunkUpload = (data) =>{
     return request({
-        url: `/upload-tasks/${taskId}/complete`,
-        method: 'post'
-    })
-}
-
-// 获取未完成的上传任务
-export function getIncompleteTasks() {
-    return request({
-        url: '/upload-tasks/incomplete',
-        method: 'get'
-    })
-}
-
-// 删除上传任务
-export function deleteUploadTask(taskId) {
-    return request({
-        url: `/upload-tasks/${taskId}`,
-        method: 'delete'
-    })
-}
-
-// 检查文件是否存在（秒传）
-export function checkFileExists(fileHash) {
-    return request({
-        url: `/files/check-exists`,
+        url: '/api/chunk/cancel',
         method: 'post',
-        data: { fileHash }
+        data
+    })
+}
+
+/**
+ * 暂停分片上传
+ * @param {Object} data
+ * @returns
+ */
+export const pauseChunkUpload = (data) =>{
+    return request({
+        url: '/api/chunk/pause',
+        method: 'post',
+        data
+    })
+}
+
+/**
+ * 继续分片上传
+ * @param {Object} data
+ * @returns
+ */
+export const resumeChunkUpload = (data) =>{
+    return request({
+        url: '/api/chunk/resume',
+        method: 'post',
+        data
     })
 }
