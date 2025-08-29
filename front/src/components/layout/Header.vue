@@ -8,20 +8,6 @@
         <!-- 右侧：搜索框 + 通知 + 用户菜单 -->
         <div class="header-right">
 
-            <el-input
-                v-model="searchQuery"
-                placeholder="搜索文件/文件夹"
-                class="search-input"
-                clearable
-                @keyup.enter="handleSearch"
-            >
-                <template #prefix>
-                    <el-icon class="search-icon">
-                        <Search/>
-                    </el-icon>
-                </template>
-            </el-input>
-
             <!-- 通知中心 -->
             <el-dropdown trigger="click" class="notification-dropdown">
                 <el-badge :value="unreadCount" class="notification-badge">

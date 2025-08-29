@@ -65,6 +65,7 @@ type FileService interface {
 	GetFilePath(file *models.File) (string, error)
 	PreviewFile(ctx context.Context, userId int, fileId string) (*FilePreview, error)
 	CheckFileExistsByMD5(userId int, fileMD5 string) (bool, *models.File, error)
+	SearchFiles(ctx context.Context, userId int, keyword, parentId string, page, pageSize int) ([]FileItem, int64, error)
 }
 
 type fileService struct {
@@ -406,4 +407,54 @@ func (s *fileService) CheckFileExistsByMD5(userId int, fileMD5 string) (bool, *m
 // 检查文件是否存在（通过Hash）
 func (s *fileService) CheckFileExistsByHash(fileHash string, userId int) (bool, *models.File, error) {
 	return s.CheckFileExistsByMD5(userId, fileHash)
+}
+
+// SearchFiles 搜索文件和文件夹
+func (s *fileService) SearchFiles(ctx context.Context, userId int, keyword, parentId string, page, pageSize int) ([]FileItem, int64, error) {
+	// 计算偏移量
+	offset := (page - 1) * pageSize
+
+	// 构建查询条件
+	query := s.db.Model(&models.File{}).Where("user_id = ? AND is_deleted = ?", userId, false)
+
+	// 如果指定了父目录，则在该目录下搜索
+	if parentId != "" {
+		query = query.Where("parent_id = ?", parentId)
+	}
+
+	// 添加关键词搜索条件（模糊匹配文件名）
+	if keyword != "" {
+		query = query.Where("name LIKE ?", "%"+keyword+"%")
+	}
+
+	// 获取总数
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	// 获取文件列表
+	var files []models.File
+	if err := query.Order("is_dir DESC, name ASC").Offset(offset).Limit(pageSize).Find(&files).Error; err != nil {
+		return nil, 0, err
+	}
+
+	// 转换为返回格式
+	var fileItems []FileItem
+	for _, file := range files {
+		fileItems = append(fileItems, FileItem{
+			Id:           file.Id,
+			Name:         file.Name,
+			IsDir:        file.IsDir,
+			Size:         file.Size,
+			SizeStr:      file.SizeStr,
+			Extension:    file.FileExtension,
+			CreatedAt:    file.CreatedAt.Format("2006-01-02 15:04:05"),
+			Modified:     file.UpdatedAt.Format("2006-01-02 15:04:05"),
+			FileURL:      file.FileURL,
+			ThumbnailURL: file.ThumbnailURL,
+		})
+	}
+
+	return fileItems, total, nil
 }

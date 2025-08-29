@@ -18,7 +18,7 @@
                 </div>
                 <div class="header-stats">
                     <div class="stat-item">
-                        <span class="stat-number">{{ fileList.length }}</span>
+                        <span class="stat-number">{{ fileNumber }}</span>
                         <span class="stat-label">文件数量</span>
                     </div>
                     <div class="stat-item">
@@ -61,6 +61,21 @@
                 </el-button>
             </div>
             <div class="toolbar-right">
+                <el-input
+                    v-model="searchKeyword"
+                    placeholder="搜索文件和文件夹..."
+                    class="search-input"
+                    clearable
+                    @input="handleSearch"
+                    @clear="clearSearch"
+                    style="width: 280px; margin-right: 16px;"
+                >
+                    <template #prefix>
+                        <el-icon>
+                            <Search/>
+                        </el-icon>
+                    </template>
+                </el-input>
                 <el-button-group>
                     <el-button
                             :type="viewMode === 'grid' ? 'primary' : ''"
@@ -78,6 +93,23 @@
                     </el-button>
                 </el-button-group>
             </div>
+        </div>
+
+        <!-- 搜索结果提示 -->
+        <div v-if="isSearching" class="search-result-tip">
+            <el-alert
+                :title="`搜索 &quot;${searchKeyword}&quot; 找到 ${fileList.length} 个结果`"
+                type="info"
+                :closable="false"
+                show-icon
+            >
+                <template #default>
+                    <span>在当前目录中搜索到 {{ fileList.length }} 个匹配的文件和文件夹</span>
+                    <el-button type="text" size="small" @click="clearSearch" style="margin-left: 10px;">
+                        清除搜索
+                    </el-button>
+                </template>
+            </el-alert>
         </div>
 
         <!-- 文件内容区域 -->
@@ -311,7 +343,7 @@
 
 <script setup>
 import {onMounted, ref} from 'vue'
-import {createFolder, deleteFile, listFiles, previewFile, renameFile, uploadFile} from '@/api/file'
+import {createFolder, deleteFile, listFiles, previewFile, renameFile, searchFiles, uploadFile} from '@/api/file'
 import {ElMessage} from 'element-plus'
 import {
     ArrowDown,
@@ -325,6 +357,7 @@ import {
     HomeFilled,
     List,
     MoreFilled,
+    Search,
     Share,
     Star,
     Upload
@@ -343,6 +376,9 @@ const fileList = ref([])
 const currentPage = ref(1)
 const pageSize = ref(20)
 const total = ref(0)
+const searchKeyword = ref('')
+const isSearching = ref(false)
+const originalFileList = ref([])
 const newFolderDialogVisible = ref(false)
 const newFolderName = ref('')
 const creatingFolder = ref(false)
@@ -361,25 +397,27 @@ const normalUploadRef = ref()
 let tempFolderId = null
 let hoverTimeout = null
 
+const fileNumber = ref(0)
 
-const uploadRequest = (options) => {
-    const {file, onProgress, onSuccess, onError, data} = options
-    const formData = new FormData()
-    formData.append('file', file)
-    for (const key in data) {
-        formData.append(key, data[key])
-    }
-    uploadFile(formData, (event) => {
-        const percent = Math.floor((event.loaded / event.total) * 100)
-        onProgress({percent})
-    })
-        .then((res) => {
-            onSuccess(res)
-        })
-        .catch((err) => {
-            onError(err)
-        })
-}
+
+// const uploadRequest = (options) => {
+//     const {file, onProgress, onSuccess, onError, data} = options
+//     const formData = new FormData()
+//     formData.append('file', file)
+//     for (const key in data) {
+//         formData.append(key, data[key])
+//     }
+//     uploadFile(formData, (event) => {
+//         const percent = Math.floor((event.loaded / event.total) * 100)
+//         onProgress({percent})
+//     })
+//         .then((res) => {
+//             onSuccess(res)
+//         })
+//         .catch((err) => {
+//             onError(err)
+//         })
+// }
 
 const loadFiles = async () => {
     const res = await listFiles({
@@ -387,9 +425,23 @@ const loadFiles = async () => {
         page: currentPage.value,
         pageSize: pageSize.value
     })
+    
     if (res.list) {
         fileList.value = res.list
         total.value = res.total
+        // 文件数量
+        fileNumber.value = res.list.filter(file => file.is_dir === false).length
+        
+        // 如果当前正在搜索，清除搜索状态并重新应用搜索
+        if (isSearching.value) {
+            const keyword = searchKeyword.value
+            isSearching.value = false
+            originalFileList.value = []
+            if (keyword.trim()) {
+                searchKeyword.value = keyword
+                performSearch()
+            }
+        }
     } else {
         fileList.value = []
         total.value = 0
@@ -401,6 +453,10 @@ const handleOpenFolder = (item) => {
         previewFile(item.id)
         return
     }
+    
+    // 清除搜索状态
+    clearSearch()
+    
     currentParentId.value = item.id
     // 进入文件夹时，追加路径，同时将当前目录 id 入栈
     currentPath.value = [...currentPath.value, item.name]
@@ -409,6 +465,9 @@ const handleOpenFolder = (item) => {
 }
 
 const goRoot = () => {
+    // 清除搜索状态
+    clearSearch()
+    
     const rootId = store.state.userInfo.rootFolderId
     currentParentId.value = rootId
     currentPath.value = []       // 根目录不显示名字
@@ -417,6 +476,9 @@ const goRoot = () => {
 }
 
 const handleBreadcrumbClick = (index) => {
+    // 清除搜索状态
+    clearSearch()
+    
     currentPath.value = currentPath.value.slice(0, index + 1)
     pathIdStack.value = pathIdStack.value.slice(0, index + 2)
     currentParentId.value = pathIdStack.value[pathIdStack.value.length - 1]
@@ -644,6 +706,66 @@ const handleChunkUploadSuccess = (fileInfo) => {
 const handleChunkUploadError = (error) => {
     ElMessage.error(`上传失败: ${error.message}`)
 }
+
+// 搜索处理函数
+let searchTimeout = null
+const handleSearch = () => {
+    // 防抖处理，避免频繁搜索
+    clearTimeout(searchTimeout)
+    searchTimeout = setTimeout(() => {
+        performSearch()
+    }, 300)
+}
+
+// 执行搜索
+const performSearch = async () => {
+    const keyword = searchKeyword.value.trim()
+    
+    if (!keyword) {
+        clearSearch()
+        return
+    }
+    
+    // 如果不是搜索状态，保存原始文件列表
+    if (!isSearching.value) {
+        originalFileList.value = [...fileList.value]
+        isSearching.value = true
+    }
+    
+    try {
+        // 调用后端搜索API
+        const res = await searchFiles({
+            keyword: keyword,
+            parentId: currentParentId.value, // 在当前目录下搜索
+            page: 1,
+            pageSize: 100 // 搜索结果较多时可以分页
+        })
+        
+        if (res.list) {
+            fileList.value = res.list
+            total.value = res.total || res.list.length
+        } else {
+            fileList.value = []
+            total.value = 0
+        }
+    } catch (error) {
+        console.error('搜索失败:', error)
+        ElMessage.error('搜索失败，请重试')
+        // 搜索失败时恢复原始列表
+        clearSearch()
+    }
+}
+
+// 清除搜索
+const clearSearch = () => {
+    if (isSearching.value) {
+        fileList.value = [...originalFileList.value]
+        total.value = originalFileList.value.length
+        isSearching.value = false
+        originalFileList.value = []
+    }
+    searchKeyword.value = ''
+}
 </script>
 
 <style scoped>
@@ -743,6 +865,13 @@ const handleChunkUploadError = (error) => {
     display: flex;
     align-items: center;
     gap: 12px;
+}
+
+/* 搜索结果提示 */
+.search-result-tip {
+    padding: 16px 24px;
+    background: white;
+    border-bottom: 1px solid #e2e8f0;
 }
 
 /* 文件内容 */
@@ -916,6 +1045,17 @@ const handleChunkUploadError = (error) => {
 
     .toolbar-right {
         justify-content: center;
+        flex-wrap: wrap;
+    }
+
+    .search-input {
+        width: 100% !important;
+        margin-right: 0 !important;
+        margin-bottom: 12px;
+    }
+
+    .search-result-tip {
+        padding: 12px 16px;
     }
 
     .file-grid {

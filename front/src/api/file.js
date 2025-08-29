@@ -106,3 +106,12 @@ export const getFilesByCategory = (data) => {
         data
     })
 }
+
+// 搜索文件
+export const searchFiles = (data) => {
+    return request({
+        url: '/file/search',
+        method: 'post',
+        data
+    })
+}

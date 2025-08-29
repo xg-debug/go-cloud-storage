@@ -29,6 +29,13 @@ type RenameFileRequest struct {
 	NewName string `json:"newName"`
 }
 
+type SearchFilesRequest struct {
+	Keyword  string `json:"keyword" binding:"required"`
+	ParentId string `json:"parentId"`
+	Page     int    `json:"page"`
+	PageSize int    `json:"pageSize"`
+}
+
 func (c *FileController) GetFiles(ctx *gin.Context) {
 	var req GetFilesRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
@@ -147,4 +154,31 @@ func (c *FileController) PreviewFile(ctx *gin.Context) {
 	}
 
 	utils.Success(ctx, previewData)
+}
+
+func (c *FileController) SearchFiles(ctx *gin.Context) {
+	var req SearchFilesRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		utils.Fail(ctx, http.StatusBadRequest, "参数错误: "+err.Error())
+		return
+	}
+
+	userId := ctx.GetInt("userId")
+
+	// 设置默认分页参数
+	if req.Page <= 0 {
+		req.Page = 1
+	}
+	if req.PageSize <= 0 {
+		req.PageSize = 20
+	}
+
+	// 调用服务层搜索文件
+	files, total, err := c.fileService.SearchFiles(ctx, userId, req.Keyword, req.ParentId, req.Page, req.PageSize)
+	if err != nil {
+		utils.Fail(ctx, http.StatusInternalServerError, "搜索文件失败: "+err.Error())
+		return
+	}
+
+	utils.Success(ctx, gin.H{"list": files, "total": total})
 }

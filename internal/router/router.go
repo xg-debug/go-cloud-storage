@@ -102,6 +102,7 @@ func SetUpRouter(db *gorm.DB, ossService *aliyunoss.OSSService) *gin.Engine {
 		file.POST("/move")
 		file.GET("/preview/:fileId", fileCtrl.PreviewFile)
 		file.GET("/recent", fileCtrl.GetRecentFiles)
+		file.POST("/search", fileCtrl.SearchFiles)
 	}
 
 	// 文件检查API
