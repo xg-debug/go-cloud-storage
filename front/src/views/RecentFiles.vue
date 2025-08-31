@@ -49,9 +49,6 @@
                         type="primary"
                     >
                         <div class="day-files">
-                            <!-- <div class="day-header">
-                                <span class="file-count">{{ day.files.length }} 个文件</span>
-                            </div> -->
                             
                             <div class="files-grid">
                                 <div 

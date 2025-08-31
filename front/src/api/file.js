@@ -115,3 +115,20 @@ export const searchFiles = (data) => {
         data
     })
 }
+
+// 获取文件夹树结构
+export const getFolderTree = () => {
+    return request({
+        url: '/file/folders/tree',
+        method: 'get'
+    })
+}
+
+// 移动文件
+export const moveFile = (data) => {
+    return request({
+        url: '/file/move',
+        method: 'post',
+        data
+    })
+}

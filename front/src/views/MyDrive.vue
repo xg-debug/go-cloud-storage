@@ -163,6 +163,12 @@
                                         </el-icon>
                                         分享
                                     </el-dropdown-item>
+                                    <el-dropdown-item command="move">
+                                        <el-icon>
+                                            <FolderAdd/>
+                                        </el-icon>
+                                        移动
+                                    </el-dropdown-item>
                                     <el-dropdown-item divided command="delete">
                                         <el-icon>
                                             <Delete/>
@@ -338,12 +344,62 @@
                 <el-button type="primary" :loading="creatingFolder" @click="confirmNewFolder">确定</el-button>
             </template>
         </el-dialog>
+
+        <!-- 移动文件对话框 -->
+        <el-dialog
+                v-model="moveDialogVisible"
+                title="移动文件"
+                width="500px"
+                :close-on-click-modal="false"
+                @close="cancelMove"
+        >
+            <div class="move-dialog-content">
+                <div class="move-info">
+                    <span>将文件 <strong>{{ moveTarget.name }}</strong> 移动到：</span>
+                </div>
+                <div class="folder-tree-container">
+                    <el-tree
+                            ref="folderTreeRef"
+                            :data="folderTree"
+                            :props="{ children: 'children', label: 'name', value: 'id' }"
+                            node-key="id"
+                            :default-expand-all="false"
+                            :expand-on-click-node="false"
+                            :highlight-current="true"
+                            @node-click="handleFolderSelect"
+                            class="folder-tree"
+                    >
+                        <template #default="{ node, data }">
+                            <div class="folder-node" :class="{ 'selected': selectedTargetFolder && selectedTargetFolder.id === data.id }">
+                                <el-icon><Folder /></el-icon>
+                                <span>{{ data.name }}</span>
+                            </div>
+                        </template>
+                    </el-tree>
+                </div>
+                <div class="selected-folder" v-if="selectedTargetFolder">
+                    <el-icon><Folder /></el-icon>
+                    <span>目标文件夹：{{ selectedTargetFolder.name }}</span>
+                </div>
+            </div>
+            <template #footer>
+                <el-button @click="cancelMove">取消</el-button>
+                <el-button 
+                    type="primary" 
+                    @click="confirmMove" 
+                    :loading="moving"
+                    :disabled="!selectedTargetFolder"
+                >
+                    确定移动
+                </el-button>
+            </template>
+        </el-dialog>
     </div>
 </template>
 
 <script setup>
 import {onMounted, ref} from 'vue'
-import {createFolder, deleteFile, listFiles, previewFile, renameFile, searchFiles, uploadFile} from '@/api/file'
+import {createFolder, deleteFile, getFolderTree, listFiles, moveFile, previewFile, renameFile, searchFiles, uploadFile} from '@/api/file'
 import {ElMessage} from 'element-plus'
 import {
     ArrowDown,
@@ -398,6 +454,14 @@ let tempFolderId = null
 let hoverTimeout = null
 
 const fileNumber = ref(0)
+
+// 移动文件相关状态
+const moveDialogVisible = ref(false)
+const moveTarget = ref({})
+const folderTree = ref([])
+const selectedTargetFolder = ref('')
+const moving = ref(false)
+const folderTreeRef = ref()
 
 
 // const uploadRequest = (options) => {
@@ -628,6 +692,7 @@ const handleGridMenuCommand = (item, command) => {
     else if (command === 'star') handleStar(item)
     else if (command === 'share') handleShare(item)
     else if (command === 'download') handleDownload(item)
+    else if (command === 'move') handleMove(item)
 }
 
 const handleStar = (item) => {
@@ -680,9 +745,151 @@ const handleDownload = (item) => {
     // TODO: 实现下载逻辑
 }
 
-const handleMove = (item) => {
-    ElMessage.info(`移动文件: ${item.name}`)
-    // TODO: 实现移动逻辑
+const handleMove = async (item) => {
+    moveTarget.value = item
+    moveDialogVisible.value = true
+    selectedTargetFolder.value = ''
+    
+    // 加载文件夹树
+    await loadFolderTree()
+}
+
+// 加载文件夹树结构
+const loadFolderTree = async () => {
+    try {
+        const res = await getFolderTree()
+        folderTree.value = buildFolderTree(res.data || res.list || [])
+    } catch (error) {
+        console.error('加载文件夹失败:', error)
+        ElMessage.error('加载文件夹失败')
+        folderTree.value = []
+    }
+}
+
+// 构建文件夹树结构
+const buildFolderTree = (folders) => {
+    const tree = []
+    const map = new Map()
+    
+    // 添加根目录
+    const rootFolder = {
+        id: store.state.userInfo.rootFolderId,
+        name: '根目录',
+        parentId: null,
+        children: []
+    }
+    tree.push(rootFolder)
+    map.set(rootFolder.id, rootFolder)
+    
+    // 构建树结构
+    folders.forEach(folder => {
+        const node = {
+            id: folder.id,
+            name: folder.name,
+            parentId: folder.parent_id || folder.parentId,
+            children: []
+        }
+        map.set(folder.id, node)
+        
+        if (folder.parent_id || folder.parentId) {
+            const parentId = folder.parent_id || folder.parentId
+            if (map.has(parentId)) {
+                map.get(parentId).children.push(node)
+            }
+        } else {
+            rootFolder.children.push(node)
+        }
+    })
+    
+    return tree
+}
+
+// 选择目标文件夹
+const handleFolderSelect = (data) => {
+    // 不能移动到当前文件夹
+    if (data.id === currentParentId.value) {
+        ElMessage.warning('不能移动到当前文件夹')
+        return
+    }
+    
+    // 不能移动到自己或子文件夹（如果移动的是文件夹）
+    if (moveTarget.value.is_dir && isSubFolder(data.id, moveTarget.value.id)) {
+        ElMessage.warning('不能移动到自己或子文件夹')
+        return
+    }
+    
+    selectedTargetFolder.value = data
+}
+
+// 检查是否为子文件夹
+const isSubFolder = (targetId, sourceId) => {
+    // 递归检查文件夹树，防止将文件夹移动到自己的子文件夹中
+    const checkRecursive = (folders, parentId) => {
+        for (const folder of folders) {
+            if (folder.id === parentId) {
+                return true
+            }
+            if (folder.children && folder.children.length > 0) {
+                if (checkRecursive(folder.children, parentId)) {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+    
+    // 找到源文件夹节点
+    const findFolder = (folders, folderId) => {
+        for (const folder of folders) {
+            if (folder.id === folderId) {
+                return folder
+            }
+            if (folder.children && folder.children.length > 0) {
+                const found = findFolder(folder.children, folderId)
+                if (found) return found
+            }
+        }
+        return null
+    }
+    
+    const sourceFolder = findFolder(folderTree.value, sourceId)
+    if (sourceFolder && sourceFolder.children) {
+        return checkRecursive(sourceFolder.children, targetId)
+    }
+    
+    return false
+}
+
+// 确认移动
+const confirmMove = async () => {
+    if (!selectedTargetFolder.value) {
+        ElMessage.warning('请选择目标文件夹')
+        return
+    }
+    
+    moving.value = true
+    try {
+        await moveFile({
+            fileId: moveTarget.value.id,
+            targetFolderId: selectedTargetFolder.value.id
+        })
+        
+        ElMessage.success('移动成功')
+        moveDialogVisible.value = false
+        loadFiles() // 刷新当前文件列表
+    } catch (error) {
+        console.error('移动失败:', error)
+        ElMessage.error('移动失败：' + (error.message || '未知错误'))
+    } finally {
+        moving.value = false
+    }
+}
+
+// 取消移动
+const cancelMove = () => {
+    moveDialogVisible.value = false
+    moveTarget.value = {}
+    selectedTargetFolder.value = ''
 }
 
 // 处理上传命令
@@ -1010,6 +1217,98 @@ const clearSearch = () => {
 
 .delete-confirm-text strong {
     color: #ef4444;
+}
+
+/* 移动文件对话框样式 */
+.move-dialog-content {
+    padding: 20px 0;
+}
+
+.move-info {
+    margin-bottom: 20px;
+    font-size: 14px;
+    color: #606266;
+}
+
+.move-info strong {
+    color: #409eff;
+    font-weight: 600;
+}
+
+.folder-tree-container {
+    border: 1px solid #dcdfe6;
+    border-radius: 6px;
+    max-height: 300px;
+    overflow-y: auto;
+    background: #fafafa;
+}
+
+.folder-tree {
+    padding: 10px;
+}
+
+.folder-tree :deep(.el-tree-node__content) {
+    height: 36px;
+    border-radius: 4px;
+    margin-bottom: 2px;
+}
+
+.folder-tree :deep(.el-tree-node__content:hover) {
+    background-color: #f0f9ff;
+}
+
+.folder-tree :deep(.el-tree-node.is-current > .el-tree-node__content) {
+    background-color: #e1f5fe;
+    color: #409eff;
+}
+
+.folder-node {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 4px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.folder-node:hover {
+    background-color: rgba(64, 158, 255, 0.1);
+}
+
+.folder-node.selected {
+    background-color: #e1f5fe;
+    color: #409eff;
+    font-weight: 500;
+}
+
+.folder-node .el-icon {
+    color: #ffb800;
+    font-size: 16px;
+}
+
+.folder-node.selected .el-icon {
+    color: #409eff;
+}
+
+.selected-folder {
+    margin-top: 15px;
+    padding: 12px;
+    background: linear-gradient(135deg, #f0f9ff 0%, #e1f5fe 100%);
+    border: 1px solid #b3e5fc;
+    border-radius: 6px;
+    font-size: 14px;
+    color: #409eff;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 500;
+}
+
+.selected-folder .el-icon {
+    color: #409eff;
+    font-size: 16px;
 }
 
 /* 响应式设计 */
