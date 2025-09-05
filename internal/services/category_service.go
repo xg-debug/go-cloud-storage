@@ -31,8 +31,12 @@ func (s *categoryService) GetFilesByCategory(userId int, fileType string, sortBy
 		return nil, 0, err
 	}
 
-	var fileList []FileItem
+	fileList := make([]FileItem, 0, len(files))
 	for _, file := range files {
+		thumbnailURL := file.ThumbnailURL
+		if fileType == "video" {
+			thumbnailURL = thumbnailURL + "?x-oss-process=video/snapshot,t_1000,f_jpg,w_400,h_300,m_fast"
+		}
 		fileList = append(fileList, FileItem{
 			Id:           file.Id,
 			Name:         file.Name,
@@ -42,7 +46,7 @@ func (s *categoryService) GetFilesByCategory(userId int, fileType string, sortBy
 			Extension:    file.FileExtension,
 			CreatedAt:    file.CreatedAt.Format("2006年01月02日"),
 			FileURL:      file.FileURL,
-			ThumbnailURL: file.ThumbnailURL,
+			ThumbnailURL: thumbnailURL,
 		})
 	}
 	return fileList, total, nil
