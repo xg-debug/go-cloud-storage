@@ -13,7 +13,7 @@ import (
 
 type FileRepository interface {
 	InitFolder(folder *models.File) error
-	GetFiles(ctx context.Context, userId int, parentId string, page int, pageSize int) ([]models.File, int64, error)
+	GetFiles(ctx context.Context, userId int, parentId string) ([]models.File, int64, error)
 	GetFilesByCategory(ctx context.Context, userId int, fileType string, sortBy string, sortOrder string, page int, pageSize int) ([]models.File, int64, error)
 
 	GetRecentFiles(userId int, since time.Time) ([]models.File, error)
@@ -61,7 +61,7 @@ func (r *fileRepo) InitFolder(folder *models.File) error {
 // 基础文件操作方法
 
 // GetFiles 获取用户文件列表
-func (r *fileRepo) GetFiles(ctx context.Context, userId int, parentId string, page int, pageSize int) ([]models.File, int64, error) {
+func (r *fileRepo) GetFiles(ctx context.Context, userId int, parentId string) ([]models.File, int64, error) {
 	var files []models.File
 	var total int64
 
@@ -76,8 +76,8 @@ func (r *fileRepo) GetFiles(ctx context.Context, userId int, parentId string, pa
 	if err := query.Model(&models.File{}).Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
-	offset := (page - 1) * pageSize
-	if err := query.Order("is_dir desc, created_at desc").Offset(offset).Limit(pageSize).Find(&files).Error; err != nil {
+	//offset := (page - 1) * pageSize
+	if err := query.Order("is_dir desc, created_at desc").Find(&files).Error; err != nil {
 		return nil, 0, err
 	}
 

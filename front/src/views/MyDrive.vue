@@ -5,7 +5,7 @@
             <div class="header-content">
                 <div class="header-info">
                     <div class="header-icon">
-                        <el-icon :size="28" color="#ffffff">
+                        <el-icon :size="28" class="header-folder-icon">
                             <Folder/>
                         </el-icon>
                     </div>
@@ -52,9 +52,14 @@
         <!-- 工具栏 -->
         <div class="toolbar">
             <div class="toolbar-left">
-                <el-button type="primary" :icon="Upload" @click="chunkUploadDialogVisible = true">
+                <el-button type="primary" :icon="Upload" @click="triggerUploadDialog">
                     上传文件
                 </el-button>
+                <input
+                    type="file"
+                    ref="fileInputRef"
+                    style="display: none"
+                    @change="handleFileInputChange" >
 
                 <el-button :icon="FolderAdd" @click="handleNewFolder">
                     新建文件夹
@@ -82,14 +87,12 @@
                             :icon="Grid"
                             @click="viewMode = 'grid'"
                     >
-                        网格
                     </el-button>
                     <el-button
                             :type="viewMode === 'list' ? 'primary' : ''"
                             :icon="List"
                             @click="viewMode = 'list'"
                     >
-                        列表
                     </el-button>
                 </el-button-group>
             </div>
@@ -299,22 +302,39 @@
                 @success="handleShareSuccess"
         />
 
-        <!-- 大文件上传对话框 -->
+        <!-- 文件上传对话框 -->
         <el-dialog
-                v-model="chunkUploadDialogVisible"
-                title="文件上传"
-                width="600px"
-                :close-on-click-modal="false"
+            v-model="uploadDialogVisible"
+            title="文件上传"
+            width="500px"
+            :close-on-click-modal="false"
+            @close="resetUploadState"
         >
-            <ChunkUpload
-                    :folder-id="currentParentId"
-                    :chunk-size="10 * 1024 * 1024"
-                    :max-file-size="2 * 1024 * 1024 * 1024"
-                    @upload-success="handleChunkUploadSuccess"
-                    @upload-error="handleChunkUploadError"
-            />
+            <div
+                v-if="!pendingFile"
+                class="drop-zone"
+                :class="{ dragging: isDragging }"
+                @dragover.prevent="isDragging = true"
+                @dragleave.prevent="isDragging = false"
+                @drop.prevent="onDrop"
+            >
+                <el-icon :size="48"><Upload /></el-icon>
+                <p>将文件拖拽到此处 或</p>
+                <el-button link @click="triggerSelect">选择本地文件</el-button>
+                <input type="file" ref="uploadInputRef" style="display: none" @change="onSelectFile">
+            </div>
+
+            <!-- 上传进度 -->
+            <div v-else class="upload-progress-info">
+                <h4 style="margin-bottom: 15px;">正在上传：{{ pendingFile.name }}</h4>
+
+                <el-progress :percentage="uploadProgress" />
+
+                <p>{{ uploadStatusText }}</p>
+            </div>
+
             <template #footer>
-                <el-button @click="chunkUploadDialogVisible = false">关闭</el-button>
+                <el-button @click="resetUploadState" :disabled="uploading">关闭</el-button>
             </template>
         </el-dialog>
 
@@ -399,7 +419,8 @@
 
 <script setup>
 import {onMounted, ref} from 'vue'
-import {createFolder, deleteFile, getFolderTree, listFiles, moveFile, previewFile, renameFile, searchFiles, uploadFile} from '@/api/file'
+import {createFolder, deleteFile, getFolderTree, listFiles, moveFile, previewFile, renameFile, searchFiles, uploadFile,
+    chunkUploadInit, chunkUploadPart, chunkUploadMerge, chunkUploadCancel} from '@/api/file'
 import {ElMessage} from 'element-plus'
 import {
     ArrowDown,
@@ -421,7 +442,6 @@ import {
 import {useStore} from 'vuex'
 import {addFavorite} from "@/api/favorite";
 import CreateShareDialog from '@/components/CreateShareDialog.vue'
-import ChunkUpload from '@/components/ChunkUpload.vue'
 
 const store = useStore()
 const viewMode = ref('grid')
@@ -448,8 +468,7 @@ const deleteTarget = ref({})
 const deleting = ref(false)
 const shareDialogVisible = ref(false)
 const shareFileInfo = ref({})
-const chunkUploadDialogVisible = ref(false)
-const normalUploadRef = ref()
+
 let tempFolderId = null
 let hoverTimeout = null
 
@@ -463,25 +482,172 @@ const selectedTargetFolder = ref('')
 const moving = ref(false)
 const folderTreeRef = ref()
 
+// 上传相关状态
+const uploadDialogVisible = ref(false)
+const uploadInputRef = ref(null)
 
-// const uploadRequest = (options) => {
-//     const {file, onProgress, onSuccess, onError, data} = options
-//     const formData = new FormData()
-//     formData.append('file', file)
-//     for (const key in data) {
-//         formData.append(key, data[key])
-//     }
-//     uploadFile(formData, (event) => {
-//         const percent = Math.floor((event.loaded / event.total) * 100)
-//         onProgress({percent})
-//     })
-//         .then((res) => {
-//             onSuccess(res)
-//         })
-//         .catch((err) => {
-//             onError(err)
-//         })
-// }
+const pendingFile = ref(null)            // 当前上传的文件
+const uploadProgress = ref(0)            // 总进度（大文件/小文件统一）
+const uploading = ref(false)             // 上传中
+const isDragging = ref(false)
+
+const CHUNK_SIZE = 10 * 1024 * 1024      // 10MB
+const CHUNK_THRESHOLD = 50 * 1024 * 1024 // 判定大文件
+
+// 打开上传对话框
+const triggerUploadDialog = () => {
+    uploadDialogVisible.value = true
+}
+
+/* 打开本地选择文件 */
+const triggerSelect = () => {
+    uploadInputRef.value.click()
+}
+
+/* 选择文件 */
+const onSelectFile = (e) => {
+    const file = e.target.files[0]
+    e.target.value = ''
+    if (file) prepareUpload(file)
+}
+
+/* 拖拽上传 */
+const onDrop = (e) => {
+    const file = e.dataTransfer.files[0]
+    isDragging.value = false
+    if (file) prepareUpload(file)
+}
+
+/* 准备上传（区分大小文件） */
+const prepareUpload = (file) => {
+    pendingFile.value = file
+    uploadProgress.value = 0
+
+    if (file.size >= CHUNK_THRESHOLD) {
+        uploadLargeFile(file)
+    } else {
+        uploadSmallFile(file)
+    }
+}
+
+const uploadSmallFile = async (file) => {
+    uploading.value = true
+
+    const form = new FormData()
+    form.append('file', file)
+    form.append('parentId', currentParentId.value)
+
+    try {
+        await uploadFile(form, (e) => {
+            uploadProgress.value = Math.round((e.loaded * 100) / e.total)
+        })
+
+        ElMessage.success('上传成功')
+        resetUploadState()
+        loadFiles()
+    } catch (err) {
+        ElMessage.error('上传失败')
+    } finally {
+        uploading.value = false
+    }
+}
+
+const uploadLargeFile = async (file) => {
+    uploading.value = true
+    uploadProgress.value = 0
+
+    try {
+        const fileHash = await calcSHA256(file)
+
+        // 初始化任务
+        const initRes = await chunkUploadInit({
+            fileHash,
+            parentId: currentParentId.value,
+            fileName: file.name,
+            fileSize: file.size,
+        })
+
+        // 秒传成功
+        if (initRes.finished) {
+            uploadProgress.value = 100
+            ElMessage.success('秒传成功')
+            resetUploadState()
+            loadFiles()
+            return
+        }
+
+        const uploaded = new Set(initRes.uploadedChunks)
+        const totalChunks = Math.ceil(file.size / CHUNK_SIZE)
+        let finished = uploaded.size
+
+        // 上传每个分片
+        for (let index = 0; index < totalChunks; index++) {
+            if (uploaded.has(index)) {
+                updateProgress(uploaded.size, totalChunks)
+                continue
+            }
+
+            const start = index * CHUNK_SIZE
+            const end = Math.min(file.size, start + CHUNK_SIZE)
+            const chunk = file.slice(start, end)
+
+            const form = new FormData()
+            form.append('fileHash', fileHash)
+            form.append('chunkIndex', index)
+            form.append('chunk', chunk)
+
+            await chunkUploadPart(form, () => {})
+
+            finished++
+            updateProgress(finished, totalChunks)
+        }
+
+        // 合并分片
+        uploadProgress.value = 98
+        await chunkUploadMerge({
+            fileHash,
+            fileName: file.name,
+            fileSize: file.size,
+            parentId: currentParentId.value
+        })
+
+        uploadProgress.value = 100
+        ElMessage.success('上传成功')
+
+        resetUploadState()
+        loadFiles()
+
+    } catch (err) {
+        console.error(err)
+        ElMessage.error('大文件上传失败')
+    } finally {
+        uploading.value = false
+    }
+}
+/* 更新进度条（95% 用于上传部分） */
+const updateProgress = (finished, total) => {
+    uploadProgress.value = Math.round((finished / total) * 95)
+}
+/* -----------------------------------------------------
+   计算 SHA-256（浏览器原生）
+------------------------------------------------------ */
+const calcSHA256 = async (file) => {
+    const buffer = await file.arrayBuffer()
+    const hashBuffer = await crypto.subtle.digest('SHA-256', buffer)
+    return Array.from(new Uint8Array(hashBuffer))
+        .map(b => b.toString(16).padStart(2, '0'))
+        .join('')
+}
+/* -----------------------------------------------------
+   上传对话框关闭时重置
+------------------------------------------------------ */
+const resetUploadState = () => {
+    if (uploading.value) return ElMessage.warning('上传中请勿关闭')
+    pendingFile.value = null
+    uploadProgress.value = 0
+    uploading.value = false
+    uploadDialogVisible.value = false
+}
 
 const loadFiles = async () => {
     const res = await listFiles({
@@ -618,26 +784,24 @@ const confirmNewFolder = async () => {
     }
 }
 
-const beforeUpload = (file) => {
-    const maxSize = 10 * 1024 * 1024 // 50MB
-    if (file.size > maxSize) {
-        ElMessage.error('文件大小不能超过10MB')
-        return false
-    }
-    return true
-}
+// 处理文件选择变化（核心分流逻辑）
+const handleFileChange = (e) => {
+    const file = e.target.files[0]
+    if (!file) return
 
-const handleUploadSuccess = (response) => {
-    if (response?.name) {
-        ElMessage.success('上传成功')
-        loadFiles()
+    // 重置 input value，允许重复选择同一文件
+    e.target.value = ''
+
+    if (file.size > CHUNK_THRESHOLD) {
+        // --- 走大文件分片逻辑 ---
+        console.log('文件较大，使用分片上传')
+        pendingLargeFile.value = file
+        chunkUploadDialogVisible.value = true
     } else {
-        ElMessage.error(response.message || '上传失败')
+        // --- 走小文件直接上传逻辑 ---
+        console.log('文件较小，使用直接上传')
+        handleSmallFileUpload(file)
     }
-}
-
-const handleUploadError = (err) => {
-    ElMessage.error(err?.message || '上传失败')
 }
 
 const handleRename = (row) => {
@@ -892,28 +1056,6 @@ const cancelMove = () => {
     selectedTargetFolder.value = ''
 }
 
-// 处理上传命令
-const handleUploadCommand = (command) => {
-    if (command === 'normal') {
-        // 触发普通上传
-        normalUploadRef.value.$el.querySelector('input').click()
-    } else if (command === 'chunk') {
-        // 打开大文件上传对话框
-        chunkUploadDialogVisible.value = true
-    }
-}
-
-// 分片上传成功回调
-const handleChunkUploadSuccess = (fileInfo) => {
-    ElMessage.success(`文件 ${fileInfo.fileName} 上传成功！`)
-    loadFiles() // 刷新文件列表
-}
-
-// 分片上传错误回调
-const handleChunkUploadError = (error) => {
-    ElMessage.error(`上传失败: ${error.message}`)
-}
-
 // 搜索处理函数
 let searchTimeout = null
 const handleSearch = () => {
@@ -985,9 +1127,9 @@ const clearSearch = () => {
 
 /* 页面头部 */
 .page-header {
-    background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
-    color: white;
-    padding: 14px 24px;
+    background: #ffffff;
+    padding: 24px 32px;
+    border-bottom: 1px solid #e2e8f0;
 }
 
 .header-content {
@@ -999,92 +1141,116 @@ const clearSearch = () => {
 .header-info {
     display: flex;
     align-items: center;
-    gap: 16px;
+    gap: 20px;
 }
 
 .header-icon {
-    width: 48px;
-    height: 48px;
-    background: rgba(255, 255, 255, 0.2);
-    border-radius: 12px;
+    width: 56px;
+    height: 56px;
+    background: #eff6ff;
+    border-radius: 16px;
     display: flex;
     align-items: center;
     justify-content: center;
+    box-shadow: 0 4px 6px -1px rgba(59, 130, 246, 0.1), 0 2px 4px -1px rgba(59, 130, 246, 0.06);
+}
+
+.header-folder-icon {
+    color: #3b82f6;
 }
 
 .page-title {
     font-size: 24px;
-    font-weight: 600;
+    font-weight: 700;
+    color: #1e293b;
     margin: 0 0 4px 0;
+    letter-spacing: -0.5px;
 }
 
 .page-description {
     font-size: 14px;
-    opacity: 0.9;
+    color: #64748b;
     margin: 0;
+    font-weight: 500;
 }
 
 .header-stats {
     display: flex;
-    gap: 32px;
+    gap: 48px;
 }
 
 .stat-item {
     text-align: center;
+    position: relative;
+}
+
+.stat-item:not(:last-child)::after {
+    content: '';
+    position: absolute;
+    right: -24px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 1px;
+    height: 24px;
+    background: #e2e8f0;
 }
 
 .stat-number {
     display: block;
-    font-size: 24px;
-    font-weight: 600;
-    line-height: 1;
+    font-size: 28px;
+    font-weight: 700;
+    color: #1e293b;
+    line-height: 1.2;
 }
 
 .stat-label {
-    font-size: 12px;
-    opacity: 0.8;
+    font-size: 13px;
+    color: #64748b;
+    font-weight: 500;
 }
 
 /* 面包屑导航 */
 .breadcrumb-container {
     background: white;
-    padding: 16px 24px;
-    border-bottom: 1px solid #e2e8f0;
+    padding: 16px 32px;
+    border-bottom: 1px solid #f1f5f9;
 }
 
 /* 工具栏 */
 .toolbar {
     background: white;
-    padding: 20px 24px;
+    padding: 16px 32px;
     border-bottom: 1px solid #e2e8f0;
     display: flex;
     justify-content: space-between;
     align-items: center;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.02);
+    z-index: 10;
 }
 
 .toolbar-left {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 16px;
 }
 
 .toolbar-right {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 16px;
 }
 
 /* 搜索结果提示 */
 .search-result-tip {
-    padding: 16px 24px;
-    background: white;
-    border-bottom: 1px solid #e2e8f0;
+    padding: 16px 32px;
+    background: #fffbeb;
+    border-bottom: 1px solid #fcd34d;
 }
 
 /* 文件内容 */
 .file-content {
     flex: 1;
-    background: white;
+    background: #f8fafc;
     overflow: hidden;
     display: flex;
     flex-direction: column;
@@ -1093,63 +1259,84 @@ const clearSearch = () => {
 /* 网格视图 */
 .grid-view {
     flex: 1;
-    padding: 24px;
+    padding: 32px;
     overflow: auto;
 }
 
 .file-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-    gap: 20px;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 24px;
 }
 
 .file-card {
     background: white;
     border: 1px solid #e2e8f0;
-    border-radius: 12px;
-    padding: 16px;
-    transition: all 0.3s ease;
+    border-radius: 16px;
+    padding: 20px;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     cursor: pointer;
     position: relative;
+    display: flex;
+    flex-direction: column;
 }
 
 .file-card:hover,
 .file-card-hover {
-    box-shadow: 0 8px 25px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.05);
     border-color: #3b82f6;
-    transform: translateY(-2px);
+    transform: translateY(-4px);
 }
 
 .file-actions-dropdown {
     position: absolute;
-    top: 8px;
-    right: 8px;
+    top: 12px;
+    right: 12px;
     z-index: 2;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+}
+
+.file-card:hover .file-actions-dropdown,
+.file-card-hover .file-actions-dropdown {
+    opacity: 1;
 }
 
 .more-btn {
-    padding: 4px;
+    padding: 6px;
     min-width: 0;
-    background: rgba(255, 255, 255, 0.9) !important;
-    border-radius: 50%;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    background: white !important;
+    border-radius: 8px;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+    color: #64748b;
+}
+
+.more-btn:hover {
+    color: #3b82f6;
+    background: #f8fafc !important;
 }
 
 .file-thumbnail {
     width: 100%;
-    height: 120px;
-    border-radius: 8px;
+    height: 140px;
+    border-radius: 12px;
     overflow: hidden;
-    background: #f9fafb;
+    background: #f8fafc;
     display: flex;
     align-items: center;
     justify-content: center;
-    margin-bottom: 12px;
+    margin-bottom: 16px;
+    transition: transform 0.3s ease;
+}
+
+.file-card:hover .file-thumbnail {
+    transform: scale(1.02);
 }
 
 .thumbnail-image {
     width: 100%;
     height: 100%;
+    object-fit: cover;
 }
 
 .file-info {
@@ -1157,13 +1344,14 @@ const clearSearch = () => {
 }
 
 .file-name {
-    font-size: 14px;
-    font-weight: 500;
-    color: #1f2937;
-    margin-bottom: 4px;
+    font-size: 15px;
+    font-weight: 600;
+    color: #1e293b;
+    margin-bottom: 6px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    line-height: 1.4;
 }
 
 .temp-folder {
@@ -1172,35 +1360,46 @@ const clearSearch = () => {
 }
 
 .file-meta {
-    font-size: 12px;
-    color: #6b7280;
+    font-size: 13px;
+    color: #94a3b8;
 }
 
 /* 列表视图 */
 .list-view {
     flex: 1;
-    padding: 24px;
+    padding: 24px 32px;
     overflow: auto;
 }
 
 .file-table {
-    border-radius: 8px;
-    overflow: visible;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+    border: 1px solid #e2e8f0;
 }
 
 .file-table :deep(.el-table__header) {
     background: #f8fafc;
 }
 
+.file-table :deep(.el-table__header th) {
+    background: #f8fafc;
+    color: #64748b;
+    font-weight: 600;
+    height: 56px;
+}
+
+.file-table :deep(.el-table__row) {
+    height: 64px;
+}
+
 .file-table :deep(.el-table__row:hover) {
-    background: #f0f9ff;
+    background-color: #f8fafc;
 }
 
 .file-name-text {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    font-weight: 500;
+    color: #1e293b;
 }
 
 .list-el-dropdown {
@@ -1210,105 +1409,96 @@ const clearSearch = () => {
 /* 对话框样式 */
 .delete-confirm-text {
     text-align: center;
-    font-size: 14px;
+    font-size: 15px;
     line-height: 1.8;
     user-select: none;
+    color: #475569;
+    padding: 20px 0;
 }
 
 .delete-confirm-text strong {
     color: #ef4444;
+    font-weight: 600;
 }
 
 /* 移动文件对话框样式 */
 .move-dialog-content {
-    padding: 20px 0;
+    padding: 10px 0;
 }
 
 .move-info {
     margin-bottom: 20px;
-    font-size: 14px;
-    color: #606266;
+    font-size: 15px;
+    color: #475569;
 }
 
 .move-info strong {
-    color: #409eff;
+    color: #3b82f6;
     font-weight: 600;
 }
 
 .folder-tree-container {
-    border: 1px solid #dcdfe6;
-    border-radius: 6px;
-    max-height: 300px;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    max-height: 320px;
     overflow-y: auto;
-    background: #fafafa;
+    background: #fff;
+    padding: 12px;
 }
 
 .folder-tree {
-    padding: 10px;
+    background: transparent;
 }
 
 .folder-tree :deep(.el-tree-node__content) {
-    height: 36px;
-    border-radius: 4px;
+    height: 40px;
+    border-radius: 8px;
     margin-bottom: 2px;
 }
 
 .folder-tree :deep(.el-tree-node__content:hover) {
-    background-color: #f0f9ff;
+    background-color: #f1f5f9;
 }
 
 .folder-tree :deep(.el-tree-node.is-current > .el-tree-node__content) {
-    background-color: #e1f5fe;
-    color: #409eff;
+    background-color: #eff6ff;
+    color: #3b82f6;
 }
 
 .folder-node {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 10px;
     width: 100%;
-    padding: 4px 8px;
-    border-radius: 4px;
-    cursor: pointer;
-    transition: all 0.2s ease;
-}
-
-.folder-node:hover {
-    background-color: rgba(64, 158, 255, 0.1);
-}
-
-.folder-node.selected {
-    background-color: #e1f5fe;
-    color: #409eff;
-    font-weight: 500;
+    padding: 0 8px;
 }
 
 .folder-node .el-icon {
-    color: #ffb800;
-    font-size: 16px;
+    color: #f59e0b;
+    font-size: 18px;
 }
 
 .folder-node.selected .el-icon {
-    color: #409eff;
+    color: #3b82f6;
 }
 
 .selected-folder {
-    margin-top: 15px;
-    padding: 12px;
-    background: linear-gradient(135deg, #f0f9ff 0%, #e1f5fe 100%);
-    border: 1px solid #b3e5fc;
-    border-radius: 6px;
+    margin-top: 20px;
+    padding: 16px;
+    background: #eff6ff;
+    border: 1px solid #bfdbfe;
+    border-radius: 12px;
     font-size: 14px;
-    color: #409eff;
+    color: #3b82f6;
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 10px;
     font-weight: 500;
 }
 
 .selected-folder .el-icon {
-    color: #409eff;
-    font-size: 16px;
+    color: #3b82f6;
+    font-size: 20px;
 }
 
 /* 响应式设计 */
@@ -1324,7 +1514,7 @@ const clearSearch = () => {
     }
 
     .header-stats {
-        gap: 24px;
+        gap: 32px;
     }
 
     .breadcrumb-container {
@@ -1358,14 +1548,41 @@ const clearSearch = () => {
     }
 
     .file-grid {
-        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
         gap: 16px;
-        padding: 16px;
+        padding: 0;
     }
 
     .grid-view,
     .list-view {
         padding: 16px;
     }
+}
+
+.drop-zone {
+    border: 2px dashed #e2e8f0;
+    padding: 40px 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    border-radius: 16px;
+    background: #f8fafc;
+}
+
+.drop-zone:hover {
+    border-color: #3b82f6;
+    background: #eff6ff;
+}
+
+.drop-zone.dragging {
+    border-color: #3b82f6;
+    background: #eff6ff;
+    transform: scale(1.02);
+}
+
+.drop-zone p {
+    margin: 16px 0;
+    color: #64748b;
+    font-size: 15px;
 }
 </style>

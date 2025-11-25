@@ -170,7 +170,7 @@ function handleLocate(file) {
 .page-header {
   background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
   color: white;
-  padding: 14px 24px;
+  padding: 6px 24px;
 }
 
 .header-content {

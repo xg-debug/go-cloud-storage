@@ -1,5 +1,6 @@
-package aliyunoss
+package aliyun
 
+// 弃用
 import (
 	"bytes"
 	"context"
@@ -222,7 +223,7 @@ func (s *OSSService) DeleteFiles(ctx context.Context, objectKeys []string) error
 	return nil
 }
 
-// InitiateMultipartUpload 初始化分片上传，返回 uploadId
+// InitiateMultipartUpload 初始化上传，返回 uploadId
 func (s *OSSService) InitiateMultipartUpload(ctx context.Context, objectKey string) (string, error) {
 	req := &oss.InitiateMultipartUploadRequest{
 		Bucket: oss.Ptr(s.bucket),
@@ -233,79 +234,6 @@ func (s *OSSService) InitiateMultipartUpload(ctx context.Context, objectKey stri
 		return "", fmt.Errorf("初始化分片上传失败: %w", err)
 	}
 	return *resp.UploadId, nil
-}
-
-// UploadPart 上传单个分片
-func (s *OSSService) UploadPart(ctx context.Context, objectKey, uploadId string, partNumber int, data []byte) (*oss.UploadPart, error) {
-	body := bytes.NewReader(data)
-	req := &oss.UploadPartRequest{
-		Bucket:     oss.Ptr(s.bucket),
-		Key:        oss.Ptr(objectKey),
-		UploadId:   oss.Ptr(uploadId),
-		PartNumber: int32(partNumber),
-		Body:       body,
-	}
-
-	resp, err := s.client.UploadPart(ctx, req)
-	if err != nil {
-		return nil, fmt.Errorf("上传分片失败: %w", err)
-	}
-
-	return &oss.UploadPart{
-		PartNumber: int32(partNumber),
-		ETag:       resp.ETag,
-	}, nil
-}
-
-// AbortMultipartUpload 取消分片上传
-func (s *OSSService) AbortMultipartUpload(ctx context.Context, objectKey, uploadId string) error {
-	req := &oss.AbortMultipartUploadRequest{
-		Bucket:   oss.Ptr(s.bucket),
-		Key:      oss.Ptr(objectKey),
-		UploadId: oss.Ptr(uploadId),
-	}
-
-	_, err := s.client.AbortMultipartUpload(ctx, req)
-	if err != nil {
-		return fmt.Errorf("取消分片上传失败: %w", err)
-	}
-	return nil
-}
-
-// ListParts 列出已上传的分片
-func (s *OSSService) ListParts(ctx context.Context, objectKey, uploadId string) ([]oss.Part, error) {
-	req := &oss.ListPartsRequest{
-		Bucket:   oss.Ptr(s.bucket),
-		Key:      oss.Ptr(objectKey),
-		UploadId: oss.Ptr(uploadId),
-	}
-
-	resp, err := s.client.ListParts(ctx, req)
-	if err != nil {
-		return nil, fmt.Errorf("列出分片失败: %w", err)
-	}
-
-	return resp.Parts, nil
-}
-
-// CompleteMultipartUpload 完成分片上传
-func (s *OSSService) CompleteMultipartUpload(ctx context.Context, objectKey, uploadId string, parts []oss.UploadPart) error {
-	_, err := s.client.CompleteMultipartUpload(ctx, &oss.CompleteMultipartUploadRequest{
-		Bucket:   &s.bucket,
-		Key:      &objectKey,
-		UploadId: &uploadId,
-		CompleteMultipartUpload: &oss.CompleteMultipartUpload{
-			Parts: parts,
-		},
-	})
-	return err
-}
-
-// CheckFileExists 检查文件是否已存在（通过文件哈希）
-func (s *OSSService) CheckFileExists(ctx context.Context, fileHash string, userId int) (*models.File, error) {
-	// 这里需要查询数据库，检查是否已有相同哈希的文件
-	// 由于这个方法在OSS服务中，我们返回nil表示需要在上层处理
-	return nil, nil
 }
 
 // GenerateObjectKey 生成OSS对象键

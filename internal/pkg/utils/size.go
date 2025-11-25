@@ -51,3 +51,13 @@ func MBToBytes(mb float64) uint64 {
 func GBToBytes(gb float64) uint64 {
 	return uint64(gb * 1024 * 1024 * 1024)
 }
+
+// GetFileExtension 获取文件扩展名 (带点)
+func GetFileExtension(filename string) string {
+	for i := len(filename) - 1; i >= 0; i-- {
+		if filename[i] == '.' {
+			return filename[i:]
+		}
+	}
+	return ""
+}

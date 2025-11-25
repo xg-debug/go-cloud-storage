@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"go-cloud-storage/internal/models"
 	"go-cloud-storage/internal/models/vo"
-	"go-cloud-storage/internal/pkg/aliyunoss"
+	"go-cloud-storage/internal/pkg/minio"
 	"go-cloud-storage/internal/pkg/utils"
 	"go-cloud-storage/internal/repositories"
 	"log"
@@ -30,12 +30,12 @@ type userService struct {
 	userRepo         repositories.UserRepository
 	fileRepo         repositories.FileRepository
 	storageQuotaRepo repositories.StorageQuotaRepository
-	ossService       *aliyunoss.OSSService
+	minio            *minio.MinioService
 }
 
 func NewUserService(userRepo repositories.UserRepository, fileRepo repositories.FileRepository,
-	storage repositories.StorageQuotaRepository, aliyunOss *aliyunoss.OSSService) UserService {
-	return &userService{userRepo: userRepo, fileRepo: fileRepo, ossService: aliyunOss, storageQuotaRepo: storage}
+	quotaRepo repositories.StorageQuotaRepository, minio *minio.MinioService) UserService {
+	return &userService{userRepo: userRepo, fileRepo: fileRepo, storageQuotaRepo: quotaRepo, minio: minio}
 }
 
 func (s *userService) AuthenticateUser(account, password string) (*models.User, error) {
@@ -161,7 +161,7 @@ func (s *userService) ChangePassword(userId int, oldPassword, newPassword string
 
 func (s *userService) UploadAvatar(ctx context.Context, userId int, file multipart.File, header *multipart.FileHeader) (string, error) {
 	// 上传OSS
-	avatarURL, err := s.ossService.UploadAvatarFromStream(ctx, file, userId, header)
+	avatarURL, err := s.minio.UploadAvatarFromStream(ctx, file, userId, header)
 	if err != nil {
 		return "", err
 	}

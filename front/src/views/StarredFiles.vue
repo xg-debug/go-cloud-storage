@@ -263,7 +263,7 @@ onMounted(fetchFavorites)
 .page-header {
   background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
   color: white;
-  padding: 14px 24px;
+  padding: 6px 24px;
 }
 
 .header-content {

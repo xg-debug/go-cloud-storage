@@ -38,3 +38,14 @@ QQ:
   appID: 102795535
   redirectURI: 
   appKey: vhDYiiW5nGXbZIm0
+
+
+
+storageType: "minio"
+minio:
+  endpoint: "192.168.101.129:9001"
+  accessKeyID: "admin"
+  secretAccessKey: "admin123"
+  bucket: "go-cloud-storage"
+  useSSL: false
+  region: "us-east-1"

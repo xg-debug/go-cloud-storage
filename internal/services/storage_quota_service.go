@@ -42,7 +42,7 @@ func (s *storageQuotaService) UpdateUsedSpace(userId int, deltaSize int64) error
 		return err
 	}
 
-	return s.storageQuotaRepo.UpdateUsedSpace(userId, deltaSize)
+	return s.storageQuotaRepo.UpdateUsedSpace(nil, userId, deltaSize)
 }
 
 // EnsureUserQuota 确保用户有存储配额记录

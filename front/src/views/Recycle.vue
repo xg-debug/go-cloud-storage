@@ -335,7 +335,7 @@ const handleDeleteDialogClose = () => {
 .page-header {
   background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
   color: white;
-  padding: 14px 24px;
+  padding: 6px 24px;
 }
 
 .header-content {

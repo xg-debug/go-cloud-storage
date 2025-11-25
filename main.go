@@ -2,9 +2,9 @@ package main
 
 import (
 	"fmt"
-	"go-cloud-storage/internal/pkg/aliyunoss"
 	"go-cloud-storage/internal/pkg/cache"
 	"go-cloud-storage/internal/pkg/config"
+	"go-cloud-storage/internal/pkg/minio"
 	"go-cloud-storage/internal/pkg/mysql"
 	"go-cloud-storage/internal/router"
 	"log"
@@ -29,15 +29,15 @@ func main() {
 	}
 	defer cache.Close() // 确保程序退出时关闭Redis连接
 
-	// 初始化Oss
-	ossService, err := aliyunoss.NewOSSService(&cfg.AliyunOss)
+	// 初始化 Minio
+	minioService, err := minio.NewMinioService(&cfg.Minio)
 	if err != nil {
-		log.Fatalf("OSS初始化失败: " + err.Error())
+		log.Fatalf("MinIO 初始化失败: %v", err)
 	}
 
 	// 初始化其他组件（Redis、HTTP服务器等）
 
-	r := router.SetUpRouter(mysql.GormDB, ossService)
+	r := router.SetUpRouter(mysql.GormDB, minioService)
 
 	port := fmt.Sprintf(":%d", cfg.Server.Port)
 	if err := r.Run(port); err != nil {

@@ -77,18 +77,6 @@ export const renameFile = (fileId, newName) => {
     })
 }
 
-// 上传文件(使用FormData)
-export const uploadFile = (formData, onUploadProgress) => {
-    return request({
-        url: '/file/upload',
-        method: 'post',
-        data: formData,
-        headers: {'Content-Type': 'multipart/form-data'},
-        timeout: 30 * 60 * 1000, // 30分钟超时
-        onUploadProgress
-    })
-}
-
 // 获取最近文件
 export const getRecentFiles = (timeRange) => {
     return request({
@@ -132,3 +120,70 @@ export const moveFile = (data) => {
         data
     })
 }
+
+
+/**
+ * 标准上传文件(使用FormData)
+ * @param {FormData} formData - 包含文件和元数据的 FormData 对象
+ * @param {function} onUploadProgress - 进度回调函数
+ */
+export const uploadFile = (formData, onUploadProgress) => {
+    // formData 内部结构应该是:
+    // formData.append('file', fileObject);
+    // formData.append('parentId', currentParentId);
+    return request({
+        url: '/file/upload',
+        method: 'post',
+        data: formData,
+        headers: {'Content-Type': 'multipart/form-data'},
+        timeout: 2 * 60 * 1000, // 2分钟超时
+        onUploadProgress
+    })
+}
+
+/**
+ * 初始化分片上传任务
+ * @param {object} data - {fileHash: string, fileName: string, parentId: string, fileSize: int64}
+ */
+export const chunkUploadInit = (data) => request({
+    url: '/file/chunk/init',
+    method: 'post',
+    data
+})
+
+/**
+ * 上传单个分片
+ * @param {FormData} formData - 包含 chunkIndex, fileHash, file Blob 的 FormData
+ * @param {function} onUploadProgress - 进度回调函数
+ */
+export const chunkUploadPart = (formData, onUploadProgress) => {
+    return request({
+        url: '/file/chunk/upload',
+        method: 'post',
+        data: formData,
+        headers: {'Content-Type': 'multipart/form-data'},
+        onUploadProgress
+    })
+}
+
+/**
+ * 完成分片合并
+ * @param {object} data - {fileHash: string, fileName: string, parentId: string, fileSize: int64}
+ */
+export const chunkUploadMerge = (data) => {
+    return request({
+        url: '/file/chunk/merge',
+        method: 'post',
+        data
+    })
+}
+
+/**
+ * 取消分片上传任务
+ * @param {object} data - {fileHash: string}
+ */
+export const chunkUploadCancel = (fileHash) => request({
+    url: '/file/chunk/cancel',
+    method: 'post',
+    data: { fileHash }
+})

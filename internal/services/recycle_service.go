@@ -2,8 +2,9 @@ package services
 
 import (
 	"context"
-	"go-cloud-storage/internal/pkg/aliyunoss"
+	"go-cloud-storage/internal/pkg/minio"
 	"go-cloud-storage/internal/repositories"
+
 	"gorm.io/gorm"
 )
 
@@ -19,15 +20,15 @@ type RecycleService interface {
 
 type recycleService struct {
 	db          *gorm.DB
-	ossService  *aliyunoss.OSSService
+	minio       *minio.MinioService
 	recycleRepo repositories.RecycleRepository
 	fileRepo    repositories.FileRepository
 }
 
-func NewRecycleService(db *gorm.DB, oss *aliyunoss.OSSService, recycleRepo repositories.RecycleRepository, fileRepo repositories.FileRepository) RecycleService {
+func NewRecycleService(db *gorm.DB, minio *minio.MinioService, recycleRepo repositories.RecycleRepository, fileRepo repositories.FileRepository) RecycleService {
 	return &recycleService{
 		db:          db,
-		ossService: oss,
+		minio:       minio,
 		recycleRepo: recycleRepo,
 		fileRepo:    fileRepo,
 	}
@@ -82,7 +83,7 @@ func (s *recycleService) DeleteOne(ctx context.Context, fileId string) error {
 			return err
 		}
 		// 4.OSS删除
-		if err := s.ossService.DeleteFile(context.Background(), file.OssObjectKey); err != nil {
+		if err := s.minio.DeleteFile(context.Background(), file.OssObjectKey); err != nil {
 			return err
 		}
 		return nil
@@ -103,7 +104,7 @@ func (s *recycleService) DeleteSelected(ctx context.Context, fileIds []string) e
 			return err
 		}
 		// 3. OSS 删除
-		if err := s.ossService.DeleteFiles(context.Background(), objectKeys); err != nil {
+		if err := s.minio.DeleteFiles(context.Background(), objectKeys); err != nil {
 			return err
 		}
 		return nil
@@ -124,7 +125,7 @@ func (s *recycleService) ClearRecycles(ctx context.Context, userId int) error {
 			return err
 		}
 		// 3. OSS 删除
-		if err := s.ossService.DeleteFiles(context.Background(), objectKeys); err != nil {
+		if err := s.minio.DeleteFiles(context.Background(), objectKeys); err != nil {
 			return err
 		}
 		return nil

@@ -2,7 +2,6 @@ package cache
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -61,100 +60,4 @@ func Close() {
 			log.Println("Redis连接已关闭!")
 		}
 	}
-}
-
-// 分片上传信息结构
-type ChunkUploadInfo struct {
-	FileHash       string `json:"fileHash"`
-	FileName       string `json:"fileName"`
-	TotalChunks    int    `json:"totalChunks"`
-	UploadedChunks []int  `json:"uploadedChunks"`
-	Status         string `json:"status"`    // uploading, completed
-	UploadId       string `json:"uploadId"`  // OSS分片上传ID
-	ObjectKey      string `json:"objectKey"` // OSS对象键
-	CreatedAt      int64  `json:"createdAt"`
-	UpdatedAt      int64  `json:"updatedAt"`
-}
-
-// 保存分片上传信息
-func SaveChunkUploadInfo(ctx context.Context, fileHash string, info *ChunkUploadInfo) error {
-	if globalClient == nil {
-		return errors.New("Redis client not initialized")
-	}
-
-	key := fmt.Sprintf("chunk_upload:%s", fileHash)
-	data, err := json.Marshal(info)
-	if err != nil {
-		return err
-	}
-
-	// 设置过期时间为24小时
-	return globalClient.Set(ctx, key, data, 24*time.Hour).Err()
-}
-
-// 获取分片上传信息
-func GetChunkUploadInfo(ctx context.Context, fileHash string) (*ChunkUploadInfo, error) {
-	if globalClient == nil {
-		return nil, errors.New("Redis client not initialized")
-	}
-
-	key := fmt.Sprintf("chunk_upload:%s", fileHash)
-	data, err := globalClient.Get(ctx, key).Result()
-	if err != nil {
-		if err == redis.Nil {
-			return nil, nil // 不存在
-		}
-		return nil, err
-	}
-
-	var info ChunkUploadInfo
-	err = json.Unmarshal([]byte(data), &info)
-	if err != nil {
-		return nil, err
-	}
-
-	return &info, nil
-}
-
-// 更新已上传的分片
-func UpdateUploadedChunk(ctx context.Context, fileHash string, chunkIndex int) error {
-	if globalClient == nil {
-		return errors.New("Redis client not initialized")
-	}
-
-	info, err := GetChunkUploadInfo(ctx, fileHash)
-	if err != nil {
-		return err
-	}
-	if info == nil {
-		return fmt.Errorf("chunk upload info not found for fileHash: %s", fileHash)
-	}
-
-	// 检查分片是否已存在
-	for _, chunk := range info.UploadedChunks {
-		if chunk == chunkIndex {
-			return nil // 已存在，不需要重复添加
-		}
-	}
-
-	// 添加新的分片
-	info.UploadedChunks = append(info.UploadedChunks, chunkIndex)
-	info.UpdatedAt = time.Now().Unix()
-
-	// 检查是否所有分片都已上传
-	if len(info.UploadedChunks) == info.TotalChunks {
-		info.Status = "completed"
-	}
-
-	return SaveChunkUploadInfo(ctx, fileHash, info)
-}
-
-// 删除分片上传信息
-func DeleteChunkUploadInfo(ctx context.Context, fileHash string) error {
-	if globalClient == nil {
-		return errors.New("Redis client not initialized")
-	}
-
-	key := fmt.Sprintf("chunk_upload:%s", fileHash)
-	return globalClient.Del(ctx, key).Err()
 }

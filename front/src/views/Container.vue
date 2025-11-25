@@ -10,7 +10,9 @@
       </el-aside>
 
       <el-main class="main-content">
-        <router-view />
+        <div class="content-wrapper">
+          <router-view />
+        </div>
       </el-main>
     </el-container>
   </el-container>
@@ -26,35 +28,46 @@ import LayoutSidebar from '@/components/layout/Sidebar.vue'
   height: 100vh;
   display: flex;
   flex-direction: column;
+  background-color: #f1f5f9;
 }
 
 .main-header {
   height: 64px;
   padding: 0 !important;
-  /* 强制取消内边距 */
   z-index: 1000;
   background: white;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
   position: relative;
-  /* 确保header在最上层 */
 }
 
 .main-container {
   flex: 1;
   overflow: hidden;
+  display: flex;
 }
 
 .main-sidebar {
-  width: 220px !important;
-  /* 强制宽度 */
+  width: 240px !important;
   background: white;
-  box-shadow: 1px 0 4px rgba(0, 0, 0, 0.05);
   z-index: 900;
+  flex-shrink: 0;
 }
 
 .main-content {
-  padding: 20px;
-  background-color: #f5f7fa;
+  flex: 1;
+  padding: 16px;
+  background-color: #f1f5f9;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.content-wrapper {
+  flex: 1;
+  background: white;
+  border-radius: 16px;
+  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px -1px rgba(0, 0, 0, 0.1);
+  overflow: hidden;
+  position: relative;
 }
 </style>

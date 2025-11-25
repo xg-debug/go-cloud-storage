@@ -3,19 +3,20 @@ package router
 import (
 	"go-cloud-storage/internal/controller"
 	"go-cloud-storage/internal/middleware"
+	"go-cloud-storage/internal/pkg/cache"
+	"go-cloud-storage/internal/pkg/minio"
 	"go-cloud-storage/internal/repositories"
 	"time"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 
-	"go-cloud-storage/internal/pkg/aliyunoss"
 	"go-cloud-storage/internal/services"
 
 	"gorm.io/gorm"
 )
 
-func SetUpRouter(db *gorm.DB, ossService *aliyunoss.OSSService) *gin.Engine {
+func SetUpRouter(db *gorm.DB, minioService *minio.MinioService) *gin.Engine {
 	// 创建一个服务
 	ginServer := gin.Default()
 
@@ -36,23 +37,20 @@ func SetUpRouter(db *gorm.DB, ossService *aliyunoss.OSSService) *gin.Engine {
 	favoriteRepo := repositories.NewFavoriteRepository(db)
 	shareRepo := repositories.NewShareRepository(db)
 	storageQuotaRepo := repositories.NewStorageQuotaRepository(db)
-	uploadRepo := repositories.NewUploadRepository(db)
 
 	// 初始化服务
-	userService := services.NewUserService(userRepo, fileRepo, storageQuotaRepo, ossService)
-	fileService := services.NewFileService(db, fileRepo, storageQuotaRepo)
-	recycleService := services.NewRecycleService(db, ossService, recycleRepo, fileRepo)
+	userService := services.NewUserService(userRepo, fileRepo, storageQuotaRepo, minioService)
+	fileService := services.NewFileService(db, cache.GetClient(), fileRepo, storageQuotaRepo, minioService)
+	recycleService := services.NewRecycleService(db, minioService, recycleRepo, fileRepo)
 	favoriteService := services.NewFavoriteService(favoriteRepo, fileService)
 	categoryService := services.NewCategoryService(db, fileRepo)
 	shareService := services.NewShareService(shareRepo, fileRepo)
 	statsService := services.NewStatsService(fileRepo, storageQuotaRepo, shareRepo)
 	storageQuotaService := services.NewStorageQuotaService(storageQuotaRepo)
-	uploadService := services.NewUploadService(uploadRepo, ossService)
 
 	loginCtrl := controller.NewLoginController(userService)
 	fileCtrl := controller.NewFileController(fileService)
 	userCtrl := controller.NewUserController(userService)
-	uploadCtrl := controller.NewUploadController(ossService, fileService, uploadService, storageQuotaRepo)
 	recycleCtrl := controller.NewRecycleController(recycleService)
 	favoriteCtrl := controller.NewFavoriteController(favoriteService)
 	categoryCtrl := controller.NewCategoryController(categoryService, fileService)
@@ -67,19 +65,6 @@ func SetUpRouter(db *gorm.DB, ossService *aliyunoss.OSSService) *gin.Engine {
 	authGroup.Use(middleware.JWTAuthMiddleware())
 	authGroup.GET("/me", userCtrl.GetProfile)
 	authGroup.POST("/logout", loginCtrl.Logout)
-
-	// API路由组 - 上传文件接口
-	upload := ginServer.Group("/api")
-	upload.Use(middleware.JWTAuthMiddleware())
-	{
-		upload.POST("/file/check/:fileHash", uploadCtrl.CheckChunkFileStatus)
-		upload.POST("/chunk/upload", uploadCtrl.ChunkUpload)
-		upload.POST("/chunk/merge", uploadCtrl.MergeChunkFile)
-		upload.POST("/chunk/cancel", uploadCtrl.CancelChunkUpload)
-		upload.POST("/chunk/pause", uploadCtrl.PauseChunkUpload)
-		upload.POST("/chunk/resume", uploadCtrl.ResumeChunkUpload)
-		upload.GET("/user/get/login", uploadCtrl.GetLoginInfo)
-	}
 
 	user := ginServer.Group("user")
 	user.Use(middleware.JWTAuthMiddleware())
@@ -96,20 +81,21 @@ func SetUpRouter(db *gorm.DB, ossService *aliyunoss.OSSService) *gin.Engine {
 	{
 		file.POST("/list", fileCtrl.GetFiles)
 		file.POST("/create-folder", fileCtrl.CreateFolder)
-		//file.POST("/upload", uploadCtrl.Upload)
+		// 普通文件上传
+		file.POST("/upload", fileCtrl.UploadFile)
+
+		// 大文件上传
+		file.POST("/chunk/init", fileCtrl.ChunkUploadInit)
+		file.POST("/chunk/upload", fileCtrl.ChunkUploadPart)
+		file.POST("/chunk/merge", fileCtrl.ChunkUploadMerge)
+		file.POST("/chunk/cancel", fileCtrl.ChunkUploadCancel)
+
 		file.DELETE("/:fileId", fileCtrl.Delete)
 		file.POST("/rename", fileCtrl.Rename)
 		file.POST("/move")
 		file.GET("/preview/:fileId", fileCtrl.PreviewFile)
 		file.GET("/recent", fileCtrl.GetRecentFiles)
 		file.POST("/search", fileCtrl.SearchFiles)
-	}
-
-	// 文件检查API
-	files := ginServer.Group("files")
-	files.Use(middleware.JWTAuthMiddleware())
-	{
-		files.POST("/check-exists", uploadCtrl.CheckFileExists) // 检查文件是否存在
 	}
 
 	favorite := ginServer.Group("favorite")

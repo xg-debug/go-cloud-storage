@@ -3,7 +3,9 @@ package controller
 import (
 	"go-cloud-storage/internal/pkg/utils"
 	"go-cloud-storage/internal/services"
+	"io"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -20,8 +22,8 @@ func NewFileController(service services.FileService) *FileController {
 // GetFilesRequest Gin 对 JSON 解析时，json:"xxx" 的名字要和 前端传的字段一致，且大小写敏感。
 type GetFilesRequest struct {
 	ParentId string `json:"parentId" form:"parentId"`
-	Page     int    `json:"page" form:"page"`
-	PageSize int    `json:"pageSize" form:"pageSize"`
+	//Page     int    `json:"page" form:"page"`
+	//PageSize int    `json:"pageSize" form:"pageSize"`
 }
 
 type RenameFileRequest struct {
@@ -44,13 +46,14 @@ func (c *FileController) GetFiles(ctx *gin.Context) {
 	}
 	userId := ctx.GetInt("userId")
 
-	if req.Page <= 0 {
-		req.Page = 1
-	}
-	if req.PageSize <= 0 {
-		req.PageSize = 20
-	}
-	files, total, err := c.fileService.GetFiles(ctx, userId, req.ParentId, req.Page, req.PageSize)
+	//if req.Page <= 0 {
+	//	req.Page = 1
+	//}
+	//if req.PageSize <= 0 {
+	//	req.PageSize = 20
+	//}
+	//files, total, err := c.fileService.GetFiles(ctx, userId, req.ParentId, req.Page, req.PageSize)
+	files, total, err := c.fileService.GetFiles(ctx, userId, req.ParentId)
 	if err != nil {
 		utils.Fail(ctx, http.StatusInternalServerError, "查询文件列表失败")
 	}
@@ -82,17 +85,27 @@ func (c *FileController) CreateFolder(ctx *gin.Context) {
 }
 
 func (c *FileController) UploadFile(ctx *gin.Context) {
-	var req struct {
-		Name      string `json:"name"`
-		Extension string `json:"extension"`
-		Size      int64  `json:"size"`
-		ParentId  string `json:"parent_id"`
-	}
-	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.Fail(ctx, http.StatusBadRequest, "接收前端参数错误")
+	userId := ctx.GetInt("userId")
+
+	// 获取上传的文件（对应前端 FormData.append('file', file)）
+	fileHeader, err := ctx.FormFile("file")
+	if err != nil {
+		utils.Fail(ctx, http.StatusBadRequest, "读取文件失败")
 		return
 	}
-	file, err := c.fileService.UploadFile(req.Name, req.Extension, req.Size, req.ParentId)
+
+	// 获取其他表单参数 (对应前端 FormData.append('parentId', ...))
+	parentId := ctx.PostForm("parentId")
+
+	// 打开文件流（获取 io.Reader）
+	srcFile, err := fileHeader.Open()
+	if err != nil {
+		utils.Fail(ctx, http.StatusInternalServerError, "打开文件流失败")
+		return
+	}
+	defer srcFile.Close() // 关闭流
+
+	file, err := c.fileService.UploadFile(ctx, srcFile, userId, fileHeader.Filename, fileHeader.Size, parentId)
 	if err != nil {
 		utils.Fail(ctx, http.StatusInternalServerError, "上传文件失败")
 		return
@@ -181,4 +194,123 @@ func (c *FileController) SearchFiles(ctx *gin.Context) {
 	}
 
 	utils.Success(ctx, gin.H{"list": files, "total": total})
+}
+
+func (c *FileController) ChunkUploadInit(ctx *gin.Context) {
+	var req struct {
+		FileName string `json:"fileName" binding:"required"`
+		FileHash string `json:"fileHash" binding:"required"`
+		FileSize int64  `json:"fileSize" binding:"required"`
+		ParentId string `json:"parentId"`
+	}
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		utils.Fail(ctx, http.StatusBadRequest, "参数错误："+err.Error())
+		return
+	}
+
+	userId := ctx.GetInt("userId")
+
+	// 调用 Service 层逻辑
+	// Service 层应该处理：查询是否秒传 -> 查询 Redis 是否有 UploadID -> 调用 MinIO InitiateMultipartUpload
+	resp, err := c.fileService.InitChunkUpload(ctx, userId, req.FileName, req.FileHash, req.ParentId, req.FileSize)
+	if err != nil {
+		utils.Fail(ctx, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	utils.Success(ctx, resp)
+}
+
+// ChunkUploadPart 上传单个分片
+// 前端以 multipart/form-data 方式提交: chunk(文件流), chunkIndex(整型), fileHash(字符串)
+func (c *FileController) ChunkUploadPart(ctx *gin.Context) {
+	// 1. 获取参数
+	fileHash := ctx.PostForm("fileHash")
+	chunkIndexStr := ctx.PostForm("chunkIndex")
+
+	if fileHash == "" || chunkIndexStr == "" {
+		utils.Fail(ctx, http.StatusBadRequest, "缺少必要参数 fileHash 或 chunkIndex")
+		return
+	}
+
+	chunkIndex, _ := strconv.Atoi(chunkIndexStr)
+	userId := ctx.GetInt("userId")
+
+	// 获取上传的文件分片流
+	fileHeader, err := ctx.FormFile("chunk")
+	if err != nil {
+		utils.Fail(ctx, http.StatusBadRequest, "未找到分片文件流")
+		return
+	}
+
+	// 3.打开文件流
+	srcfile, err := fileHeader.Open()
+	if err != nil {
+		utils.Fail(ctx, http.StatusInternalServerError, "无法读取分片文件")
+		return
+	}
+	defer srcfile.Close()
+
+	// 4.读取二进制数据 (MinIO PutObjectPart 需要 Reader 或 []byte，这里读入内存传给 Service)
+	// 注意：分片通常为 5MB~20MB，读入内存是安全的
+	data, err := io.ReadAll(srcfile)
+	if err != nil {
+		utils.Fail(ctx, http.StatusInternalServerError, "读取分片数据失败")
+		return
+	}
+
+	// 5.调用 Service 上传
+	// Service 层逻辑：根据 fileHash 从 Redis 获取 UploadID -> 调用 MinIO UploadPart -> 保存 ETag 到 Redis
+	err = c.fileService.UploadChunk(ctx, userId, fileHash, chunkIndex, data)
+	if err != nil {
+		utils.Fail(ctx, http.StatusInternalServerError, "分片上传失败: "+err.Error())
+		return
+	}
+
+	utils.Success(ctx, gin.H{"chunkIndex": chunkIndex, "status": "uploaded"})
+}
+
+// ChunkUploadMerge 合并分片
+func (c *FileController) ChunkUploadMerge(ctx *gin.Context) {
+	var req struct {
+		FileHash string `json:"fileHash" binding:"required"`
+		FileName string `json:"fileName" binding:"required"`
+		FileSize int64  `json:"fileSize" binding:"required"`
+		ParentId string `json:"parentId"`
+	}
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		utils.Fail(ctx, http.StatusBadRequest, "参数错误: "+err.Error())
+		return
+	}
+	userId := ctx.GetInt("userId")
+
+	// 调用 Service 层逻辑
+	// Service 层逻辑：从 Redis 取出所有 Parts (ETags) -> 调用 MinIO CompleteMultipartUpload -> 写入数据库 -> 清理 Redis
+	file, err := c.fileService.MergeChunks(ctx, userId, req.FileHash, req.FileName, req.ParentId, req.FileSize)
+	if err != nil {
+		utils.Fail(ctx, http.StatusInternalServerError, "合并文件失败: "+err.Error())
+		return
+	}
+	// 返回完整的文件对象/仅返回 URL
+	utils.Success(ctx, file)
+}
+
+// ChunkUploadCancel 取消上传
+func (c *FileController) ChunkUploadCancel(ctx *gin.Context) {
+	var req struct {
+		FileHash string `json:"fileHash" binding:"required"`
+	}
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		utils.Fail(ctx, http.StatusBadRequest, "参数错误")
+		return
+	}
+	userId := ctx.GetInt("userId")
+
+	// Service 层逻辑：获取 UploadID -> 调用 MinIO AbortMultipartUpload -> 清理 Redis
+	err := c.fileService.CancelChunkUpload(ctx, userId, req.FileHash)
+	if err != nil {
+		utils.Fail(ctx, http.StatusInternalServerError, "取消失败: "+err.Error())
+		return
+	}
+	utils.Success(ctx, gin.H{"message": "上传已取消"})
 }

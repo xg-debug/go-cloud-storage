@@ -7,11 +7,13 @@ import (
 )
 
 type Config struct {
-	Server    ServerConfig    `yaml:"server"`
-	Database  DatabaseConfig  `yaml:"mysql"`
-	Redis     RedisConfig     `yaml:"redis"`
-	QQ        QQConfig        `yaml:"qq"`
-	AliyunOss AliyunOssConfig `yaml:"aliyunoss"`
+	Server      ServerConfig    `yaml:"server"`
+	Database    DatabaseConfig  `yaml:"mysql"`
+	Redis       RedisConfig     `yaml:"redis"`
+	QQ          QQConfig        `yaml:"qq"`
+	AliyunOss   AliyunOssConfig `yaml:"aliyun"`
+	StorageType string          `yaml:"minio"`
+	Minio       MinioConfig     `yaml:minio`
 }
 
 type ServerConfig struct {
@@ -55,6 +57,15 @@ type AliyunOssConfig struct {
 	AccessId     string `yaml:"accessId"`
 	AccessSecret string `yaml:"accessSecret"`
 	Region       string `yaml:"region"`
+}
+
+type MinioConfig struct {
+	Endpoint        string `yaml:"endpoint"`
+	AccessKeyID     string `yaml:"accessKeyID"`
+	SecretAccessKey string `yaml:"secretAccessKey"`
+	Bucket          string `yaml:"bucket"`
+	UseSSL          bool   `yaml:"useSSL"`
+	Region          string `yaml:"region"`
 }
 
 func LoadConfig() (*Config, error) {
