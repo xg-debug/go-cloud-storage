@@ -44,6 +44,10 @@ type FileRepository interface {
 	FindByHash(hash string) (*models.File, error)
 	RenameFile(userId int, fileId, newName string) error
 	MoveFile(userId int, fileId, newParentId string) error
+
+	GetAllFolders(ctx context.Context, userId int) ([]models.File, error)
+	UpdateParent(ctx context.Context, id, parentId string) error
+	IsSubFolder(ctx context.Context, userId int, sourceId, targetId string) (bool, error)
 }
 
 type fileRepo struct {
@@ -247,8 +251,6 @@ func (r *fileRepo) RestoreFolder(folderId string) error {
 	})
 }
 
-// 目录操作方法
-
 // CreateFolder 创建目录
 func (r *fileRepo) CreateFolder(userId int, folderName string, parentId string) (*models.File, error) {
 	var pId sql.NullString
@@ -270,8 +272,6 @@ func (r *fileRepo) CreateFolder(userId int, folderName string, parentId string) 
 	err := r.db.Create(folder).Error
 	return folder, err
 }
-
-// 查询方法
 
 // ListUserFiles 列出用户文件(不包括软删除的文件)
 func (r *fileRepo) ListUserFiles(userId int, parentId *string, page, pageSize int) ([]*models.File, error) {
@@ -295,8 +295,6 @@ func (r *fileRepo) FindByHash(hash string) (*models.File, error) {
 	}
 	return &file, err
 }
-
-// 文件操作
 
 // RenameFile 重命名文件/目录
 func (r *fileRepo) RenameFile(userId int, fileId, newName string) error {
@@ -324,4 +322,56 @@ func (r *fileRepo) GetFileByMD5(userId int, fileMD5 string) (*models.File, error
 	var file models.File
 	err := r.db.Where("user_id = ? AND file_hash = ? AND is_deleted = ?", userId, fileMD5, false).First(&file).Error
 	return &file, err
+}
+
+func (r *fileRepo) GetAllFolders(ctx context.Context, userId int) ([]models.File, error) {
+	var folders []models.File
+	err := r.db.WithContext(ctx).Where("user_id = ? AND is_dir = 1 AND is_deleted = 0", userId).Find(&folders).Error
+	return folders, err
+}
+
+func (r *fileRepo) UpdateParent(ctx context.Context, id, parentId string) error {
+	return r.db.WithContext(ctx).Model(&models.File{}).Where("id = ?", id).Update("parent_id", parentId).Error
+}
+
+// IsSubFolder 判断 targetId 是否在 sourceId 的子孙树内
+func (r *fileRepo) IsSubFolder(ctx context.Context, userId int, sourceId, targetId string) (bool, error) {
+	if sourceId == targetId {
+		return true, nil
+	}
+	folders, _ := r.GetAllFolders(ctx, userId)
+
+	// 构建 parentId -> children 列表
+	childrenMap := make(map[string][]string)
+
+	for _, f := range folders {
+		parent := ""
+		if f.ParentId.Valid {
+			parent = f.ParentId.String
+		}
+		childrenMap[parent] = append(childrenMap[parent], f.Id)
+	}
+
+	// DFS 深度遍历 sourceId 的所有子孙节点
+	stack := []string{sourceId}
+	visited := make(map[string]bool)
+
+	for len(stack) > 0 {
+		curr := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+
+		if visited[curr] {
+			continue
+		}
+		visited[curr] = true
+
+		for _, child := range childrenMap[curr] {
+			if child == targetId {
+				return true, nil
+			}
+			stack = append(stack, child)
+		}
+	}
+
+	return false, nil
 }

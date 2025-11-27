@@ -28,15 +28,17 @@ import LayoutSidebar from '@/components/layout/Sidebar.vue'
   height: 100vh;
   display: flex;
   flex-direction: column;
-  background-color: #f1f5f9;
+  background: transparent;
+  position: relative;
+  overflow: hidden;
 }
 
 .main-header {
-  height: 64px;
-  padding: 0 !important;
+  height: 72px;
+  padding: 12px 20px !important;
   z-index: 1000;
-  background: white;
-  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  background: #ffffff;
+  border-bottom: 1px solid var(--border-light);
   position: relative;
 }
 
@@ -44,19 +46,26 @@ import LayoutSidebar from '@/components/layout/Sidebar.vue'
   flex: 1;
   overflow: hidden;
   display: flex;
+  padding: 0;
+  gap: 0;
+  position: relative;
+  z-index: 1;
 }
 
 .main-sidebar {
-  width: 240px !important;
-  background: white;
+  width: 280px !important;
+  background: #ffffff;
+  border-radius: 0;
+  border-right: 1px solid var(--border-light);
   z-index: 900;
   flex-shrink: 0;
+  overflow: hidden;
 }
 
 .main-content {
   flex: 1;
-  padding: 16px;
-  background-color: #f1f5f9;
+  padding: 0 !important;
+  background: transparent;
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -64,10 +73,40 @@ import LayoutSidebar from '@/components/layout/Sidebar.vue'
 
 .content-wrapper {
   flex: 1;
-  background: white;
-  border-radius: 16px;
-  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px -1px rgba(0, 0, 0, 0.1);
+  background: #ffffff;
+  border-radius: 0;
   overflow: hidden;
   position: relative;
+}
+
+/* 响应式设计 */
+@media (max-width: 1024px) {
+  .main-sidebar {
+    width: 240px !important;
+  }
+  
+  .main-container {
+    padding: 0;
+    gap: 0;
+  }
+}
+
+@media (max-width: 768px) {
+  .main-container {
+    flex-direction: column;
+    padding: 0;
+    gap: 0;
+  }
+  
+  .main-sidebar {
+    width: 100% !important;
+    height: auto;
+    max-height: 200px;
+  }
+  
+  .main-header {
+    height: 64px;
+    padding: 8px 16px !important;
+  }
 }
 </style>

@@ -180,7 +180,7 @@
       store.commit('setUserInfo', res.user_info)
       ElMessage.success({
         message: '登录成功',
-        duration: 2000 // 单位：毫秒
+        duration: 2000
       })
       router.push('/')
     } catch (error) {
@@ -189,7 +189,7 @@
       loading.value = false
     }
   }
-  
+
   // 注册处理
   const handleRegister = async () => {
     try {
@@ -204,160 +204,293 @@
       loading.value = false
     }
   }
-  </script>
+</script>
   
   <style scoped>
-  /* 样式不变，保持一致 */
   .login-container {
     min-height: 100vh;
     display: flex;
     flex-direction: column;
     justify-content: center;
     align-items: center;
-    background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 50%, #f093fb 100%);
     position: relative;
     overflow: hidden;
     padding: 20px;
   }
-  
+
+  /* 动态背景装饰 */
   .decoration-circle {
     position: absolute;
     border-radius: 50%;
-    background: rgba(255, 255, 255, 0.3);
-    backdrop-filter: blur(5px);
+    background: rgba(255, 255, 255, 0.1);
+    backdrop-filter: blur(10px);
+    animation: float 15s ease-in-out infinite;
   }
-  
+
   .decoration-circle.circle-1 {
+    width: 400px;
+    height: 400px;
+    top: -100px;
+    left: -100px;
+    animation-delay: 0s;
+  }
+
+  .decoration-circle.circle-2 {
     width: 300px;
     height: 300px;
-    top: -50px;
-    left: -50px;
+    bottom: -80px;
+    right: -80px;
+    animation-delay: -5s;
   }
-  
-  .decoration-circle.circle-2 {
-    width: 200px;
-    height: 200px;
-    bottom: -30px;
-    right: -30px;
+
+  @keyframes float {
+    0%, 100% {
+      transform: translate(0, 0) scale(1);
+    }
+    33% {
+      transform: translate(20px, -20px) scale(1.05);
+    }
+    66% {
+      transform: translate(-15px, 15px) scale(0.95);
+    }
   }
-  
+
+  /* 登录卡片 */
   .auth-card {
     width: 100%;
-    min-height: 560px;
-    max-width: 420px;
-    border-radius: 12px;
-    border: none;
+    min-height: 520px;
+    max-width: 440px;
+    border-radius: var(--radius-xl);
+    border: 1px solid rgba(255, 255, 255, 0.3);
     z-index: 1;
-    backdrop-filter: blur(8px);
-    background-color: rgba(255, 255, 255, 0.85);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    background: rgba(255, 255, 255, 0.9);
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
   }
-  
+
   .auth-card :deep(.el-card__body) {
-    padding: 40px;
+    padding: 48px 40px;
   }
-  
+
+  /* 品牌头部 */
   .brand-header {
     text-align: center;
-    margin-bottom: 30px;
+    margin-bottom: 36px;
   }
-  
+
   .brand-header .logo {
-    height: 50px;
-    margin-bottom: 15px;
+    height: 56px;
+    margin-bottom: 20px;
+    filter: drop-shadow(0 4px 12px rgba(99, 102, 241, 0.3));
   }
-  
+
   .brand-header h1 {
-    font-size: 24px;
-    color: #333;
+    font-size: 26px;
+    font-weight: 700;
+    background: var(--primary-gradient);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
     margin: 0 0 8px;
   }
-  
+
   .brand-header .subtitle {
     font-size: 14px;
-    color: #999;
+    color: var(--text-tertiary);
     margin: 0;
   }
-  
+
+  /* 标签页 */
   .auth-tabs {
-    margin-top: 20px;
+    margin-top: 24px;
   }
-  
+
   .auth-tabs :deep(.el-tabs__nav-wrap)::after {
     display: none;
   }
-  
+
   .auth-tabs :deep(.el-tabs__nav) {
     width: 100%;
     display: flex;
+    background: var(--bg-secondary);
+    border-radius: var(--radius-lg);
+    padding: 4px;
   }
-  
+
   .auth-tabs :deep(.el-tabs__item) {
     flex: 1;
     text-align: center;
     padding: 0;
+    height: 40px;
+    line-height: 40px;
+    border-radius: var(--radius-md);
+    font-weight: 500;
+    color: var(--text-secondary);
+    transition: all var(--transition-fast);
   }
-  
+
+  .auth-tabs :deep(.el-tabs__item.is-active) {
+    background: white;
+    color: var(--primary-color);
+    box-shadow: var(--shadow-sm);
+  }
+
+  .auth-tabs :deep(.el-tabs__active-bar) {
+    display: none;
+  }
+
+  /* 表单样式 */
+  .auth-tabs :deep(.el-form-item) {
+    margin-bottom: 20px;
+  }
+
+  .auth-tabs :deep(.el-input__wrapper) {
+    border-radius: var(--radius-lg);
+    padding: 4px 16px;
+    height: 48px;
+    background: var(--bg-secondary);
+    box-shadow: none;
+    border: 1px solid transparent;
+    transition: all var(--transition-fast);
+  }
+
+  .auth-tabs :deep(.el-input__wrapper:hover) {
+    background: var(--bg-tertiary);
+  }
+
+  .auth-tabs :deep(.el-input__wrapper.is-focus) {
+    background: white;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+  }
+
   .flex-bar {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 20px;
+    margin-bottom: 24px;
   }
-  
+
+  .flex-bar :deep(.el-checkbox__label) {
+    color: var(--text-secondary);
+    font-size: 13px;
+  }
+
+  .flex-bar :deep(.el-link) {
+    font-size: 13px;
+  }
+
+  /* 登录按钮 */
   .auth-btn {
     width: 100%;
-    height: 48px;
+    height: 50px;
     font-size: 16px;
-    margin-top: 10px;
+    font-weight: 600;
+    margin-top: 8px;
+    border-radius: var(--radius-lg);
+    background: var(--primary-gradient) !important;
+    border: none !important;
+    box-shadow: 0 8px 20px -6px rgba(99, 102, 241, 0.5);
+    transition: all var(--transition-normal);
   }
-  
+
+  .auth-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 12px 28px -8px rgba(99, 102, 241, 0.6);
+  }
+
+  .auth-btn:active {
+    transform: translateY(0);
+  }
+
+  /* 第三方登录 */
   .third-party-login {
-    margin-top: 30px;
+    margin-top: 32px;
   }
-  
+
+  .third-party-login :deep(.el-divider__text) {
+    color: var(--text-tertiary);
+    font-size: 13px;
+    background: rgba(255, 255, 255, 0.9);
+  }
+
   .oauth-icons {
     display: flex;
     justify-content: center;
-    gap: 20px;
+    gap: 16px;
+    margin-top: 20px;
   }
-  
+
   .oauth-icons .el-icon {
-    font-size: 24px;
-    color: #666;
+    width: 48px;
+    height: 48px;
+    font-size: 22px;
+    color: white;
     cursor: pointer;
-    transition: all 0.3s;
+    transition: all var(--transition-normal);
+    border-radius: var(--radius-lg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
-  
+
   .oauth-icons .el-icon:hover {
-    color: #409eff;
     transform: translateY(-3px);
+    box-shadow: 0 8px 16px -4px rgba(0, 0, 0, 0.2);
   }
-  
+
+  .icon-weixindenglu {
+    background: linear-gradient(135deg, #07C160 0%, #00a854 100%) !important;
+  }
+
+  .icon-icon_alipay {
+    background: linear-gradient(135deg, #1677FF 0%, #0958d9 100%) !important;
+  }
+
+  /* 页脚 */
   .login-footer {
-    margin-top: 30px;
+    margin-top: 32px;
     text-align: center;
     font-size: 12px;
-    color: #999;
+    color: rgba(255, 255, 255, 0.7);
     z-index: 1;
   }
-  
-  .login-footer .el-divider--vertical {
-    margin: 0 10px;
+
+  .login-footer :deep(.el-divider--vertical) {
+    margin: 0 12px;
     height: 12px;
+    background: rgba(255, 255, 255, 0.3);
   }
-  
-  .icon-weixindenglu {
-    color: #07C160 !important;
+
+  .login-footer :deep(.el-link) {
+    color: rgba(255, 255, 255, 0.8);
+    font-size: 12px;
   }
-  
-  .icon-icon_alipay {
-    color: #1677FF !important;
+
+  .login-footer :deep(.el-link:hover) {
+    color: white;
   }
-  
+
+  /* 响应式 */
   @media (max-width: 768px) {
     .auth-card :deep(.el-card__body) {
-      padding: 30px 20px !important;
+      padding: 32px 24px !important;
+    }
+
+    .brand-header h1 {
+      font-size: 22px;
+    }
+
+    .decoration-circle.circle-1 {
+      width: 250px;
+      height: 250px;
+    }
+
+    .decoration-circle.circle-2 {
+      width: 180px;
+      height: 180px;
     }
   }
-  </style>
-  
+</style>

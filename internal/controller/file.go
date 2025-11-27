@@ -196,6 +196,7 @@ func (c *FileController) SearchFiles(ctx *gin.Context) {
 	utils.Success(ctx, gin.H{"list": files, "total": total})
 }
 
+// ChunkUploadInit 初始化分片上传
 func (c *FileController) ChunkUploadInit(ctx *gin.Context) {
 	var req struct {
 		FileName string `json:"fileName" binding:"required"`
@@ -313,4 +314,61 @@ func (c *FileController) ChunkUploadCancel(ctx *gin.Context) {
 		return
 	}
 	utils.Success(ctx, gin.H{"message": "上传已取消"})
+}
+
+// GetFolderTree 获取文件夹树
+func (c *FileController) GetFolderTree(ctx *gin.Context) {
+	userId := ctx.GetInt("userId")
+
+	tree, err := c.fileService.GetFolderTree(ctx, userId)
+	if err != nil {
+		utils.Fail(ctx, http.StatusInternalServerError, "获取文件夹树失败: ")
+		return
+	}
+
+	utils.Success(ctx, gin.H{"list": tree})
+}
+
+// MoveFile 移动文件
+func (c *FileController) MoveFile(ctx *gin.Context) {
+	var req struct {
+		FileId         string `json:"fileId"`
+		TargetFolderId string `json:"targetFolderId"`
+	}
+
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		utils.Fail(ctx, http.StatusBadRequest, "参数错误")
+		return
+	}
+
+	userId := ctx.GetInt("userId")
+
+	if err := c.fileService.MoveFile(ctx, userId, req.FileId, req.TargetFolderId); err != nil {
+		utils.Fail(ctx, http.StatusInternalServerError, "移动失败: ")
+		return
+	}
+
+	utils.Success(ctx, gin.H{"message": "移动成功"})
+}
+
+func (c *FileController) Download(ctx *gin.Context) {
+	fileId := ctx.Query("fileId")
+
+	reader, fileInfo, err := c.fileService.Download(ctx, fileId)
+	if err != nil {
+		utils.Fail(ctx, http.StatusInternalServerError, "下载失败")
+		return
+	}
+	defer reader.Close()
+
+	// 设置下载头
+	ctx.Header("Content-Disposition", "attachment; filename=\""+fileInfo.Name+"\"")
+	ctx.Header("Content-Type", "application/octet-stream")
+
+	// 返回数据流给千吨啊
+	_, err = io.Copy(ctx.Writer, reader)
+	if err != nil {
+		utils.Fail(ctx, http.StatusInternalServerError, "文件下载失败")
+		return
+	}
 }

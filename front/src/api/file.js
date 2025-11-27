@@ -54,7 +54,7 @@ export const previewFile = (fileId) => {
 // 文件下载：获取下载链接或者直接触发下载
 export const downloadFile = (fileId) => {
     return request({
-        url: '/file/${fileId}/download',
+        url: '/file/download/${fileId}',
         method: 'get',
         responseType: 'blob'
     })

@@ -92,10 +92,12 @@ func SetUpRouter(db *gorm.DB, minioService *minio.MinioService) *gin.Engine {
 
 		file.DELETE("/:fileId", fileCtrl.Delete)
 		file.POST("/rename", fileCtrl.Rename)
-		file.POST("/move")
+		file.GET("/folders/tree", fileCtrl.GetFolderTree)
+		file.POST("/move", fileCtrl.MoveFile)
 		file.GET("/preview/:fileId", fileCtrl.PreviewFile)
 		file.GET("/recent", fileCtrl.GetRecentFiles)
 		file.POST("/search", fileCtrl.SearchFiles)
+		file.GET("/download/:fileId", fileCtrl.Download)
 	}
 
 	favorite := ginServer.Group("favorite")

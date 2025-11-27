@@ -74,11 +74,11 @@
                                     
                                     <!-- 操作按钮 -->
                                     <div class="file-actions">
-                                        <el-button size="small" type="primary" link @click="handleOpen(file)">
+                                        <el-button size="small" link class="action-btn" @click="handleOpen(file)">
                                             <el-icon><View /></el-icon>
                                             打开
                                         </el-button>
-                                        <el-button size="small" type="primary" link @click="handleLocate(file)">
+                                        <el-button size="small" link class="action-btn" @click="handleLocate(file)">
                                             <el-icon><Location /></el-icon>
                                             定位
                                         </el-button>
@@ -423,5 +423,12 @@ function handleLocate(file) {
     gap: 4px;
   }
 }
+
+.action-btn {
+  color: #3b82f6 !important;
+}
+
+.action-btn:hover {
+  color: #2563eb !important;
+}
 </style>
-  

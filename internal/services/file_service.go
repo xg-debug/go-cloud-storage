@@ -64,6 +64,13 @@ type FilePreview struct {
 	FilePath     string `json:"file_path"`
 }
 
+type FolderNode struct {
+	ID       string        `json:"id"`
+	Name     string        `json:"name"`
+	ParentID string        `json:"parentId"`
+	Children []*FolderNode `json:"children"`
+}
+
 type FileService interface {
 	GetFileById(fileId string) (*models.File, error)
 	GetFiles(ctx context.Context, userId int, parentId string) ([]FileItem, int64, error)
@@ -81,6 +88,11 @@ type FileService interface {
 	UploadChunk(ctx context.Context, userId int, fileHash string, chunkIndex int, data []byte) error
 	MergeChunks(ctx context.Context, userId int, fileHash, fileName, parentId string, fileSize int64) (*models.File, error)
 	CancelChunkUpload(ctx context.Context, userId int, fileHash string) error
+
+	GetFolderTree(ctx context.Context, userId int) ([]FolderNode, error)
+	MoveFile(ctx context.Context, userId int, fileId, targetFolderId string) error
+
+	Download(ctx context.Context, fileId string) (io.ReadCloser, *models.File, error)
 }
 
 type fileService struct {
@@ -684,4 +696,92 @@ func (s *fileService) SearchFiles(ctx context.Context, userId int, keyword, pare
 	}
 
 	return fileItems, total, nil
+}
+
+// GetFolderTree  获取文件夹树结构
+func (s *fileService) GetFolderTree(ctx context.Context, userId int) ([]FolderNode, error) {
+	folders, err := s.fileRepo.GetAllFolders(ctx, userId)
+	if err != nil {
+		return nil, err
+	}
+
+	// 构建 map: id -> node
+	nodeMap := make(map[string]*FolderNode)
+
+	var rootId string
+
+	for _, f := range folders {
+		if f.Name == "/" && !f.ParentId.Valid {
+			rootId = f.Id
+		}
+		nodeMap[f.Id] = &FolderNode{
+			ID:       f.Id,
+			Name:     f.Name,
+			ParentID: nullToString(f.ParentId),
+			Children: []*FolderNode{},
+		}
+	}
+
+	root := nodeMap[rootId]
+
+	if root == nil {
+		return nil, errors.New("未找到根目录")
+	}
+
+	// 组装目录树
+	for _, node := range nodeMap {
+		if node.ID == root.ID {
+			continue
+		}
+
+		parentNode, ok := nodeMap[node.ParentID]
+		if ok {
+			parentNode.Children = append(parentNode.Children, node)
+		}
+	}
+	return []FolderNode{*root}, nil
+}
+
+func (s *fileService) MoveFile(ctx context.Context, userId int, fileId, targetFolderId string) error {
+	//file, _ := s.fileRepo.GetFileById(fileId)
+
+	if fileId == targetFolderId {
+		return errors.New("不能移动到自身")
+	}
+
+	// 若是目录，不能移动到子目录
+	if fileId == targetFolderId {
+		isSub, err := s.fileRepo.IsSubFolder(ctx, userId, fileId, targetFolderId)
+		if err != nil {
+			return err
+		}
+		if isSub {
+			return errors.New("不能移动到子文件夹")
+		}
+	}
+	// 更新 parentId
+	return s.fileRepo.UpdateParent(ctx, fileId, targetFolderId)
+}
+
+func (s *fileService) Download(ctx context.Context, fileId string) (io.ReadCloser, *models.File, error) {
+	// 1.查询文件是否存在
+	file, err := s.fileRepo.GetFileById(fileId)
+	if err != nil {
+		return nil, nil, errors.New("要下载的文件不存在")
+	}
+	// 2.从 MinIO 下载
+	reader, err := s.minio.DownloadFile(ctx, file.OssObjectKey)
+	if err != nil {
+		return nil, nil, err
+	}
+	// 返回 reader + 文件信息
+	return reader, file, nil
+
+}
+
+func nullToString(ns sql.NullString) string {
+	if ns.Valid {
+		return ns.String
+	}
+	return ""
 }

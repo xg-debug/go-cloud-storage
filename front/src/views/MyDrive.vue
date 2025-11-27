@@ -11,9 +11,6 @@
                     </div>
                     <div class="header-text">
                         <h1 class="page-title">我的网盘</h1>
-                        <p class="page-description">{{
-                            currentPath.length > 0 ? currentPath.join(' / ') : '根目录'
-                            }}</p>
                     </div>
                 </div>
                 <div class="header-stats">
@@ -235,7 +232,7 @@
 
                     <el-table-column label="操作" width="200" fixed="right">
                         <template #default="{ row }">
-                            <el-button size="small" type="primary" link @click="handleRename(row)">
+                            <el-button size="small" link class="action-btn" @click="handleRename(row)">
                                 <el-icon>
                                     <Edit/>
                                 </el-icon>
@@ -248,7 +245,7 @@
                                 删除
                             </el-button>
                             <el-dropdown class="list-el-dropdown">
-                                <el-button size="small" type="primary" link>
+                                <el-button size="small" link class="action-btn">
                                     更多
                                     <el-icon>
                                         <ArrowDown/>
@@ -420,7 +417,7 @@
 <script setup>
 import {onMounted, ref} from 'vue'
 import {createFolder, deleteFile, getFolderTree, listFiles, moveFile, previewFile, renameFile, searchFiles, uploadFile,
-    chunkUploadInit, chunkUploadPart, chunkUploadMerge, chunkUploadCancel} from '@/api/file'
+    chunkUploadInit, chunkUploadPart, chunkUploadMerge, chunkUploadCancel, downloadFile} from '@/api/file'
 import {ElMessage} from 'element-plus'
 import {
     ArrowDown,
@@ -543,12 +540,12 @@ const uploadSmallFile = async (file) => {
         })
 
         ElMessage.success('上传成功')
-        resetUploadState()
         loadFiles()
     } catch (err) {
         ElMessage.error('上传失败')
     } finally {
         uploading.value = false
+        resetUploadState()
     }
 }
 
@@ -614,7 +611,6 @@ const uploadLargeFile = async (file) => {
         uploadProgress.value = 100
         ElMessage.success('上传成功')
 
-        resetUploadState()
         loadFiles()
 
     } catch (err) {
@@ -622,6 +618,7 @@ const uploadLargeFile = async (file) => {
         ElMessage.error('大文件上传失败')
     } finally {
         uploading.value = false
+        resetUploadState()
     }
 }
 /* 更新进度条（95% 用于上传部分） */
@@ -784,26 +781,6 @@ const confirmNewFolder = async () => {
     }
 }
 
-// 处理文件选择变化（核心分流逻辑）
-const handleFileChange = (e) => {
-    const file = e.target.files[0]
-    if (!file) return
-
-    // 重置 input value，允许重复选择同一文件
-    e.target.value = ''
-
-    if (file.size > CHUNK_THRESHOLD) {
-        // --- 走大文件分片逻辑 ---
-        console.log('文件较大，使用分片上传')
-        pendingLargeFile.value = file
-        chunkUploadDialogVisible.value = true
-    } else {
-        // --- 走小文件直接上传逻辑 ---
-        console.log('文件较小，使用直接上传')
-        handleSmallFileUpload(file)
-    }
-}
-
 const handleRename = (row) => {
     renameForm.value = {id: row.id, name: row.name}
     renameDialogVisible.value = true
@@ -905,8 +882,26 @@ const getFileTypeFromExtension = (extension) => {
 }
 
 const handleDownload = (item) => {
-    ElMessage.info(`下载文件: ${item.name}`)
-    // TODO: 实现下载逻辑
+    try {
+        // ElMessage.info(`下载文件: ${item.name}`)
+
+        const res = downloadFile(item.id)
+
+        const blob = new Blob([res], {
+            type: 'application/octet-stream'
+        })
+
+        const url = window.URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = item.name   // 使用文件真实名称
+        a.click()
+
+        window.URL.revokeObjectURL(url)
+    } catch (err) {
+        console.error(err)
+        ElMessage.error('下载失败')
+    }
 }
 
 const handleMove = async (item) => {
@@ -922,7 +917,7 @@ const handleMove = async (item) => {
 const loadFolderTree = async () => {
     try {
         const res = await getFolderTree()
-        folderTree.value = buildFolderTree(res.data || res.list || [])
+        folderTree.value = res.list || []
     } catch (error) {
         console.error('加载文件夹失败:', error)
         ElMessage.error('加载文件夹失败')
@@ -930,53 +925,16 @@ const loadFolderTree = async () => {
     }
 }
 
-// 构建文件夹树结构
-const buildFolderTree = (folders) => {
-    const tree = []
-    const map = new Map()
-    
-    // 添加根目录
-    const rootFolder = {
-        id: store.state.userInfo.rootFolderId,
-        name: '根目录',
-        parentId: null,
-        children: []
-    }
-    tree.push(rootFolder)
-    map.set(rootFolder.id, rootFolder)
-    
-    // 构建树结构
-    folders.forEach(folder => {
-        const node = {
-            id: folder.id,
-            name: folder.name,
-            parentId: folder.parent_id || folder.parentId,
-            children: []
-        }
-        map.set(folder.id, node)
-        
-        if (folder.parent_id || folder.parentId) {
-            const parentId = folder.parent_id || folder.parentId
-            if (map.has(parentId)) {
-                map.get(parentId).children.push(node)
-            }
-        } else {
-            rootFolder.children.push(node)
-        }
-    })
-    
-    return tree
-}
-
 // 选择目标文件夹
 const handleFolderSelect = (data) => {
     // 不能移动到当前文件夹
     if (data.id === currentParentId.value) {
-        ElMessage.warning('不能移动到当前文件夹')
+        ElMessage.warning('与当前文件所在目录相同')
         return
     }
     
     // 不能移动到自己或子文件夹（如果移动的是文件夹）
+    console.log(moveTarget.value.is_dir)
     if (moveTarget.value.is_dir && isSubFolder(data.id, moveTarget.value.id)) {
         ElMessage.warning('不能移动到自己或子文件夹')
         return
@@ -1122,14 +1080,15 @@ const clearSearch = () => {
     height: 100%;
     display: flex;
     flex-direction: column;
-    background: #f8fafc;
+    background: transparent;
+    overflow: hidden;
 }
 
 /* 页面头部 */
 .page-header {
-    background: #ffffff;
-    padding: 24px 32px;
-    border-bottom: 1px solid #e2e8f0;
+    background: #f8fafc;
+    padding: 6px 32px;
+    border-bottom: 1px solid var(--border-light);
 }
 
 .header-content {
@@ -1145,112 +1104,145 @@ const clearSearch = () => {
 }
 
 .header-icon {
-    width: 56px;
-    height: 56px;
-    background: #eff6ff;
-    border-radius: 16px;
+    width: 40px;
+    height: 40px;
+    background: #e2e8f0;
+    border-radius: var(--radius-md);
     display: flex;
     align-items: center;
     justify-content: center;
-    box-shadow: 0 4px 6px -1px rgba(59, 130, 246, 0.1), 0 2px 4px -1px rgba(59, 130, 246, 0.06);
 }
 
 .header-folder-icon {
-    color: #3b82f6;
+    color: #64748b;
 }
 
 .page-title {
-    font-size: 24px;
-    font-weight: 700;
-    color: #1e293b;
-    margin: 0 0 4px 0;
-    letter-spacing: -0.5px;
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0 0 2px 0;
 }
 
 .page-description {
     font-size: 14px;
-    color: #64748b;
+    color: var(--text-secondary);
     margin: 0;
     font-weight: 500;
 }
 
 .header-stats {
     display: flex;
-    gap: 48px;
+    gap: 32px;
 }
 
 .stat-item {
     text-align: center;
     position: relative;
-}
-
-.stat-item:not(:last-child)::after {
-    content: '';
-    position: absolute;
-    right: -24px;
-    top: 50%;
-    transform: translateY(-50%);
-    width: 1px;
-    height: 24px;
-    background: #e2e8f0;
+    padding: 8px 16px;
+    background: #ffffff;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-light);
 }
 
 .stat-number {
     display: block;
-    font-size: 28px;
-    font-weight: 700;
-    color: #1e293b;
+    font-size: 20px;
+    font-weight: 600;
+    color: var(--text-primary);
     line-height: 1.2;
 }
 
 .stat-label {
-    font-size: 13px;
-    color: #64748b;
+    font-size: 12px;
+    color: var(--text-tertiary);
     font-weight: 500;
+    margin-top: 2px;
 }
 
 /* 面包屑导航 */
 .breadcrumb-container {
-    background: white;
-    padding: 16px 32px;
-    border-bottom: 1px solid #f1f5f9;
+    background: rgba(255, 255, 255, 0.5);
+    padding: 14px 32px;
+    border-bottom: 1px solid var(--border-light);
+}
+
+.breadcrumb-container :deep(.el-breadcrumb__item) {
+    font-size: 13px;
+}
+
+.breadcrumb-container :deep(.el-breadcrumb__inner) {
+    color: var(--text-secondary);
+    font-weight: 500;
+    transition: color var(--transition-fast);
+}
+
+.breadcrumb-container :deep(.el-breadcrumb__inner:hover) {
+    color: var(--primary-color);
 }
 
 /* 工具栏 */
 .toolbar {
-    background: white;
+    background: rgba(255, 255, 255, 0.6);
     padding: 16px 32px;
-    border-bottom: 1px solid #e2e8f0;
+    border-bottom: 1px solid var(--border-light);
     display: flex;
     justify-content: space-between;
     align-items: center;
-    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.02);
     z-index: 10;
 }
 
 .toolbar-left {
     display: flex;
     align-items: center;
-    gap: 16px;
+    gap: 12px;
+}
+
+.toolbar-left :deep(.el-button) {
+    border-radius: var(--radius-md);
+    font-weight: 500;
 }
 
 .toolbar-right {
     display: flex;
     align-items: center;
-    gap: 16px;
+    gap: 12px;
+}
+
+.toolbar-right :deep(.el-input__wrapper) {
+    border-radius: var(--radius-full);
+    background: rgba(241, 245, 249, 0.8);
+}
+
+.toolbar-right :deep(.el-button-group .el-button) {
+    border-radius: 0;
+}
+
+.toolbar-right :deep(.el-button-group .el-button:first-child) {
+    border-radius: var(--radius-md) 0 0 var(--radius-md);
+}
+
+.toolbar-right :deep(.el-button-group .el-button:last-child) {
+    border-radius: 0 var(--radius-md) var(--radius-md) 0;
 }
 
 /* 搜索结果提示 */
 .search-result-tip {
-    padding: 16px 32px;
-    background: #fffbeb;
-    border-bottom: 1px solid #fcd34d;
+    padding: 12px 32px;
+    background: linear-gradient(90deg, rgba(99, 102, 241, 0.08) 0%, rgba(139, 92, 246, 0.08) 100%);
+    border-bottom: 1px solid rgba(99, 102, 241, 0.15);
+}
+
+.search-result-tip :deep(.el-alert) {
+    background: transparent;
+    border: none;
+    padding: 0;
 }
 
 /* 文件内容 */
 .file-content {
     flex: 1;
-    background: #f8fafc;
+    background: transparent;
     overflow: hidden;
     display: flex;
     flex-direction: column;
@@ -1259,22 +1251,23 @@ const clearSearch = () => {
 /* 网格视图 */
 .grid-view {
     flex: 1;
-    padding: 32px;
+    padding: 24px;
     overflow: auto;
 }
 
 .file-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-    gap: 24px;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 20px;
 }
 
 .file-card {
-    background: white;
-    border: 1px solid #e2e8f0;
-    border-radius: 16px;
-    padding: 20px;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    background: rgba(255, 255, 255, 0.8);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.5);
+    border-radius: var(--radius-xl);
+    padding: 16px;
+    transition: all var(--transition-normal);
     cursor: pointer;
     position: relative;
     display: flex;
@@ -1283,18 +1276,19 @@ const clearSearch = () => {
 
 .file-card:hover,
 .file-card-hover {
-    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.05);
-    border-color: #3b82f6;
-    transform: translateY(-4px);
+    background: rgba(255, 255, 255, 0.95);
+    box-shadow: 0 20px 40px -12px rgba(99, 102, 241, 0.2);
+    border-color: rgba(99, 102, 241, 0.3);
+    transform: translateY(-6px);
 }
 
 .file-actions-dropdown {
     position: absolute;
-    top: 12px;
-    right: 12px;
+    top: 10px;
+    right: 10px;
     z-index: 2;
     opacity: 0;
-    transition: opacity 0.2s ease;
+    transition: opacity var(--transition-fast);
 }
 
 .file-card:hover .file-actions-dropdown,
@@ -1306,31 +1300,31 @@ const clearSearch = () => {
     padding: 6px;
     min-width: 0;
     background: white !important;
-    border-radius: 8px;
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
-    color: #64748b;
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-md);
+    color: var(--text-secondary);
 }
 
 .more-btn:hover {
-    color: #3b82f6;
-    background: #f8fafc !important;
+    color: var(--primary-color);
+    background: var(--primary-light) !important;
 }
 
 .file-thumbnail {
     width: 100%;
-    height: 140px;
-    border-radius: 12px;
+    height: 120px;
+    border-radius: var(--radius-lg);
     overflow: hidden;
-    background: #f8fafc;
+    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
     display: flex;
     align-items: center;
     justify-content: center;
-    margin-bottom: 16px;
-    transition: transform 0.3s ease;
+    margin-bottom: 14px;
+    transition: transform var(--transition-normal);
 }
 
 .file-card:hover .file-thumbnail {
-    transform: scale(1.02);
+    transform: scale(1.03);
 }
 
 .thumbnail-image {
@@ -1344,10 +1338,10 @@ const clearSearch = () => {
 }
 
 .file-name {
-    font-size: 15px;
+    font-size: 14px;
     font-weight: 600;
-    color: #1e293b;
-    margin-bottom: 6px;
+    color: var(--text-primary);
+    margin-bottom: 4px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1355,51 +1349,72 @@ const clearSearch = () => {
 }
 
 .temp-folder {
-    color: #9ca3af;
+    color: var(--text-tertiary);
     font-style: italic;
 }
 
 .file-meta {
-    font-size: 13px;
-    color: #94a3b8;
+    font-size: 12px;
+    color: var(--text-tertiary);
 }
 
 /* 列表视图 */
 .list-view {
     flex: 1;
-    padding: 24px 32px;
+    padding: 24px;
     overflow: auto;
 }
 
 .file-table {
-    border-radius: 12px;
+    border-radius: var(--radius-xl);
     overflow: hidden;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
-    border: 1px solid #e2e8f0;
+    box-shadow: var(--shadow-sm);
+    border: 1px solid rgba(255, 255, 255, 0.5);
+    background: rgba(255, 255, 255, 0.8);
+    backdrop-filter: blur(10px);
 }
 
 .file-table :deep(.el-table__header) {
-    background: #f8fafc;
+    background: rgba(248, 250, 252, 0.8);
 }
 
 .file-table :deep(.el-table__header th) {
-    background: #f8fafc;
-    color: #64748b;
+    background: transparent;
+    color: var(--text-secondary);
     font-weight: 600;
-    height: 56px;
+    font-size: 13px;
+    height: 52px;
+    border-bottom: 1px solid var(--border-light);
+}
+
+.file-table :deep(.el-table__body) {
+    background: transparent;
 }
 
 .file-table :deep(.el-table__row) {
-    height: 64px;
+    height: 60px;
+    transition: all var(--transition-fast);
 }
 
-.file-table :deep(.el-table__row:hover) {
-    background-color: #f8fafc;
+.file-table :deep(.el-table__row td) {
+    border-bottom: 1px solid rgba(226, 232, 240, 0.5);
+}
+
+.file-table :deep(.el-table__row:hover td) {
+    background: rgba(99, 102, 241, 0.04) !important;
 }
 
 .file-name-text {
     font-weight: 500;
-    color: #1e293b;
+    color: var(--text-primary);
+}
+
+.action-btn {
+    color: #3b82f6 !important;
+}
+
+.action-btn:hover {
+    color: #2563eb !important;
 }
 
 .list-el-dropdown {
@@ -1560,29 +1575,119 @@ const clearSearch = () => {
 }
 
 .drop-zone {
-    border: 2px dashed #e2e8f0;
-    padding: 40px 20px;
+    border: 2px dashed var(--border-medium);
+    padding: 48px 24px;
     text-align: center;
     cursor: pointer;
-    transition: all 0.3s ease;
-    border-radius: 16px;
-    background: #f8fafc;
+    transition: all var(--transition-normal);
+    border-radius: var(--radius-xl);
+    background: linear-gradient(135deg, rgba(248, 250, 252, 0.8) 0%, rgba(241, 245, 249, 0.8) 100%);
 }
 
 .drop-zone:hover {
-    border-color: #3b82f6;
-    background: #eff6ff;
+    border-color: var(--primary-color);
+    background: linear-gradient(135deg, rgba(238, 242, 255, 0.9) 0%, rgba(250, 245, 255, 0.9) 100%);
 }
 
 .drop-zone.dragging {
-    border-color: #3b82f6;
-    background: #eff6ff;
+    border-color: var(--primary-color);
+    background: linear-gradient(135deg, rgba(238, 242, 255, 0.95) 0%, rgba(250, 245, 255, 0.95) 100%);
     transform: scale(1.02);
+    box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.1);
+}
+
+.drop-zone .el-icon {
+    color: var(--primary-color);
 }
 
 .drop-zone p {
     margin: 16px 0;
-    color: #64748b;
+    color: var(--text-secondary);
     font-size: 15px;
+}
+
+.upload-progress-info {
+    text-align: center;
+    padding: 20px 0;
+}
+
+.upload-progress-info h4 {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.upload-progress-info p {
+    color: var(--text-secondary);
+    margin-top: 12px;
+    font-size: 14px;
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+    .page-header {
+        padding: 20px 16px;
+    }
+
+    .header-content {
+        flex-direction: column;
+        gap: 16px;
+        text-align: center;
+    }
+
+    .header-stats {
+        gap: 16px;
+    }
+
+    .stat-item {
+        padding: 8px 16px;
+    }
+
+    .breadcrumb-container {
+        padding: 12px 16px;
+    }
+
+    .toolbar {
+        padding: 12px 16px;
+        flex-direction: column;
+        gap: 12px;
+        align-items: stretch;
+    }
+
+    .toolbar-left {
+        justify-content: center;
+    }
+
+    .toolbar-right {
+        justify-content: center;
+        flex-wrap: wrap;
+    }
+
+    .search-input {
+        width: 100% !important;
+        margin-right: 0 !important;
+        margin-bottom: 8px;
+    }
+
+    .search-result-tip {
+        padding: 12px 16px;
+    }
+
+    .file-grid {
+        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+        gap: 12px;
+    }
+
+    .grid-view,
+    .list-view {
+        padding: 16px;
+    }
+
+    .file-card {
+        padding: 12px;
+    }
+
+    .file-thumbnail {
+        height: 100px;
+    }
 }
 </style>
