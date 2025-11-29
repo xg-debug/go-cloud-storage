@@ -881,15 +881,10 @@ const getFileTypeFromExtension = (extension) => {
     return 'other'
 }
 
-const handleDownload = (item) => {
+const handleDownload = async (item) => {
     try {
-        // ElMessage.info(`下载文件: ${item.name}`)
 
-        const res = downloadFile(item.id)
-
-        const blob = new Blob([res], {
-            type: 'application/octet-stream'
-        })
+        const blob = await downloadFile(item.id)
 
         const url = window.URL.createObjectURL(blob)
         const a = document.createElement('a')
@@ -899,7 +894,7 @@ const handleDownload = (item) => {
 
         window.URL.revokeObjectURL(url)
     } catch (err) {
-        console.error(err)
+        console.error("下载失败：", err)
         ElMessage.error('下载失败')
     }
 }

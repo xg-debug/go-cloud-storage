@@ -776,7 +776,6 @@ func (s *fileService) Download(ctx context.Context, fileId string) (io.ReadClose
 	}
 	// 返回 reader + 文件信息
 	return reader, file, nil
-
 }
 
 func nullToString(ns sql.NullString) string {

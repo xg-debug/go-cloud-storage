@@ -352,11 +352,12 @@ func (c *FileController) MoveFile(ctx *gin.Context) {
 }
 
 func (c *FileController) Download(ctx *gin.Context) {
-	fileId := ctx.Query("fileId")
+	fileId := ctx.Param("fileId")
 
 	reader, fileInfo, err := c.fileService.Download(ctx, fileId)
 	if err != nil {
-		utils.Fail(ctx, http.StatusInternalServerError, "下载失败")
+		//utils.Fail(ctx, http.StatusInternalServerError, "下载失败")
+		ctx.Status(http.StatusInternalServerError)
 		return
 	}
 	defer reader.Close()
@@ -365,7 +366,7 @@ func (c *FileController) Download(ctx *gin.Context) {
 	ctx.Header("Content-Disposition", "attachment; filename=\""+fileInfo.Name+"\"")
 	ctx.Header("Content-Type", "application/octet-stream")
 
-	// 返回数据流给千吨啊
+	// 返回数据流给前端
 	_, err = io.Copy(ctx.Writer, reader)
 	if err != nil {
 		utils.Fail(ctx, http.StatusInternalServerError, "文件下载失败")
