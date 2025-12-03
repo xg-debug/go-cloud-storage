@@ -99,10 +99,6 @@
                             <el-icon><User /></el-icon>
                             <span>个人中心</span>
                         </el-dropdown-item>
-                        <el-dropdown-item @click="goToSettings" class="menu-item">
-                            <el-icon><Setting /></el-icon>
-                            <span>系统设置</span>
-                        </el-dropdown-item>
                         <el-dropdown-item divided @click="handleLogout" class="menu-item logout">
                             <el-icon><SwitchButton /></el-icon>
                             <span>退出登录</span>
@@ -119,7 +115,7 @@ import {ref, computed} from 'vue'
 import {useRouter} from 'vue-router'
 import {useStore} from 'vuex'
 import {logout} from '@/api/auth'
-import {Cloudy, Search, Upload, Check} from '@element-plus/icons-vue'
+import {Cloudy, Upload, Check} from '@element-plus/icons-vue'
 
 const router = useRouter()
 const store = useStore()
@@ -129,15 +125,8 @@ const searchQuery = ref('')
 // 用户信息
 const user = computed(() => store.state.userInfo)
 
-// 搜索
-const handleSearch = () => {
-    if (!searchQuery.value.trim()) return
-    router.push({name: 'Search', query: {q: searchQuery.value.trim()}})
-}
-
 // 用户菜单
 const goToProfile = () => router.push({name: 'UserProfile'})
-const goToSettings = () => router.push({name: 'Settings'})
 const handleLogout = async () => {
     try {
         await logout()

@@ -83,7 +83,7 @@ type FileService interface {
 	PreviewFile(ctx context.Context, userId int, fileId string) (*FilePreview, error)
 	SearchFiles(ctx context.Context, userId int, keyword, parentId string, page, pageSize int) ([]FileItem, int64, error)
 
-	UploadFile(ctx context.Context, r io.Reader, userId int, fileName string, fileSize int64, parentId string) (*models.File, error)
+	UploadFile(ctx context.Context, r io.Reader, userId int, fileName string, fileSize int64, fileHash string, parentId string) (*models.File, error)
 	InitChunkUpload(ctx context.Context, userId int, filename, fileMd5 string, parentId string, fileSize int64) (gin.H, error)
 	UploadChunk(ctx context.Context, userId int, fileHash string, chunkIndex int, data []byte) error
 	MergeChunks(ctx context.Context, userId int, fileHash, fileName, parentId string, fileSize int64) (*models.File, error)
@@ -393,7 +393,13 @@ func (s *fileService) PreviewFile(ctx context.Context, userId int, fileId string
 }
 
 // UploadFile 小文件上传
-func (s *fileService) UploadFile(ctx context.Context, r io.Reader, userId int, fileName string, fileSize int64, parentId string) (*models.File, error) {
+func (s *fileService) UploadFile(ctx context.Context, r io.Reader, userId int, fileName string, fileSize int64, fileHash string, parentId string) (*models.File, error) {
+	// 秒传检查：检查数据库中是否已经有该 Hash 的文件
+	existingFile, err := s.fileRepo.GetFileByMD5(userId, fileHash)
+	if err == nil && existingFile != nil && !existingFile.IsDeleted {
+		// 秒传成功：直接返回文件信息返回
+		return existingFile, nil
+	}
 
 	// 检查文件大小是否超过用户配额
 	availableSpace, err := s.storageQuotaRepo.GetAvailableSpace(userId)
@@ -433,15 +439,6 @@ func (s *fileService) UploadFile(ctx context.Context, r io.Reader, userId int, f
 // InitChunkUpload 初始化分片上传
 // 逻辑：秒传检查 -> 断点续传检查 -> 新建上传任务
 func (s *fileService) InitChunkUpload(ctx context.Context, userId int, fileName, fileHash string, parentId string, fileSize int64) (gin.H, error) {
-	// 【添加配额检查】如果文件大小超出配额，直接返回错误。
-	remainingSpace, err := s.storageQuotaRepo.GetAvailableSpace(userId)
-	if err != nil {
-		return nil, fmt.Errorf("获取可用空间失败: %w", err)
-	}
-	if fileSize > remainingSpace {
-		return nil, errors.New("存储空间不足，请升级存储配额")
-	}
-
 	// 1.秒传检查：检查数据库中是否已经有该 Hash 的文件
 	existingFile, err := s.fileRepo.GetFileByMD5(userId, fileHash)
 	if err == nil && existingFile != nil && !existingFile.IsDeleted {
@@ -452,8 +449,16 @@ func (s *fileService) InitChunkUpload(ctx context.Context, userId int, fileName,
 			"url":      existingFile.FileURL,
 		}, nil
 	}
+	// 2.存储配额检查：如果文件大小超出配额，直接返回错误。
+	remainingSpace, err := s.storageQuotaRepo.GetAvailableSpace(userId)
+	if err != nil {
+		return nil, fmt.Errorf("获取可用空间失败: %w", err)
+	}
+	if fileSize > remainingSpace {
+		return nil, errors.New("存储空间不足，请升级存储配额")
+	}
 
-	// 2.断点续传检查
+	// 3.断点续传检查
 	uploadIdKey := fmt.Sprintf("upload:%d:%s:id", userId, fileHash)
 	objectKeyKey := fmt.Sprintf("upload:%d:%s:key", userId, fileHash)
 
@@ -461,7 +466,7 @@ func (s *fileService) InitChunkUpload(ctx context.Context, userId int, fileName,
 	objectKey := ""
 
 	if err == redis.Nil || uploadId == "" {
-		// 2.1 没有正在进行的上传，初始化一个新的
+		// 3.1 没有正在进行的上传，初始化一个新的
 		objectKey = s.minio.GenerateObjectKey(userId, parentId, fileName)
 		uploadId, err := s.minio.InitiateMultipartUpload(ctx, objectKey)
 		if err != nil {
@@ -477,11 +482,11 @@ func (s *fileService) InitChunkUpload(ctx context.Context, userId int, fileName,
 			return nil, err
 		}
 	} else {
-		// 2.2 存在上传任务，获取 ObjectKey
+		// 3.2 存在上传任务，获取 ObjectKey
 		objectKey, _ = s.redis.Get(ctx, objectKeyKey).Result()
 	}
 
-	// 3.获取已上传的分片列表
+	// 4.获取已上传的分片列表
 	// Redis Key: upload:parts:{fileHash} -> Hash结构 { "0": "etag1", "1": "etag2" }
 	uploadedPartsKey := fmt.Sprintf("upload:%d:%s:parts", userId, fileHash)
 	uploadedMap, err := s.redis.HGetAll(ctx, uploadedPartsKey).Result()

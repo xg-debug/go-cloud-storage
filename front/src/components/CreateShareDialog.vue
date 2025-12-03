@@ -145,18 +145,18 @@ const handleCreateShare = async () => {
     
     creating.value = true
     
-    const response = await createShare({
+    const data = await createShare({
       file_id: props.fileInfo.id,
       extraction_code: shareForm.extractionCode,
       expire_days: shareForm.expireDays
     })
     
-    if (response.code === 200) {
-      ElMessage.success('分享创建成功')
-      emit('success', response.data)
+    if (data) {
+      ElMessage.success('分享成功')
+      emit('success', data)// 通知其上层组件去处理后续的逻辑
       handleClose()
     } else {
-      ElMessage.error(response.message || '创建分享失败')
+      ElMessage.error('创建分享失败')
     }
   } catch (error) {
     console.error('创建分享失败:', error)

@@ -489,7 +489,7 @@ const uploading = ref(false)             // 上传中
 const isDragging = ref(false)
 
 const CHUNK_SIZE = 10 * 1024 * 1024      // 10MB
-const CHUNK_THRESHOLD = 50 * 1024 * 1024 // 判定大文件
+const CHUNK_THRESHOLD = 10 * 1024 * 1024 // 判定大文件
 
 // 打开上传对话框
 const triggerUploadDialog = () => {
@@ -530,9 +530,13 @@ const prepareUpload = (file) => {
 const uploadSmallFile = async (file) => {
     uploading.value = true
 
+    const fileHash = await calcSHA256(file)
+
+
     const form = new FormData()
     form.append('file', file)
     form.append('parentId', currentParentId.value)
+    form.append("fileHash", fileHash)
 
     try {
         await uploadFile(form, (e) => {
@@ -567,7 +571,8 @@ const uploadLargeFile = async (file) => {
         // 秒传成功
         if (initRes.finished) {
             uploadProgress.value = 100
-            ElMessage.success('秒传成功')
+            ElMessage.success('上传成功')
+            uploading.value = false
             resetUploadState()
             loadFiles()
             return
@@ -851,15 +856,9 @@ const handleShare = (item) => {
         id: item.id,
         name: item.name,
         size: item.size,
-        fileType: getFileTypeFromExtension(item.file_extension || item.extension)
+        fileType: getFileTypeFromExtension(item.extension)
     }
     shareDialogVisible.value = true
-}
-
-// 分享成功回调
-const handleShareSuccess = (shareData) => {
-    ElMessage.success('分享创建成功')
-    // 可以在这里添加其他逻辑，比如跳转到分享列表
 }
 
 // 根据文件扩展名获取文件类型

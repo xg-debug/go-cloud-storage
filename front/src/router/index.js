@@ -43,7 +43,7 @@ const routes = [
             component: () => import('@/views/UserProfile.vue'),
             meta: {title: '个人中心'}
         },
-        {path: 'settings', name: 'Settings', component: () => import('@/views/Settings.vue'), meta: {title: '设置'}}
+        // {path: 'settings', name: 'Settings', component: () => import('@/views/Settings.vue'), meta: {title: '设置'}}
     ]
   },
   {

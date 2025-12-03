@@ -84,8 +84,11 @@ func (c *FileController) CreateFolder(ctx *gin.Context) {
 	utils.Success(ctx, folder)
 }
 
+// UploadFile 上传小文件 10MB 以内
 func (c *FileController) UploadFile(ctx *gin.Context) {
 	userId := ctx.GetInt("userId")
+
+	fileHash := ctx.PostForm("fileHash")
 
 	// 获取上传的文件（对应前端 FormData.append('file', file)）
 	fileHeader, err := ctx.FormFile("file")
@@ -105,7 +108,7 @@ func (c *FileController) UploadFile(ctx *gin.Context) {
 	}
 	defer srcFile.Close() // 关闭流
 
-	file, err := c.fileService.UploadFile(ctx, srcFile, userId, fileHeader.Filename, fileHeader.Size, parentId)
+	file, err := c.fileService.UploadFile(ctx, srcFile, userId, fileHeader.Filename, fileHeader.Size, fileHash, parentId)
 	if err != nil {
 		utils.Fail(ctx, http.StatusInternalServerError, "上传文件失败")
 		return
