@@ -296,7 +296,6 @@
         <CreateShareDialog
                 v-model="shareDialogVisible"
                 :file-info="shareFileInfo"
-                @success="handleShareSuccess"
         />
 
         <!-- 文件上传对话框 -->
@@ -1116,13 +1115,6 @@ const clearSearch = () => {
     font-weight: 600;
     color: var(--text-primary);
     margin: 0 0 2px 0;
-}
-
-.page-description {
-    font-size: 14px;
-    color: var(--text-secondary);
-    margin: 0;
-    font-weight: 500;
 }
 
 .header-stats {

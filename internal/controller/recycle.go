@@ -29,14 +29,15 @@ func (rc *RecycleController) ListRecycleFiles(c *gin.Context) {
 	utils.Success(c, gin.H{"data": records})
 }
 
+// DeletePermanent 删除单个文件
 func (rc *RecycleController) DeletePermanent(c *gin.Context) {
 	fileId := c.Param("fileId")
 	if fileId == "" {
 		utils.Fail(c, http.StatusBadRequest, "文件ID不能为空")
 		return
 	}
-
-	err := rc.recycleService.DeleteOne(c.Request.Context(), fileId)
+	userId := c.GetInt("userId")
+	err := rc.recycleService.DeleteOne(c.Request.Context(), userId, fileId)
 	if err != nil {
 		utils.Fail(c, http.StatusInternalServerError, "删除文件失败")
 		return
@@ -45,6 +46,7 @@ func (rc *RecycleController) DeletePermanent(c *gin.Context) {
 	utils.Success(c, nil)
 }
 
+// DeleteSelected 删除选中的文件
 func (rc *RecycleController) DeleteSelected(c *gin.Context) {
 	var fileIDs []string
 	if err := c.ShouldBindJSON(&fileIDs); err != nil {

@@ -10,7 +10,7 @@ import (
 
 type RecycleService interface {
 	GetRecycleFiles(userId int) ([]map[string]interface{}, error)
-	DeleteOne(ctx context.Context, fileId string) error
+	DeleteOne(ctx context.Context, userid int, fileId string) error
 	DeleteSelected(ctx context.Context, fileIds []string) error
 	ClearRecycles(ctx context.Context, userId int) error
 	RestoreOne(fileId string) error
@@ -23,14 +23,19 @@ type recycleService struct {
 	minio       *minio.MinioService
 	recycleRepo repositories.RecycleRepository
 	fileRepo    repositories.FileRepository
+	shareRepo   repositories.ShareRepository
+	starRepo    repositories.FavoriteRepository
 }
 
-func NewRecycleService(db *gorm.DB, minio *minio.MinioService, recycleRepo repositories.RecycleRepository, fileRepo repositories.FileRepository) RecycleService {
+func NewRecycleService(db *gorm.DB, minio *minio.MinioService, recycleRepo repositories.RecycleRepository, fileRepo repositories.FileRepository,
+	shareRepo repositories.ShareRepository, starRepo repositories.FavoriteRepository) RecycleService {
 	return &recycleService{
 		db:          db,
 		minio:       minio,
 		recycleRepo: recycleRepo,
 		fileRepo:    fileRepo,
+		shareRepo:   shareRepo,
+		starRepo:    starRepo,
 	}
 }
 
@@ -67,22 +72,38 @@ func (s *recycleService) GetRecycleFiles(userId int) ([]map[string]interface{}, 
 	return res, nil
 }
 
-func (s *recycleService) DeleteOne(ctx context.Context, fileId string) error {
+func (s *recycleService) DeleteOne(ctx context.Context, userId int, fileId string) error {
 	return s.db.Transaction(func(tx *gorm.DB) error {
 		// 1.获取文件信息
 		file, err := s.fileRepo.GetFileById(fileId)
 		if err != nil {
 			return err
 		}
-		// 2.删除回收站记录
+		// 2.删除分享记录和收藏记录(如果有的话)
+		exist, shareInfo := s.shareRepo.IsShared(fileId)
+		if exist {
+			// 需要删除对应的分享记录
+			if err := s.shareRepo.Delete(tx, shareInfo.Id); err != nil {
+				return err
+			}
+		}
+		// 3.删除收藏记录(如果有的话)
+		started, _ := s.starRepo.IsFavorited(userId, fileId)
+		if started {
+			// 需要删除对应的收藏记录
+			if err := s.starRepo.Delete(tx, fileId); err != nil {
+				return err
+			}
+		}
+		// 4.删除回收站记录
 		if err := s.recycleRepo.DeleteOne(tx, fileId); err != nil {
 			return err
 		}
-		// 3.删除文件记录
+		// 5.删除文件记录
 		if err := s.fileRepo.DeletePermanent(tx, []string{fileId}); err != nil {
 			return err
 		}
-		// 4.OSS删除
+		// 6.OSS删除
 		if err := s.minio.DeleteFile(context.Background(), file.OssObjectKey); err != nil {
 			return err
 		}
@@ -95,21 +116,31 @@ func (s *recycleService) DeleteSelected(ctx context.Context, fileIds []string) e
 		return err
 	}
 	return s.db.Transaction(func(tx *gorm.DB) error {
-		// 1.删除回收站的记录
+		// 1.批量删除回收站的记录
 		if err := s.recycleRepo.DeleteBatch(tx, fileIds); err != nil {
 			return err
 		}
-		// 2.删除对应的文件记录
+		// 2.批量删除分享记录(如果有的话)
+		if err := s.shareRepo.DeleteBatch(tx, fileIds); err != nil {
+			return err
+		}
+		// 3.批量删除收藏记录(如果有的话)
+		if err := s.starRepo.DeleteBatch(tx, fileIds); err != nil {
+			return err
+		}
+
+		// 4.删除对应的文件记录
 		if err := s.fileRepo.DeletePermanent(tx, fileIds); err != nil {
 			return err
 		}
-		// 3. OSS 删除
+		// 5. OSS 删除
 		if err := s.minio.DeleteFiles(context.Background(), objectKeys); err != nil {
 			return err
 		}
 		return nil
 	})
 }
+
 func (s *recycleService) ClearRecycles(ctx context.Context, userId int) error {
 	objectKeys, err := s.fileRepo.GetObjectKeysByUserId(userId)
 	if err != nil {

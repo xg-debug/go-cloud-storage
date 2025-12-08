@@ -187,7 +187,7 @@ const validateConfirmPassword = (_, value, callback) => {
 // 登录验证规则
 const loginRules = {
     account: [
-        {required: true, message: '请输入邮箱或手机号', trigger: 'blur'},
+        {required: true, message: '请输入邮箱或手机号', trigger: 'change'},
         {
             validator: (_, value, callback) => {
                 const isEmail = /^[\w-]+(\.[\w-]+)*@[\w-]+(\.[\w-]+)+$/.test(value)
@@ -198,29 +198,29 @@ const loginRules = {
                     callback()
                 }
             },
-            trigger: 'blur'
+            trigger: 'change'
         }
     ],
     password: [
-        {required: true, message: '请输入密码', trigger: 'blur'},
-        {min: 6, max: 20, message: '长度在6到20个字符', trigger: 'blur'}
+        {required: true, message: '请输入密码', trigger: 'change'},
+        {min: 6, max: 20, message: '长度在6到20个字符', trigger: 'change'}
     ]
 }
 
 // 注册验证规则
 const registerRules = {
     email: [
-        {required: true, message: '请输入邮箱', trigger: 'blur'},
-        {type: 'email', message: '邮箱格式不正确', trigger: 'blur'}
+        {required: true, message: '请输入邮箱', trigger: 'change'},
+        {type: 'email', message: '邮箱格式不正确', trigger: 'change'}
     ],
     password: [
-        {required: true, message: '请输入密码', trigger: 'blur'},
-        {validator: checkPasswordStrength, trigger: 'blur'}
+        {required: true, message: '请输入密码', trigger: 'change'},
+        {validator: checkPasswordStrength, trigger: 'change'}
     ],
     // 修复：将错误的 confirmPassword 字段改为 password_confirm，与 prop="password_confirm" 保持一致
     password_confirm: [
-        {required: true, message: '请确认密码', trigger: 'blur'},
-        {validator: validateConfirmPassword, trigger: 'blur'}
+        {required: true, message: '请确认密码', trigger: 'change'},
+        {validator: validateConfirmPassword, trigger: 'change'}
     ]
 }
 

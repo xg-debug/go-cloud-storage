@@ -627,9 +627,9 @@ onMounted(() => {
 
 /* 页面头部 */
 .page-header {
-    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-    color: white;
-    padding: 6px 24px;
+    background: #f8fafc;
+    padding: 6px 32px;
+    border-bottom: 1px solid var(--border-light);
 }
 
 .header-content {
@@ -645,10 +645,10 @@ onMounted(() => {
 }
 
 .header-icon {
-    width: 48px;
-    height: 48px;
-    background: rgba(255, 255, 255, 0.2);
-    border-radius: 12px;
+    width: 40px;
+    height: 40px;
+    background: #e2e8f0;
+    border-radius: var(--radius-md);
     display: flex;
     align-items: center;
     justify-content: center;

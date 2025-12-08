@@ -584,8 +584,8 @@ func (s *fileService) MergeChunks(ctx context.Context, userId int, fileHash, fil
 		return completeParts[i].PartNumber < completeParts[j].PartNumber
 	})
 
-	// 3.调用 MinIO 合并分片，成功后产生 fileURL
-	fileURL, err := s.minio.CompleteMultipartUpload(ctx, objectKey, uploadId, completeParts)
+	// 3.调用 MinIO 合并分片，成功后产生 fileURL 与缩略图
+	fileURL, thumbnailURL, err := s.minio.CompleteMultipartUpload(ctx, objectKey, uploadId, completeParts)
 	if err != nil {
 		return nil, fmt.Errorf("OSS 合并失败: %w", err)
 	}
@@ -605,7 +605,7 @@ func (s *fileService) MergeChunks(ctx context.Context, userId int, fileHash, fil
 		OssObjectKey:  objectKey,
 		FileHash:      fileHash,
 		FileURL:       fileURL,
-		ThumbnailURL:  fileURL,
+		ThumbnailURL:  thumbnailURL,
 		Size:          fileSize,
 		SizeStr:       utils.FormatFileSize(fileSize),
 		FileExtension: ext,

@@ -14,7 +14,9 @@ type ShareRepository interface {
 	GetShareByID(shareID int) (*models.Share, error)
 	GetShareByToken(token string) (*models.Share, error)
 	UpdateShareExpireTime(shareID int, expireTime *time.Time) error
-	DeleteShare(shareID int) error
+	Delete(tx *gorm.DB, shareID int) error
+	DeleteBatch(tx *gorm.DB, fileIds []string) error
+	IsShared(fileId string) (bool, *models.Share)
 }
 
 type shareRepo struct {
@@ -72,7 +74,34 @@ func (r *shareRepo) UpdateShareExpireTime(shareID int, expireTime *time.Time) er
 	return r.db.Model(&models.Share{}).Where("id = ?", shareID).Update("expire_time", expireTime).Error
 }
 
-// DeleteShare 删除分享
-func (r *shareRepo) DeleteShare(shareID int) error {
-	return r.db.Delete(&models.Share{}, shareID).Error
+// Delete 删除分享
+func (r *shareRepo) Delete(tx *gorm.DB, shareID int) error {
+	db := r.db // 默认使用非事务DB连接
+
+	if tx != nil {
+		// 如果传入了事务对象，则使用事务
+		db = tx
+	}
+	return db.Delete(&models.Share{}, shareID).Error
+}
+
+func (r *shareRepo) DeleteBatch(tx *gorm.DB, fileIds []string) error {
+	db := r.db // 默认使用非事务DB连接
+
+	if tx != nil {
+		// 如果传入了事务对象，则使用事务
+		db = tx
+	}
+	return db.Where("file_id IN ?", fileIds).Delete(&models.Share{}).Error
+}
+
+func (r *shareRepo) IsShared(fileId string) (bool, *models.Share) {
+	var count int64
+	var share models.Share
+	r.db.Model(&models.Share{}).Where("file_id = ?", fileId).First(&share).Count(&count)
+	if count == 1 {
+		return true, &share
+	} else {
+		return false, nil
+	}
 }

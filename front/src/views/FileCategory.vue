@@ -558,7 +558,7 @@ const handleTableMenuCommand = (item, command) => {
 
 /* 页面头部 */
 .category-header {
-  background: linear-gradient(135deg, #06b6d4 0%, #0891b2 100%);
+    background: #f8fafc;
   color: white;
   border-bottom: 1px solid #e2e8f0;
   padding: 10px 24px;
@@ -576,15 +576,13 @@ const handleTableMenuCommand = (item, command) => {
 }
 
 .category-icon {
-  width: 40px;
-  height: 40px;
-  background: #ffffff;
-  border-radius: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-  border: 1px solid #e2e8f0;
+    width: 40px;
+    height: 40px;
+    background: #e2e8f0;
+    border-radius: var(--radius-md);
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .category-text {

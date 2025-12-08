@@ -221,7 +221,7 @@ func (s *shareService) DeleteShare(shareID int, userID int) error {
 		return errors.New("无权限操作此分享")
 	}
 
-	return s.shareRepo.DeleteShare(shareID)
+	return s.shareRepo.Delete(nil, shareID)
 }
 
 // AccessShare 访问分享

@@ -41,7 +41,7 @@ func SetUpRouter(db *gorm.DB, minioService *minio.MinioService) *gin.Engine {
 	// 初始化服务
 	userService := services.NewUserService(userRepo, fileRepo, storageQuotaRepo, minioService)
 	fileService := services.NewFileService(db, cache.GetClient(), fileRepo, storageQuotaRepo, minioService)
-	recycleService := services.NewRecycleService(db, minioService, recycleRepo, fileRepo)
+	recycleService := services.NewRecycleService(db, minioService, recycleRepo, fileRepo, shareRepo, favoriteRepo)
 	favoriteService := services.NewFavoriteService(favoriteRepo, fileService)
 	categoryService := services.NewCategoryService(db, fileRepo)
 	shareService := services.NewShareService(shareRepo, fileRepo)
