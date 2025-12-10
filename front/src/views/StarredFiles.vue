@@ -10,7 +10,7 @@
             </el-icon>
           </div>
           <div class="header-text">
-            <h1 class="page-title">⭐ 我的收藏</h1>
+            <h1 class="page-title">我的收藏</h1>
             <p class="page-description">管理您收藏的重要文件</p>
           </div>
         </div>
@@ -289,9 +289,10 @@ onMounted(fetchFavorites)
 }
 
 .page-title {
-  font-size: 24px;
-  font-weight: 600;
-  margin: 0 0 4px 0;
+    font-size: 20px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0 0 2px 0;
 }
 
 .page-description {

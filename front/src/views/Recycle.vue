@@ -361,9 +361,10 @@ const handleDeleteDialogClose = () => {
 }
 
 .page-title {
-  font-size: 24px;
-  font-weight: 600;
-  margin: 0 0 4px 0;
+    font-size: 20px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0 0 2px 0;
 }
 
 .page-description {

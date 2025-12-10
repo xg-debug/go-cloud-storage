@@ -160,15 +160,15 @@ func (s *recycleService) ClearRecycles(ctx context.Context, userId int) error {
 		if err := s.shareRepo.DeleteBatch(tx, fileIds); err != nil {
 			return err
 		}
-		// 1.清空回收站记录
+		// 2.清空回收站记录
 		if err := s.recycleRepo.DeleteAll(tx, userId); err != nil {
 			return err
 		}
-		// 2.删除file表中该用户软删除的记录
+		// 3.删除file表中该用户软删除的记录
 		if err := s.fileRepo.DeleteByUserId(tx, userId); err != nil {
 			return err
 		}
-		// 3. OSS 删除
+		// 4. OSS 删除
 		if err := s.minio.DeleteFiles(context.Background(), objectKeys); err != nil {
 			return err
 		}

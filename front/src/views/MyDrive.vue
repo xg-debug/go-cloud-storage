@@ -185,7 +185,7 @@
                                 <Folder/>
                             </el-icon>
                             <el-image
-                                    v-else-if="['jpg','png','gif','jpeg','webp',].includes(item.extension)"
+                                    v-else-if="['jpg','png','gif','jpeg','webp','mp4', 'avi', 'mov', 'wmv', 'flv', 'mkv', 'webm'].includes(item.extension)"
                                     :src="item.thumbnail_url"
                                     fit="cover"
                                     class="thumbnail-image"
@@ -1111,7 +1111,7 @@ const clearSearch = () => {
 }
 
 .page-title {
-    font-size: 18px;
+    font-size: 20px;
     font-weight: 600;
     color: var(--text-primary);
     margin: 0 0 2px 0;
