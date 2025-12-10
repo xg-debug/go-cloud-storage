@@ -13,6 +13,15 @@ type CategoryController struct {
 	fileService     services.FileService
 }
 
+// GetFilesByCategoryRequest 获取分类文件请求
+type GetFilesByCategoryRequest struct {
+	FileType  string `json:"fileType" binding:"required"` // image, video, audio, document
+	SortBy    string `json:"sortBy"`                      // name, size, updated_at
+	SortOrder string `json:"sortOrder"`                   // asc, desc
+	Page      int    `json:"page"`
+	PageSize  int    `json:"pageSize"`
+}
+
 func NewCategoryController(categoryService services.CategoryService, fileService services.FileService) *CategoryController {
 	return &CategoryController{
 		categoryService: categoryService,
@@ -70,15 +79,6 @@ func (c *CategoryController) GetFilesByCategory(ctx *gin.Context) {
 	}
 
 	utils.Success(ctx, gin.H{"list": files, "total": total})
-}
-
-// GetFilesByCategoryRequest 获取分类文件请求
-type GetFilesByCategoryRequest struct {
-	FileType  string `json:"fileType" binding:"required"` // image, video, audio, document
-	SortBy    string `json:"sortBy"`                      // name, size, updated_at
-	SortOrder string `json:"sortOrder"`                   // asc, desc
-	Page      int    `json:"page"`
-	PageSize  int    `json:"pageSize"`
 }
 
 // 验证文件类型是否有效
