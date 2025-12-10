@@ -18,6 +18,7 @@ type TrashItem struct {
 // RecycleRepository 1.接口定义：在go中，接口本身就是引用类型，返回接口值已经包含了指向具体实现的指针
 type RecycleRepository interface {
 	GetFiles(userId int) ([]TrashItem, error)
+	GetAllFileIds(tx *gorm.DB, userId int) ([]string, error)
 	DeleteOne(db *gorm.DB, fileId string) error
 	DeleteBatch(db *gorm.DB, fileIds []string) error
 	DeleteAll(db *gorm.DB, userId int) error
@@ -49,6 +50,16 @@ func (r *recycleRepo) GetFiles(userId int) ([]TrashItem, error) {
 		Joins(`LEFT JOIN file AS f ON rb.file_id = f.id`).
 		Where(`rb.user_id = ?`, userId).Order("rb.deleted_at DESC").Scan(&res).Error
 	return res, err
+}
+
+func (r *recycleRepo) GetAllFileIds(tx *gorm.DB, userId int) ([]string, error) {
+	db := r.db // 默认使用非事务DB连接
+	if tx != nil {
+		db = tx
+	}
+	var fileIds []string
+	err := db.Model(&models.RecycleBin{}).Where("user_id = ?", userId).Pluck("file_id", &fileIds).Error
+	return fileIds, err
 }
 
 func (r *recycleRepo) DeleteOne(db *gorm.DB, fileId string) error {

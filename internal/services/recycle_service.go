@@ -147,6 +147,19 @@ func (s *recycleService) ClearRecycles(ctx context.Context, userId int) error {
 		return err
 	}
 	return s.db.Transaction(func(tx *gorm.DB) error {
+		// 1.收集回收站所有记录的file_id
+		fileIds, err := s.recycleRepo.GetAllFileIds(tx, userId)
+		if err != nil {
+			return err
+		}
+		// 删除对应的收藏记录(如果有)
+		if err := s.starRepo.DeleteBatch(tx, fileIds); err != nil {
+			return err
+		}
+		// 删除对应的分享记录(如果有)
+		if err := s.shareRepo.DeleteBatch(tx, fileIds); err != nil {
+			return err
+		}
 		// 1.清空回收站记录
 		if err := s.recycleRepo.DeleteAll(tx, userId); err != nil {
 			return err
