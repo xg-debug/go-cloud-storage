@@ -82,5 +82,3 @@ npm run serve
 
 
 ## License
-
-自定义/未声明。如需开源请补充许可证说明。
