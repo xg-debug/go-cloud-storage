@@ -27,18 +27,11 @@ Redis:
 # 阿里云oss配置
 AliyunOss:
   Host: https://go-cloud-store.oss-cn-shenzhen.aliyuncs.com     # 阿里云OSS资源外网访问地址
-  Bucket: go-cloud-store                              # 阿里云OSS bucket名称
-  Endpoint: oss-cn-shenzhen.aliyuncs.com              # 阿里云OSS Endpoint
-  AccessId: LTAI5tBSRFaGxPk4KBMt8x41                  # 阿里云OSS accessID
-  AccessSecret: O6DQAN7QcVTLS4xJDfXOLCL94b586P        # 阿里云OSS accessKey
-  Region: cn-shenzhen                                 # 区域
-
-# QQ登录配置
-QQ:
-  appID: 102795535
-  redirectURI: 
-  appKey: vhDYiiW5nGXbZIm0
-
+  Bucket: go-cloud-store                                        # 阿里云OSS bucket名称
+  Endpoint: oss-cn-shenzhen.aliyuncs.com                        # 阿里云OSS Endpoint
+  AccessId:                                                     # 阿里云OSS accessID
+  AccessSecret:                                                 # 阿里云OSS accessKey
+  Region: cn-shenzhen                                           # 区域
 
 
 storageType: "minio"
