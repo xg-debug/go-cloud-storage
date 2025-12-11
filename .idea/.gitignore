@@ -1,5 +1,5 @@
 # Default ignored files
-pkg/
+/pkg/
 /shelf/
 /workspace.xml
 # Editor-based HTTP Client requests
