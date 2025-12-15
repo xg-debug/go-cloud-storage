@@ -1,0 +1,646 @@
+!sum
+# Add
+- go: Add
+  asm: "VPADD[BWDQ]|VADDP[SD]"
+  in:
+  - &any
+    go: $t
+  - *any
+  out:
+  - *any
+- go: MaskedAdd
+  asm: "VPADD[BWDQ]|VADDP[SD]"
+  in:
+  - class: mask
+  - *any
+  - *any
+  out:
+  - *any
+# Saturated Add
+- go: SaturatedAdd
+  asm: "VPADDS[BWDQ]"
+  in:
+  - &int
+    go: $t
+    base: int
+  - *int
+  out:
+  - *int
+- go: SaturatedAdd
+  asm: "VPADDS[BWDQ]"
+  in:
+  - &uint
+    go: $t
+    base: uint
+  - *uint
+  out:
+  - *uint
+- go: MaskedSaturatedAdd
+  asm: "VPADDS[BWDQ]"
+  in:
+  - class: mask
+  - *int
+  - *int
+  out:
+  - *int
+- go: MaskedSaturatedAdd
+  asm: "VPADDS[BWDQ]"
+  in:
+  - class: mask
+  - *uint
+  - *uint
+  out:
+  - *uint
+
+# Sub
+- go: Sub
+  asm: "VPSUB[BWDQ]|VADDP[SD]"
+  in: &2any
+  - *any
+  - *any
+  out: &1any
+  - *any
+- go: MaskedSub
+  asm: "VPSUB[BWDQ]|VADDP[SD]"
+  in:
+  - class: mask
+  - *any
+  - *any
+  out:
+  - *any
+# Saturated Sub
+- go: SaturatedSub
+  asm: "VPSUBS[BWDQ]"
+  in: &2int
+  - *int
+  - *int
+  out: &1int
+  - *int
+- go: SaturatedSub
+  asm: "VPSUBS[BWDQ]"
+  in:
+  - *uint
+  - *uint
+  out:
+  - *uint
+- go: MaskedSaturatedSub
+  asm: "VPSUBS[BWDQ]"
+  in:
+  - class: mask
+  - *int
+  - *int
+  out:
+  - *int
+- go: MaskedSaturatedSub
+  asm: "VPSUBS[BWDQ]"
+  in:
+  - class: mask
+  - *uint
+  - *uint
+  out:
+  - *uint
+- go: PairwiseAdd
+  asm: "VPHADD[DW]"
+  in: *2any
+  out: *1any
+- go: PairwiseSub
+  asm: "VPHSUB[DW]"
+  in: *2any
+  out: *1any
+- go: PairwiseAdd
+  asm: "VHADDP[SD]" # floats
+  in: *2any
+  out: *1any
+- go: PairwiseSub
+  asm: "VHSUBP[SD]"  # floats
+  in: *2any
+  out: *1any
+- go: SaturatedPairwiseAdd
+  asm: "VPHADDS[DW]"
+  in: *2int
+  out: *1int
+- go: SaturatedPairwiseSub
+  asm: "VPHSUBS[DW]"
+  in: *2int
+  out: *1int
+# In the XED data, *all* floating point bitwise logic operation has their
+# operand type marked as uint. We are not trying to understand why Intel
+# decided that they want FP bit-wise logic operations, but this irregularity
+# has to be dealed with in separate rules with some overwrites.
+
+# Int/Uint operations.
+# Non-masked for 128/256-bit vectors
+# For binary operations, we constrain their two inputs and one output to the
+# same Go type using a variable. This will map to instructions before AVX512.
+- go: And
+  asm: "VPAND"
+  in:
+  - &any
+    go: $t
+  - *any
+  out:
+  - *any
+# Masked
+# Looks like VPAND$xi works only for 2 shapes for integer:
+# Dword and Qword.
+# TODO: should we wildcard other smaller elemBits to VPANDQ or
+# VPANDD? Looks like elemBits doesn't really matter afterall in bitwise operations.
+- go: MaskedAnd
+  asm: "VPAND[DQ]"
+  in:
+  - class: mask
+  - *any
+  - *any
+  out:
+  - *any
+
+- go: AndNot
+  asm: "VPANDN"
+  in:
+  - *any
+  - *any
+  out:
+  - *any
+- go: MaskedAndNot
+  asm: "VPANDN[DQ]"
+  in:
+  - class: mask
+  - *any
+  - *any
+  out:
+  - *any
+
+- go: Or
+  asm: "VPOR"
+  in:
+  - *any
+  - *any
+  out:
+  - *any
+- go: MaskedOr
+  asm: "VPOR[DQ]"
+  in:
+  - class: mask
+  - *any
+  - *any
+  out:
+  - *any
+
+- go: Xor
+  asm: "VPXOR"
+  in:
+  - *any
+  - *any
+  out:
+  - *any
+- go: MaskedXor
+  asm: "VPXOR[DQ]"
+  in:
+  - class: mask
+  - *any
+  - *any
+  out:
+  - *any
+
+# FP operations.
+# Set the [base] to be "int" to not include duplicates(excluding "uint").
+# [base] is not used when [overwriteBase] is present.
+- go: And
+  asm: "VANDP[SD]"
+  in:
+  - &intToFloat
+    go: $t
+    base: int
+    overwriteBase: float
+  - *intToFloat
+  out:
+  - *intToFloat
+- go: MaskedAnd
+  asm: "VANDP[SD]"
+  in:
+  - class: mask
+  - *intToFloat
+  - *intToFloat
+  out:
+  - *intToFloat
+
+- go: AndNot
+  asm: "VANDNP[SD]"
+  in:
+  - *intToFloat
+  - *intToFloat
+  out:
+  - *intToFloat
+- go: MaskedAndNot
+  asm: "VANDNP[SD]"
+  in:
+  - class: mask
+  - *intToFloat
+  - *intToFloat
+  out:
+  - *intToFloat
+
+- go: Or
+  asm: "VORP[SD]"
+  in:
+  - *intToFloat
+  - *intToFloat
+  out:
+  - *intToFloat
+- go: MaskedOr
+  asm: "VORP[SD]"
+  in:
+  - class: mask
+  - *intToFloat
+  - *intToFloat
+  out:
+  - *intToFloat
+
+- go: Xor
+  asm: "VXORP[SD]"
+  in:
+  - *intToFloat
+  - *intToFloat
+  out:
+  - *intToFloat
+- go: MaskedXor
+  asm: "VXORP[SD]"
+  in:
+  - class: mask
+  - *intToFloat
+  - *intToFloat
+  out:
+  - *intToFloat
+# Ints
+- go: Equal
+  asm: "V?PCMPEQ[BWDQ]"
+  in: &int2
+  - &int
+    go: $t
+    base: int # Looks like PCMP is on signed integers - but for equals does it really matters?
+  - *int
+  out:
+  - &anyvregToMask
+    go: $t # We still need the output to be the same shape as inputs.
+    overwriteBase: int
+    overwriteClass: mask
+- go: Greater
+  asm: "V?PCMPGT[BWDQ]"
+  in: *int2
+  out:
+  - *anyvregToMask
+- go: MaskedEqual
+  asm: "V?PCMPEQ[BWDQ]"
+  in: &maskint2
+  - class: mask
+  - *int
+  - *int
+  out:
+  - class: mask
+- go: MaskedGreater
+  asm: "V?PCMPGT[BWDQ]"
+  in: *maskint2
+  out:
+  - class: mask
+# The const imm predicated compares after AVX512, please see categories.yaml
+# for const imm specification.
+- go: Masked(Equal|Greater|Less|LessEqual|GreaterEqual|NotEqual)
+  asm: "VPCMP[BWDQ]"
+  in:
+  - class: mask
+  - &int
+    go: $t
+    base: int
+  - *int
+  - class: immediate
+    const: 0 # Just a placeholder, will be overwritten by const imm porting.
+  out:
+  - class: mask
+- go: Masked(Equal|Greater|Less|LessEqual|GreaterEqual|NotEqual)
+  asm: "VPCMPU[BWDQ]"
+  in:
+  - class: mask
+  - &uint
+    go: $t
+    base: uint
+  - *uint
+  - class: immediate
+    const: 0
+  out:
+  - class: mask
+
+# Floats
+- go: Equal|Greater|Less|LessEqual|GreaterEqual|NotEqual|IsNan
+  asm: "VCMPP[SD]"
+  in:
+  - &float
+    go: $t
+    base: float
+  - *float
+  - class: immediate
+    const: 0
+  out:
+  - go: $t # We still need the output to be the same shape as inputs.
+    overwriteBase: int
+    overwriteClass: mask
+- go: Masked(Equal|Greater|Less|LessEqual|GreaterEqual|NotEqual|IsNan)
+  asm: "VCMPP[SD]"
+  in:
+  - class: mask
+  - *float
+  - *float
+  - class: immediate
+    const: 0
+  out:
+  - class: mask
+- go: Div
+  asm: "V?DIVP[SD]"
+  in: &2fp
+  - &fp
+    go: $t
+    base: float
+  - *fp
+  out: &1fp
+  - *fp
+- go: MaskedDiv
+  asm: "V?DIVP[SD]"
+  in: &1mask2fp
+  - class: mask
+  - *fp
+  - *fp
+  out: *1fp
+- go: Sqrt
+  asm: "V?SQRTP[SD]"
+  in: *1fp
+  out: *1fp
+- go: MaskedSqrt
+  asm: "V?SQRTP[SD]"
+  in: &1mask1fp
+  - class: mask
+  - *fp
+  out: *1fp
+- go: MaskedApproximateReciprocal
+  asm: "VRCP14P[SD]"
+  in: *1mask1fp
+  out: *1fp
+- go: ApproximateReciprocalOfSqrt
+  asm: "V?RSQRTPS"
+  in: *1fp
+  out: *1fp
+- go: MaskedApproximateReciprocalOfSqrt
+  asm: "VRSQRT14P[SD]"
+  in: *1mask1fp
+  out: *1fp
+- go: MaskedMulByPowOf2
+  asm: "VSCALEFP[SD]"
+  in: *1mask2fp
+  out: *1fp
+# Average (unsigned byte, unsigned word)
+# Instructions: VPAVGB, VPAVGW
+- go: Average
+  asm: "VPAVG[BW]" # Matches VPAVGB (byte) and VPAVGW (word)
+  in:
+  - &uint_t # $t will be Uint8xN for VPAVGB, Uint16xN for VPAVGW
+    go: $t
+    base: uint
+  - *uint_t
+  out:
+  - *uint_t
+- go: MaskedAverage
+  asm: "VPAVG[BW]"
+  in:
+  - class: mask
+  - *uint_t
+  - *uint_t
+  out:
+  - *uint_t
+
+# Absolute Value (signed byte, word, dword, qword)
+# Instructions: VPABSB, VPABSW, VPABSD, VPABSQ
+- go: Absolute
+  asm: "VPABS[BWDQ]" # Matches VPABSB, VPABSW, VPABSD, VPABSQ
+  in:
+  - &int_t # $t will be Int8xN, Int16xN, Int32xN, Int64xN
+    go: $t
+    base: int
+  out:
+  - *int_t # Output is magnitude, fits in the same signed type
+- go: MaskedAbsolute
+  asm: "VPABS[BWDQ]"
+  in:
+  - class: mask
+  - *int_t
+  out:
+  - *int_t
+
+# Sign Operation (signed byte, word, dword)
+# Applies sign of second operand to the first.
+# Instructions: VPSIGNB, VPSIGNW, VPSIGND
+- go: Sign
+  asm: "VPSIGN[BWD]" # Matches VPSIGNB, VPSIGNW, VPSIGND
+  in:
+  - *int_t # value to apply sign to
+  - *int_t # value from which to take the sign
+  out:
+  - *int_t
+
+# Population Count (count set bits in each element)
+# Instructions: VPOPCNTB, VPOPCNTW (AVX512_BITALG)
+#               VPOPCNTD, VPOPCNTQ (AVX512_VPOPCNTDQ)
+- go: MaskedPopCount
+  asm: "VPOPCNT[BWDQ]"
+  in:
+  - class: mask
+  - &any
+    go: $t
+  out:
+  - *any
+- go: Max
+  asm: "V?PMAXS[BWDQ]"
+  in: &2int
+  - &int
+    go: $t
+    base: int
+  - *int
+  out: &1int
+  - *int
+- go: Max
+  asm: "V?PMAXU[BWDQ]"
+  in: &2uint
+  - &uint
+    go: $t
+    base: uint
+  - *uint
+  out: &1uint
+  - *uint
+- go: MaskedMax
+  asm: "V?PMAXS[BWDQ]"
+  in: &1mask2int
+  - class: mask
+  - *int
+  - *int
+  out: *1int
+- go: MaskedMax
+  asm: "V?PMAXU[BWDQ]"
+  in: &1mask2uint
+  - class: mask
+  - *uint
+  - *uint
+  out: *1uint
+
+- go: Min
+  asm: "V?PMINS[BWDQ]"
+  in: *2int
+  out: *1int
+- go: Min
+  asm: "V?PMINU[BWDQ]"
+  in: *2uint
+  out: *1uint
+- go: MaskedMin
+  asm: "V?PMINS[BWDQ]"
+  in: *1mask2int
+  out: *1int
+- go: MaskedMin
+  asm: "V?PMINU[BWDQ]"
+  in: *1mask2uint
+  out: *1uint
+
+- go: Max
+  asm: "V?MAXP[SD]"
+  in: &2float
+  - &float
+    go: $t
+    base: float
+  - *float
+  out: &1float
+  - *float
+- go: MaskedMax
+  asm: "V?MAXP[SD]"
+  in: &1mask2float
+  - class: mask
+  - *float
+  - *float
+  out: *1float
+- go: Min
+  asm: "V?MINP[SD]"
+  in: *2float
+  out: *1float
+- go: MaskedMin
+  asm: "V?MINP[SD]"
+  in: *1mask2float
+  out: *1float
+# "Normal" multiplication is only available for floats.
+# This only covers the single and double precision.
+- go: Mul
+  asm: "VMULP[SD]"
+  in:
+  - &fp
+    go: $t
+    base: float
+  - *fp
+  out:
+  - *fp
+- go: MaskedMul
+  asm: "VMULP[SD]"
+  in:
+  - class: mask
+  - *fp
+  - *fp
+  out:
+  - *fp
+
+# Integer multiplications.
+
+# MulEvenWiden
+# Dword only.
+- go: MulEvenWiden
+  asm: "VPMULDQ"
+  in:
+  - &int
+    go: $t
+    base: int
+  - *int
+  out:
+  - &int2
+    go: $t2
+    base: int
+- go: MulEvenWiden
+  asm: "VPMULUDQ"
+  in:
+  - &uint
+    go: $t
+    base: uint
+  - *uint
+  out:
+  - &uint2
+    go: $t2
+    base: uint
+- go: MaskedMulEvenWiden
+  asm: "VPMULDQ"
+  in:
+  - class: mask
+  - *int
+  - *int
+  out:
+  - *int2
+- go: MaskedMulEvenWiden
+  asm: "VPMULUDQ"
+  in:
+  - class: mask
+  - *uint
+  - *uint
+  out:
+  - *uint2
+
+# MulHigh
+# Word only.
+# Non-masked
+- go: MulHigh
+  asm: "VPMULHW"
+  in:
+  - *int
+  - *int
+  out:
+  - *int2
+- go: MulHigh
+  asm: "VPMULHUW"
+  in:
+  - *uint
+  - *uint
+  out:
+  - *uint2
+- go: MaskedMulHigh
+  asm: "VPMULHW"
+  in:
+  - class: mask
+  - *int
+  - *int
+  out:
+  - *int2
+- go: MaskedMulHigh
+  asm: "VPMULHUW"
+  in:
+  - class: mask
+  - *uint
+  - *uint
+  out:
+  - *uint2
+
+# MulLow
+# Signed int only.
+# Non-masked
+- go: MulLow
+  asm: "VPMULL[WDQ]"
+  in:
+  - *int
+  - *int
+  out:
+  - *int2
+- go: MaskedMulLow
+  asm: "VPMULL[WDQ]"
+  in:
+  - class: mask
+  - *int
+  - *int
+  out:
+  - *int2
