@@ -15,15 +15,25 @@
 
         <!-- 右侧：通知 + 用户菜单 -->
         <div class="header-right">
-            <!-- 快捷操作按钮 -->
             <div class="quick-actions">
                 <el-tooltip content="上传文件" placement="bottom">
-                    <div class="action-btn">
+                    <div class="action-btn" @click="uploadDialogVisible = true">
                         <el-icon :size="20"><Upload /></el-icon>
                     </div>
                 </el-tooltip>
+                <FileUploadDialog
+                    v-model="uploadDialogVisible"
+                    :parent-id="currentDirId"
+                    @success="handleUploadSuccess"
+                />
             </div>
-
+            <input
+                type="file"
+                ref="fileInputRef"
+                style="display: none"
+                multiple
+                @change="handleFileChange"
+            />
             <!-- 通知中心 -->
             <el-dropdown trigger="click" class="notification-dropdown">
                 <div class="notification-wrapper">
@@ -116,9 +126,13 @@ import {useRouter} from 'vue-router'
 import {useStore} from 'vuex'
 import {logout} from '@/api/auth'
 import {Cloudy, Upload, Check} from '@element-plus/icons-vue'
+import FileUploadDialog from "@/components/FileUploadDialog.vue";
 
 const router = useRouter()
 const store = useStore()
+
+const uploadDialogVisible = ref(false)
+const currentDirId = ref(null)
 
 const searchQuery = ref('')
 
@@ -139,6 +153,11 @@ const handleLogout = async () => {
         ElMessage.error('退出异常')
         router.push('/login')
     }
+}
+
+// 打开上传对话框
+const triggerUploadDialog = () => {
+    uploadDialogVisible.value = true
 }
 
 // 通知中心示例数据
