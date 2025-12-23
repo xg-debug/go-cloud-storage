@@ -19,7 +19,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
 
-	minio "github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7"
 
 	"gorm.io/gorm"
 )
@@ -80,8 +80,8 @@ type FileService interface {
 	CreateFileInfo(file *models.File) error
 	GetRecentFiles(userId int, timeRange string) ([]*RecentFile, error)
 	GetFilePath(file *models.File) (string, error)
-	PreviewFile(ctx context.Context, userId int, fileId string) (*FilePreview, error)
-	SearchFiles(ctx context.Context, userId int, keyword, parentId string, page, pageSize int) ([]FileItem, int64, error)
+	PreviewFile(userId int, fileId string) (*FilePreview, error)
+	SearchFiles(userId int, keyword, parentId string, page, pageSize int) ([]FileItem, int64, error)
 
 	UploadFile(ctx context.Context, r io.Reader, userId int, fileName string, fileSize int64, fileHash string, parentId string) (*models.File, error)
 	InitChunkUpload(ctx context.Context, userId int, filename, fileMd5 string, parentId string, fileSize int64) (gin.H, error)
@@ -267,7 +267,7 @@ func (s *fileService) GetFilePath(file *models.File) (string, error) {
 		return "/" + file.Name, nil
 	}
 
-	pathParts := []string{}
+	var pathParts []string
 	currentParentId := file.ParentId.String
 	for currentParentId != "" {
 		parent, err := s.fileRepo.GetFileById(currentParentId)
@@ -346,7 +346,7 @@ func getPreviewType(extension string) (bool, string) {
 	return false, "other"
 }
 
-func (s *fileService) PreviewFile(ctx context.Context, userId int, fileId string) (*FilePreview, error) {
+func (s *fileService) PreviewFile(userId int, fileId string) (*FilePreview, error) {
 	// 获取文件信息
 	file, err := s.fileRepo.GetFileById(fileId)
 	if err != nil {
@@ -654,7 +654,7 @@ func (s *fileService) CancelChunkUpload(ctx context.Context, userId int, fileHas
 }
 
 // SearchFiles 搜索文件和文件夹
-func (s *fileService) SearchFiles(ctx context.Context, userId int, keyword, parentId string, page, pageSize int) ([]FileItem, int64, error) {
+func (s *fileService) SearchFiles(userId int, keyword, parentId string, page, pageSize int) ([]FileItem, int64, error) {
 	// 计算偏移量
 	offset := (page - 1) * pageSize
 

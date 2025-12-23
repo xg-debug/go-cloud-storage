@@ -118,42 +118,6 @@ html, body {
     background: var(--border-dark);
 }
 
-.el-dialog__header {
-    padding: var(--spacing-lg) var(--spacing-xl) !important;
-    border-bottom: 1px solid var(--border-light);
-}
-
-.el-dialog__body {
-    padding: var(--spacing-xl) !important;
-}
-
-.el-dialog__footer {
-    padding: var(--spacing-lg) var(--spacing-xl) !important;
-    border-top: 1px solid var(--border-light);
-}
-
-.el-message-box {
-    border-radius: var(--radius-lg) !important;
-}
-
-.el-dropdown-menu {
-    border-radius: 4px !important;
-    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1) !important;
-    border: 1px solid var(--border-light) !important;
-    padding: 4px !important;
-}
-
-.el-dropdown-menu__item {
-    border-radius: 4px !important;
-    padding: 8px 16px !important;
-    margin: 2px 0 !important;
-}
-
-.el-dropdown-menu__item:hover {
-    background: #f5f5f5 !important;
-    color: var(--text-primary) !important;
-}
-
 /* 全局动画 */
 @keyframes fadeIn {
     from { opacity: 0; transform: translateY(10px); }
@@ -173,13 +137,5 @@ html, body {
 @keyframes shimmer {
     0% { background-position: -200% 0; }
     100% { background-position: 200% 0; }
-}
-
-.animate-fade-in {
-    animation: fadeIn 0.3s ease-out;
-}
-
-.animate-slide-in {
-    animation: slideIn 0.3s ease-out;
 }
 </style>

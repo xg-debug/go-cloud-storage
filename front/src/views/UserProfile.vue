@@ -548,7 +548,7 @@ onMounted(() => {
 .stats-card:hover,
 .file-types-card:hover,
 .security-card:hover {
-    transform: translateY(-4px);
+    //transform: translateY(-4px);
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
 }
 
@@ -600,7 +600,7 @@ onMounted(() => {
 }
 
 .action-btn:hover {
-    transform: translateY(-1px);
+    //transform: translateY(-1px);
     box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
 }
 
@@ -650,7 +650,7 @@ onMounted(() => {
 
 .detail-item:hover {
     background: #f1f5f9;
-    transform: translateX(4px);
+    //transform: translateX(4px);
 }
 
 .detail-icon {

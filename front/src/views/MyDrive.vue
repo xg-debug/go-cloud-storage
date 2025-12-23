@@ -232,20 +232,20 @@
 
                     <el-table-column label="操作" width="200" fixed="right">
                         <template #default="{ row }">
-                            <el-button size="small" link class="action-btn" @click="handleRename(row)">
+                            <el-button size="default" link class="action-btn" @click="handleRename(row)">
                                 <el-icon>
                                     <Edit/>
                                 </el-icon>
                                 重命名
                             </el-button>
-                            <el-button size="small" type="danger" link @click="openDeleteDialog(row)">
+                            <el-button size="default" type="danger" link @click="openDeleteDialog(row)">
                                 <el-icon>
                                     <Delete/>
                                 </el-icon>
                                 删除
                             </el-button>
                             <el-dropdown class="list-el-dropdown">
-                                <el-button size="small" link class="action-btn">
+                                <el-button size="default" link class="action-btn">
                                     更多
                                     <el-icon>
                                         <ArrowDown/>
@@ -267,12 +267,7 @@
         </div>
 
         <!-- 确定删除弹窗 -->
-        <el-dialog
-                v-model="deleteDialogVisible"
-                title="确定删除"
-                width="400px"
-                :before-close="handleDeleteDialogClose"
-        >
+        <el-dialog v-model="deleteDialogVisible" title="确定删除" width="400px" :before-close="handleDeleteDialogClose">
             <div class="delete-confirm-text">
                 <div>确定要删除所选的文件 <strong>{{ deleteTarget.name }}</strong> 吗？</div>
                 <div>删除的文件可在 10天 内通过回收站还原</div>
@@ -284,7 +279,7 @@
         </el-dialog>
 
         <!-- 重命名弹窗 -->
-        <el-dialog v-model="renameDialogVisible" title="重命名">
+        <el-dialog v-model="renameDialogVisible" title="重命名" width="500px">
             <el-input v-model="renameForm.name"/>
             <template #footer>
                 <el-button @click="renameDialogVisible = false">取消</el-button>
@@ -1263,9 +1258,9 @@ const clearSearch = () => {
 .file-card:hover,
 .file-card-hover {
     background: rgba(255, 255, 255, 0.95);
-    box-shadow: 0 20px 40px -12px rgba(99, 102, 241, 0.2);
+    //box-shadow: 0 20px 40px -12px rgba(99, 102, 241, 0.2);
     border-color: rgba(99, 102, 241, 0.3);
-    transform: translateY(-6px);
+    //transform: translateY(-6px);
 }
 
 .file-actions-dropdown {
@@ -1347,7 +1342,7 @@ const clearSearch = () => {
 /* 列表视图 */
 .list-view {
     flex: 1;
-    padding: 24px;
+    padding: 10px 24px;
     overflow: auto;
 }
 

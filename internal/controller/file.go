@@ -163,7 +163,7 @@ func (c *FileController) PreviewFile(ctx *gin.Context) {
 	userId := ctx.GetInt("userId")
 
 	// 获取文件信息和预览数据
-	previewData, err := c.fileService.PreviewFile(ctx, userId, fileId)
+	previewData, err := c.fileService.PreviewFile(userId, fileId)
 	if err != nil {
 		utils.Fail(ctx, http.StatusInternalServerError, err.Error())
 		return
@@ -190,7 +190,7 @@ func (c *FileController) SearchFiles(ctx *gin.Context) {
 	}
 
 	// 调用服务层搜索文件
-	files, total, err := c.fileService.SearchFiles(ctx, userId, req.Keyword, req.ParentId, req.Page, req.PageSize)
+	files, total, err := c.fileService.SearchFiles(userId, req.Keyword, req.ParentId, req.Page, req.PageSize)
 	if err != nil {
 		utils.Fail(ctx, http.StatusInternalServerError, "搜索文件失败: "+err.Error())
 		return
@@ -263,7 +263,7 @@ func (c *FileController) ChunkUploadPart(ctx *gin.Context) {
 		return
 	}
 
-	// 5.调用 Service 上传
+	// 5.调用 Service 上传: 这里要保证 并发安全 + 幂等。
 	// Service 层逻辑：根据 fileHash 从 Redis 获取 UploadID -> 调用 MinIO UploadPart -> 保存 ETag 到 Redis
 	err = c.fileService.UploadChunk(ctx, userId, fileHash, chunkIndex, data)
 	if err != nil {
