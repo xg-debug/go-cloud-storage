@@ -27,13 +27,7 @@
                     @success="handleUploadSuccess"
                 />
             </div>
-            <input
-                type="file"
-                ref="fileInputRef"
-                style="display: none"
-                multiple
-                @change="handleFileChange"
-            />
+
             <!-- 通知中心 -->
             <el-dropdown trigger="click" class="notification-dropdown">
                 <div class="notification-wrapper">
@@ -132,7 +126,7 @@ const router = useRouter()
 const store = useStore()
 
 const uploadDialogVisible = ref(false)
-const currentDirId = ref(null)
+const currentDirId = ref(store.state.userInfo.rootFolderId)
 
 const searchQuery = ref('')
 
@@ -158,6 +152,11 @@ const handleLogout = async () => {
 // 打开上传对话框
 const triggerUploadDialog = () => {
     uploadDialogVisible.value = true
+}
+
+const handleUploadSuccess = () => {
+    // 上传成功后，设置文件列表需要刷新
+    store.commit('file/setNeedRefresh', true)
 }
 
 // 通知中心示例数据

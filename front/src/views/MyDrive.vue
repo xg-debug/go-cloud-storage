@@ -409,7 +409,7 @@
 </template>
 
 <script setup>
-import {onMounted, ref} from 'vue'
+import {onMounted, ref, watch} from 'vue'
 import {createFolder, deleteFile, getFolderTree, listFiles, moveFile, previewFile, renameFile, searchFiles, uploadFile,
     chunkUploadInit, chunkUploadPart, chunkUploadMerge, chunkUploadCancel, downloadFile} from '@/api/file'
 import {ElMessage} from 'element-plus'
@@ -710,6 +710,16 @@ const handleBreadcrumbClick = (index) => {
     currentParentId.value = pathIdStack.value[pathIdStack.value.length - 1]
     loadFiles()
 }
+
+watch(
+    () => store.state.file.needRefresh,
+    (val) => {
+        if (val) {
+            loadFiles() // 刷新文件列表
+            store.commit("file/setNeedRefresh", false)
+        }
+    }
+)
 
 onMounted(() => {
     const rootId = store.state.userInfo.rootFolderId

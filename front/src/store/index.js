@@ -1,7 +1,12 @@
 import { createStore } from "vuex";
+import file from "@/store/modules/file";
+
 
 
 const store =  createStore({
+    modules: {
+        file
+    },
     state: {
         userInfo: null,
         token: localStorage.getItem('token') || null,
