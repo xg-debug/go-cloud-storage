@@ -49,14 +49,11 @@
         <!-- 工具栏 -->
         <div class="toolbar">
             <div class="toolbar-left">
-                <el-button type="primary" :icon="Upload" @click="triggerUploadDialog">
+                <el-button type="primary" :icon="Upload" @click="uploadDialogVisible = true">
                     上传文件
                 </el-button>
-                <input
-                    type="file"
-                    ref="fileInputRef"
-                    style="display: none"
-                    @change="handleFileInputChange" >
+                <!-- 文件上传组件 -->
+                <FileUploadDialog v-model="uploadDialogVisible" :parent-id="currentParentId" @success="handleUploadSuccess"/>
 
                 <el-button :icon="FolderAdd" @click="handleNewFolder">
                     新建文件夹
@@ -293,42 +290,6 @@
                 :file-info="shareFileInfo"
         />
 
-        <!-- 文件上传对话框 -->
-        <el-dialog
-            v-model="uploadDialogVisible"
-            title="文件上传"
-            width="500px"
-            :close-on-click-modal="false"
-            @close="resetUploadState"
-        >
-            <div
-                v-if="!pendingFile"
-                class="drop-zone"
-                :class="{ dragging: isDragging }"
-                @dragover.prevent="isDragging = true"
-                @dragleave.prevent="isDragging = false"
-                @drop.prevent="onDrop"
-            >
-                <el-icon :size="48"><Upload /></el-icon>
-                <p>将文件拖拽到此处 或</p>
-                <el-button link @click="triggerSelect">选择本地文件</el-button>
-                <input type="file" ref="uploadInputRef" style="display: none" @change="onSelectFile">
-            </div>
-
-            <!-- 上传进度 -->
-            <div v-else class="upload-progress-info">
-                <h4 style="margin-bottom: 15px;">正在上传：{{ pendingFile.name }}</h4>
-
-                <el-progress :percentage="uploadProgress" />
-
-                <p>{{ uploadStatusText }}</p>
-            </div>
-
-            <template #footer>
-                <el-button @click="resetUploadState" :disabled="uploading">关闭</el-button>
-            </template>
-        </el-dialog>
-
         <el-dialog
                 v-model="newFolderDialogVisible"
                 title="新建文件夹"
@@ -433,6 +394,7 @@ import {
 import {useStore} from 'vuex'
 import {addFavorite} from "@/api/favorite";
 import CreateShareDialog from '@/components/CreateShareDialog.vue'
+import FileUploadDialog from "@/components/FileUploadDialog.vue";
 
 const store = useStore()
 const viewMode = ref('grid')
@@ -475,175 +437,6 @@ const folderTreeRef = ref()
 
 // 上传相关状态
 const uploadDialogVisible = ref(false)
-const uploadInputRef = ref(null)
-
-const pendingFile = ref(null)            // 当前上传的文件
-const uploadProgress = ref(0)            // 总进度（大文件/小文件统一）
-const uploading = ref(false)             // 上传中
-const isDragging = ref(false)
-
-const CHUNK_SIZE = 10 * 1024 * 1024      // 10MB
-const CHUNK_THRESHOLD = 10 * 1024 * 1024 // 判定大文件
-
-// 打开上传对话框
-const triggerUploadDialog = () => {
-    uploadDialogVisible.value = true
-}
-
-/* 打开本地选择文件 */
-const triggerSelect = () => {
-    uploadInputRef.value.click()
-}
-
-/* 选择文件 */
-const onSelectFile = (e) => {
-    const file = e.target.files[0]
-    e.target.value = ''
-    if (file) prepareUpload(file)
-}
-
-/* 拖拽上传 */
-const onDrop = (e) => {
-    const file = e.dataTransfer.files[0]
-    isDragging.value = false
-    if (file) prepareUpload(file)
-}
-
-/* 准备上传（区分大小文件） */
-const prepareUpload = (file) => {
-    pendingFile.value = file
-    uploadProgress.value = 0
-
-    if (file.size >= CHUNK_THRESHOLD) {
-        uploadLargeFile(file)
-    } else {
-        uploadSmallFile(file)
-    }
-}
-
-const uploadSmallFile = async (file) => {
-    uploading.value = true
-
-    const fileHash = await calcSHA256(file)
-
-
-    const form = new FormData()
-    form.append('file', file)
-    form.append('parentId', currentParentId.value)
-    form.append("fileHash", fileHash)
-
-    try {
-        await uploadFile(form, (e) => {
-            uploadProgress.value = Math.round((e.loaded * 100) / e.total)
-        })
-
-        ElMessage.success('上传成功')
-        loadFiles()
-    } catch (err) {
-        ElMessage.error('上传失败')
-    } finally {
-        uploading.value = false
-        resetUploadState()
-    }
-}
-
-const uploadLargeFile = async (file) => {
-    uploading.value = true
-    uploadProgress.value = 0
-
-    try {
-        const fileHash = await calcSHA256(file)
-
-        // 初始化任务
-        const initRes = await chunkUploadInit({
-            fileHash,
-            parentId: currentParentId.value,
-            fileName: file.name,
-            fileSize: file.size,
-        })
-
-        // 秒传成功
-        if (initRes.finished) {
-            uploadProgress.value = 100
-            ElMessage.success('上传成功')
-            uploading.value = false
-            resetUploadState()
-            loadFiles()
-            return
-        }
-
-        const uploaded = new Set(initRes.uploadedChunks)
-        const totalChunks = Math.ceil(file.size / CHUNK_SIZE)
-        let finished = uploaded.size
-
-        // 上传每个分片
-        for (let index = 0; index < totalChunks; index++) {
-            if (uploaded.has(index)) {
-                updateProgress(uploaded.size, totalChunks)
-                continue
-            }
-
-            const start = index * CHUNK_SIZE
-            const end = Math.min(file.size, start + CHUNK_SIZE)
-            const chunk = file.slice(start, end)
-
-            const form = new FormData()
-            form.append('fileHash', fileHash)
-            form.append('chunkIndex', index)
-            form.append('chunk', chunk)
-
-            await chunkUploadPart(form, () => {})
-
-            finished++
-            updateProgress(finished, totalChunks)
-        }
-
-        // 合并分片
-        uploadProgress.value = 98
-        await chunkUploadMerge({
-            fileHash,
-            fileName: file.name,
-            fileSize: file.size,
-            parentId: currentParentId.value
-        })
-
-        uploadProgress.value = 100
-        ElMessage.success('上传成功')
-
-        loadFiles()
-
-    } catch (err) {
-        console.error(err)
-        ElMessage.error('大文件上传失败')
-    } finally {
-        uploading.value = false
-        resetUploadState()
-    }
-}
-/* 更新进度条（95% 用于上传部分） */
-const updateProgress = (finished, total) => {
-    uploadProgress.value = Math.round((finished / total) * 95)
-}
-/* -----------------------------------------------------
-   计算 SHA-256（浏览器原生）
------------------------------------------------------- */
-const calcSHA256 = async (file) => {
-    const buffer = await file.arrayBuffer()
-    const hashBuffer = await crypto.subtle.digest('SHA-256', buffer)
-    return Array.from(new Uint8Array(hashBuffer))
-        .map(b => b.toString(16).padStart(2, '0'))
-        .join('')
-}
-/* -----------------------------------------------------
-   上传对话框关闭时重置
------------------------------------------------------- */
-const resetUploadState = () => {
-    if (uploading.value) return ElMessage.warning('上传中请勿关闭')
-    pendingFile.value = null
-    uploadProgress.value = 0
-    uploading.value = false
-    uploadDialogVisible.value = false
-}
 
 const loadFiles = async () => {
     const res = await listFiles({
@@ -740,6 +533,10 @@ const getCurrentTimeStr = () => {
     ).padStart(2, '0')}日 ${String(now.getHours()).padStart(2, '0')}:${String(
         now.getMinutes()
     ).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`
+}
+
+const handleUploadSuccess = () => {
+    loadFiles()
 }
 
 const handleNewFolder = () => {

@@ -63,7 +63,14 @@ const props = defineProps({
     }
 })
 
-const currentParentId = ref(props.parentId) // 默认上传到根目录
+// 在子组件内部创建响应式变量，保存当前目录 id
+const currentParentId = ref(props.parentId)
+
+// 父组件(如MyDrive)可能会动态修改 parentId，需要监听 prop
+watch(() => props.parentId, (newVal) => {
+    currentParentId.value = newVal
+    console.log('FileUploadDialog: parentId updated:', newVal)
+})
 
 const emit = defineEmits(['update:modelValue', 'success'])
 
