@@ -110,6 +110,33 @@ func (c *ShareController) DeleteShare(ctx *gin.Context) {
 	utils.Success(ctx, nil)
 }
 
+// UpdateShare 更新分享设置
+func (c *ShareController) UpdateShare(ctx *gin.Context) {
+	shareId, err := strconv.Atoi(ctx.Param("shareId"))
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "无效的分享ID"})
+		return
+	}
+	userId := ctx.GetInt("userId")
+
+	var req struct {
+		ExtractionCode string `json:"extraction_code"`
+		ExpireDays     int    `json:"expire_days"` // 0表示永久有效
+	}
+
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	err = c.shareService.UpdateShare(shareId, userId, req.ExtractionCode, req.ExpireDays)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	utils.Success(ctx, nil)
+}
+
 // AccessShare 访问分享（通过分享链接）
 func (c *ShareController) AccessShare(ctx *gin.Context) {
 	shareToken := ctx.Param("token")

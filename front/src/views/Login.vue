@@ -244,7 +244,7 @@ const handleLogin = async () => {
         })
         router.push('/')
     } catch (error) {
-        ElMessage.error(error.message || '登录失败')
+        console.error(error)
     } finally {
         loading.value = false
     }
@@ -263,7 +263,7 @@ const handleRegister = async () => {
         activeTab.value = 'login'
         loginForm.account = registerForm.email
     } catch (error) {
-        ElMessage.error(error.message || '注册失败')
+        console.error(error.message)
     } finally {
         loading.value = false
     }
@@ -426,7 +426,6 @@ const handleRegister = async () => {
 
 .auth-tabs :deep(.el-input__wrapper.is-focus) {
     background: white;
-//border-color: var(--primary-color); //box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
 }
 
 .flex-bar {

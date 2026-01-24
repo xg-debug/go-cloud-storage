@@ -204,7 +204,7 @@
                         <span class="label">分享链接：</span>
                         <div class="link-container">
                             <el-input
-                                    :model-value="currentShare.shareUrl"
+                                    :model-value="buildShareLink(currentShare)"
                                     readonly
                                     class="link-input"
                             />
@@ -277,20 +277,53 @@
                 :close-on-click-modal="false"
         >
             <div class="qrcode-container">
-                <div class="qrcode-placeholder">
-                    <el-icon :size="120" color="#e5e7eb">
-                        <QrCode/>
-                    </el-icon>
-                    <p>二维码生成功能开发中...</p>
+                <div class="qrcode-image-wrapper">
+                    <img 
+                        v-if="currentShare" 
+                        :src="getQrCodeUrl(buildShareLink(currentShare))" 
+                        alt="分享二维码"
+                        class="qrcode-img"
+                    />
                 </div>
                 <div class="qrcode-info">
                     <p>扫描二维码即可访问分享文件</p>
-                    <el-input :model-value="currentShare?.shareUrl" readonly/>
+                    <el-input :model-value="buildShareLink(currentShare)" readonly/>
                 </div>
             </div>
             <template #footer>
                 <el-button @click="qrcodeVisible = false">关闭</el-button>
-                <el-button type="primary">保存二维码</el-button>
+                <el-button type="primary" @click="saveQrCode">保存二维码</el-button>
+            </template>
+        </el-dialog>
+
+        <!-- 编辑分享对话框 -->
+        <el-dialog
+                v-model="editDialogVisible"
+                title="编辑分享"
+                width="500px"
+                :before-close="handleEditDialogClose"
+        >
+            <el-form :model="editForm" label-width="80px">
+                <el-form-item label="提取码">
+                    <el-input 
+                        v-model="editForm.extractionCode" 
+                        placeholder="留空则不设置提取码"
+                        maxlength="4"
+                        show-word-limit
+                    />
+                </el-form-item>
+                <el-form-item label="有效期">
+                    <el-select v-model="editForm.expireDays" placeholder="请选择有效期" style="width: 100%;">
+                        <el-option label="永久有效" :value="0" />
+                        <el-option label="7天" :value="7" />
+                        <el-option label="30天" :value="30" />
+                        <el-option label="1年" :value="365" />
+                    </el-select>
+                </el-form-item>
+            </el-form>
+            <template #footer>
+                <el-button @click="handleEditDialogClose" :disabled="editing">取消</el-button>
+                <el-button type="primary" @click="confirmEdit" :loading="editing">保存</el-button>
             </template>
         </el-dialog>
 
@@ -350,7 +383,7 @@ import {
     VideoCamera,
     View
 } from '@element-plus/icons-vue'
-import {cancelShare, deleteShare, getUserShares} from '@/api/share'
+import {cancelShare, deleteShare, getUserShares, updateShare} from '@/api/share'
 
 // 响应式数据
 const loading = ref(false)
@@ -367,6 +400,13 @@ const canceling = ref(false) // 取消操作的加载状态
 const deleteDialogVisible = ref(false)
 const deleting = ref(false)  // 删除操作的加载状态
 const shareToDelete = ref(null) // 存储待删除的分享对象
+
+const editDialogVisible = ref(false)
+const editing = ref(false)
+const editForm = ref({
+    extractionCode: '',
+    expireDays: 7
+})
 
 // 统计数据
 const totalShares = computed(() => shares.value.length)
@@ -495,6 +535,27 @@ const getExpiryText = (share) => {
     return formatDate(share.expiresAt)
 }
 
+// 获取二维码URL
+const getQrCodeUrl = (url) => {
+    if (!url) return ''
+    return `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(url)}`
+}
+
+// 构造分享链接（以当前前端域名为准）
+const buildShareLink = (share) => {
+    if (!share) return ''
+    if (share.shareUrl) return share.shareUrl
+    if (share.shareToken) return `${window.location.origin}/s/${share.shareToken}`
+    return ''
+}
+
+// 保存二维码
+const saveQrCode = () => {
+    if (!currentShare.value) return
+    const url = getQrCodeUrl(buildShareLink(currentShare.value))
+    window.open(url, '_blank')
+}
+
 // 格式化文件大小
 const formatSize = (bytes) => {
     if (bytes === 0) return '0 B'
@@ -518,9 +579,10 @@ const formatDate = (date) => {
 // 复制分享链接
 const copyShareLink = async (share) => {
     try {
+        const link = buildShareLink(share)
         const text = share.extractCode
-            ? `${share.shareUrl} 提取码: ${share.extractCode}`
-            : share.shareUrl
+            ? `${link} 提取码: ${share.extractCode}`
+            : link
 
         await navigator.clipboard.writeText(text)
         ElMessage.success('分享链接已复制到剪贴板')
@@ -539,7 +601,11 @@ const handleShareCommand = (share, command) => {
             shareDetailVisible.value = true
             break
         case 'edit':
-            ElMessage.info('编辑分享功能开发中...')
+            editForm.value = {
+                extractionCode: share.extractCode || '',
+                expireDays: share.expiresAt ? 7 : 0
+            }
+            editDialogVisible.value = true
             break
         case 'qrcode':
             qrcodeVisible.value = true
@@ -577,6 +643,32 @@ const handleCancelDialogClose = () => {
     // 确保关闭时重置 currentShare
     currentShare.value = null
     cancelDialogVisible.value = false
+}
+
+// 编辑分享
+const handleEditDialogClose = () => {
+    editDialogVisible.value = false
+    editForm.value = { extractionCode: '', expireDays: 7 }
+}
+
+const confirmEdit = async () => {
+    if (!currentShare.value) return
+
+    editing.value = true
+    try {
+        await updateShare(currentShare.value.id, {
+            extraction_code: editForm.value.extractionCode,
+            expire_days: editForm.value.expireDays
+        })
+
+        ElMessage.success('分享设置已更新')
+        editDialogVisible.value = false
+        refreshData() // Reload data
+    } catch (error) {
+        console.error('更新分享失败:', error)
+    } finally {
+        editing.value = false
+    }
 }
 
 // 删除分享记录
@@ -921,6 +1013,20 @@ onMounted(() => {
 /* 二维码对话框 */
 .qrcode-container {
     text-align: center;
+}
+
+.qrcode-image-wrapper {
+    display: flex;
+    justify-content: center;
+    margin-bottom: 20px;
+}
+
+.qrcode-img {
+    width: 200px;
+    height: 200px;
+    border: 1px solid #e2e8f0;
+    padding: 10px;
+    border-radius: 8px;
 }
 
 .qrcode-placeholder {

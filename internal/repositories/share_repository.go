@@ -17,6 +17,7 @@ type ShareRepository interface {
 	Delete(tx *gorm.DB, shareID int) error
 	DeleteBatch(tx *gorm.DB, fileIds []string) error
 	IsShared(fileId string) (bool, *models.Share)
+	UpdateShareInfo(shareID int, code *string, expireTime *time.Time) error
 }
 
 type shareRepo struct {
@@ -104,4 +105,13 @@ func (r *shareRepo) IsShared(fileId string) (bool, *models.Share) {
 	} else {
 		return false, nil
 	}
+}
+
+// UpdateShareInfo 更新分享信息
+func (r *shareRepo) UpdateShareInfo(shareID int, code *string, expireTime *time.Time) error {
+	updates := map[string]interface{}{
+		"extraction_code": code,
+		"expire_time":     expireTime,
+	}
+	return r.db.Model(&models.Share{}).Where("id = ?", shareID).Updates(updates).Error
 }

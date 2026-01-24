@@ -47,6 +47,12 @@ const routes = [
     ]
   },
   {
+    path: '/s/:token',
+    name: 'ShareLink',
+    component: () => import('@/views/ShareLink.vue'),
+    meta: { title: '文件分享', requiresAuth: false }
+  },
+  {
     path: '/:pathMatch(.*)*',
     name: 'NotFound',
     component: () => import('@/views/NotFound.vue'),

@@ -333,7 +333,7 @@
                     <el-tree
                             ref="folderTreeRef"
                             :data="folderTree"
-                            :props="{ children: 'children', label: 'name', value: 'id' }"
+                            :props="{ children: 'children', label: 'name', value: 'id', disabled: 'disabled' }"
                             node-key="id"
                             :default-expand-all="false"
                             :expand-on-click-node="false"
@@ -342,7 +342,7 @@
                             class="folder-tree"
                     >
                         <template #default="{ node, data }">
-                            <div class="folder-node" :class="{ 'selected': selectedTargetFolder && selectedTargetFolder.id === data.id }">
+                            <div class="folder-node" :class="{ 'selected': selectedTargetFolder && selectedTargetFolder.id === data.id, 'is-disabled': data.disabled }">
                                 <el-icon><Folder /></el-icon>
                                 <span>{{ data.name }}</span>
                             </div>
@@ -706,6 +706,47 @@ const handleMove = async (item) => {
     
     // 加载文件夹树
     await loadFolderTree()
+    
+    // 处理文件夹树，禁用无效的目标（自己、子文件夹、当前父文件夹）
+    processFolderTree(folderTree.value, item)
+}
+
+// 处理文件夹树，标记禁用节点
+const processFolderTree = (nodes, targetItem) => {
+    if (!nodes || !nodes.length) return
+
+    const traverse = (list, isChildOfTarget) => {
+        for (const node of list) {
+            let disabled = false
+            
+            // 1. 如果是移动文件夹，不能移动到自己
+            if (targetItem.is_dir && node.id === targetItem.id) {
+                disabled = true
+            }
+            
+            // 2. 如果是移动文件夹，不能移动到自己的子文件夹
+            if (targetItem.is_dir && isChildOfTarget) {
+                disabled = true
+            }
+            
+            // 3. 不能移动到当前所在的父文件夹（移动没有任何变化）
+            // 注意：需要确保 item 中包含 parent_id 信息，如果没有则回退到 currentParentId
+            const currentPid = targetItem.parent_id || currentParentId.value
+            if (node.id === currentPid) {
+                disabled = true
+            }
+
+            node.disabled = disabled
+
+            if (node.children && node.children.length > 0) {
+                // 如果当前节点是目标节点，或者是目标节点的子节点，那么它的所有子节点也都应该是 disabled
+                const nextIsChildOfTarget = isChildOfTarget || (targetItem.is_dir && node.id === targetItem.id)
+                traverse(node.children, nextIsChildOfTarget)
+            }
+        }
+    }
+
+    traverse(nodes, false)
 }
 
 // 加载文件夹树结构
@@ -722,16 +763,23 @@ const loadFolderTree = async () => {
 
 // 选择目标文件夹
 const handleFolderSelect = (data) => {
+    if (data.disabled) return
+    
     // 不能移动到当前文件夹
     if (data.id === currentParentId.value) {
         ElMessage.warning('与当前文件所在目录相同')
         return
     }
     
-    // 不能移动到自己或子文件夹（如果移动的是文件夹）
-    console.log(moveTarget.value.is_dir)
+    // 不能移动到自己
+    if (moveTarget.value.is_dir && data.id === moveTarget.value.id) {
+        ElMessage.warning('不能移动到自身')
+        return
+    }
+    
+    // 不能移动到子文件夹（如果移动的是文件夹）
     if (moveTarget.value.is_dir && isSubFolder(data.id, moveTarget.value.id)) {
-        ElMessage.warning('不能移动到自己或子文件夹')
+        ElMessage.warning('不能移动到子文件夹')
         return
     }
     
@@ -1283,6 +1331,15 @@ const clearSearch = () => {
 
 .folder-node.selected .el-icon {
     color: #3b82f6;
+}
+
+.folder-node.is-disabled {
+    color: #cbd5e1;
+    cursor: not-allowed;
+}
+
+.folder-node.is-disabled .el-icon {
+    color: #cbd5e1;
 }
 
 .selected-folder {

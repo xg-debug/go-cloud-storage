@@ -33,6 +33,15 @@ export const getShareDetail = (shareId) => {
     })
 }
 
+// 更新分享设置
+export const updateShare = (shareId, data) => {
+    return request({
+        url: `/share/${shareId}`,
+        method: 'put',
+        data
+    })
+}
+
 // 取消分享
 export const cancelShare = (shareId) => {
     return request({

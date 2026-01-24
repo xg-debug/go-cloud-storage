@@ -27,6 +27,7 @@ import (
 type FileItem struct {
 	Id           string `json:"id"`
 	Name         string `json:"name"`
+	ParentId     string `json:"parent_id"`
 	IsDir        bool   `json:"is_dir"`
 	Size         int64  `json:"size"`
 	SizeStr      string `json:"size_str"`
@@ -118,9 +119,14 @@ func (s *fileService) GetFiles(ctx context.Context, userId int, parentId string)
 	}
 	var fileList []FileItem
 	for _, file := range files {
+		parentId := ""
+		if file.ParentId.Valid {
+			parentId = file.ParentId.String
+		}
 		fileList = append(fileList, FileItem{
 			Id:           file.Id,
 			Name:         file.Name,
+			ParentId:     parentId,
 			IsDir:        file.IsDir,
 			Size:         file.Size,
 			SizeStr:      file.SizeStr,
@@ -686,9 +692,14 @@ func (s *fileService) SearchFiles(userId int, keyword, parentId string, page, pa
 	// 转换为返回格式
 	var fileItems []FileItem
 	for _, file := range files {
+		parentId := ""
+		if file.ParentId.Valid {
+			parentId = file.ParentId.String
+		}
 		fileItems = append(fileItems, FileItem{
 			Id:           file.Id,
 			Name:         file.Name,
+			ParentId:     parentId,
 			IsDir:        file.IsDir,
 			Size:         file.Size,
 			SizeStr:      file.SizeStr,
@@ -755,7 +766,11 @@ func (s *fileService) MoveFile(ctx context.Context, userId int, fileId, targetFo
 	}
 
 	// 若是目录，不能移动到子目录
-	if fileId == targetFolderId {
+	file, err := s.fileRepo.GetFileById(fileId)
+	if err != nil {
+		return err
+	}
+	if file.IsDir {
 		isSub, err := s.fileRepo.IsSubFolder(ctx, userId, fileId, targetFolderId)
 		if err != nil {
 			return err

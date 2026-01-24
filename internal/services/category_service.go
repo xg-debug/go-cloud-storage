@@ -37,9 +37,14 @@ func (s *categoryService) GetFilesByCategory(userId int, fileType string, sortBy
 		if fileType == "video" {
 			thumbnailURL = thumbnailURL + "?x-oss-process=video/snapshot,t_1000,f_jpg,w_400,h_300,m_fast"
 		}
+		parentId := ""
+		if file.ParentId.Valid {
+			parentId = file.ParentId.String
+		}
 		fileList = append(fileList, FileItem{
 			Id:           file.Id,
 			Name:         file.Name,
+			ParentId:     parentId,
 			IsDir:        file.IsDir,
 			Size:         file.Size,
 			SizeStr:      file.SizeStr,

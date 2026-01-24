@@ -135,6 +135,7 @@ func SetUpRouter(db *gorm.DB, minioService *minio.MinioService) *gin.Engine {
 		share.POST("", shareCtrl.CreateShare)                // 创建分享
 		share.GET("", shareCtrl.GetUserShares)               // 获取用户分享列表
 		share.GET("/:shareId", shareCtrl.GetShareDetail)     // 获取分享详情
+		share.PUT("/:shareId", shareCtrl.UpdateShare)        // 更新分享设置
 		share.PUT("/:shareId/cancel", shareCtrl.CancelShare) // 取消分享
 		share.DELETE("/:shareId", shareCtrl.DeleteShare)     // 删除分享记录
 	}
