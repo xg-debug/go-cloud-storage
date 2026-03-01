@@ -35,7 +35,7 @@ func (c *ShareController) CreateShare(ctx *gin.Context) {
 		return
 	}
 
-	share, err := c.shareService.CreateShare(userId, req.FileId, req.ExtractionCode, req.ExpireDays)
+	share, err := c.shareService.CreateShare(userId, req.FileId, req.ExpireDays, req.ExtractionCode)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -83,30 +83,12 @@ func (c *ShareController) CancelShare(ctx *gin.Context) {
 
 	userId := ctx.GetInt("userId")
 
-	err = c.shareService.CancelShare(shareId, userId)
+	err = c.shareService.CancelShare(userId, shareId)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	utils.Success(ctx, nil)
-}
-
-// DeleteShare 删除分享记录
-func (c *ShareController) DeleteShare(ctx *gin.Context) {
-	shareID, err := strconv.Atoi(ctx.Param("shareId"))
-	if err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "无效的分享ID"})
-		return
-	}
-
-	userId := ctx.GetInt("userId")
-
-	err = c.shareService.DeleteShare(shareID, userId)
-	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
 	utils.Success(ctx, nil)
 }
 

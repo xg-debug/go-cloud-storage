@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"go-cloud-storage/internal/models"
 	"go-cloud-storage/internal/repositories"
+	"math"
 	"time"
 
 	"github.com/google/uuid"
@@ -16,7 +17,6 @@ type ShareService interface {
 	GetUserShares(userId int) ([]*ShareItem, error)
 	GetShareDetail(userId int, shareId int) (*ShareDetail, error)
 	CancelShare(userId int, shareId int) error
-	DeleteShare(userId int, shareId int) error
 	AccessShare(shareToken string, extractionCode string) (*ShareAccessResponse, error)
 	DownloadSharedFile(shareToken string, extractionCode string) (string, error)
 	UpdateShare(shareID int, userID int, extractionCode string, expireDays int) error
@@ -35,13 +35,10 @@ func NewShareService(shareRepo repositories.ShareRepository, fileRepo repositori
 }
 
 func (s *shareService) CreateShare(userId int, fileId string, expireDays int, extractionCode string) (*models.Share, error) {
-	// 1. 检查文件是否存在且属于该用户
-	file, err := s.fileRepo.GetFile(fileId)
-	if err != nil {
+	// 1. 检查文件是否存在
+	file, err := s.fileRepo.GetUserFileByID(userId, fileId)
+	if err != nil || file == nil {
 		return nil, errors.New("文件不存在")
-	}
-	if file.UserId != userId {
-		return nil, errors.New("无权分享此文件")
 	}
 
 	// 2. 检查是否已经分享过
@@ -65,30 +62,28 @@ func (s *shareService) CreateShare(userId int, fileId string, expireDays int, ex
 		UserId:         userId,
 		FileId:         fileId,
 		ShareToken:     shareToken,
-		ExtractionCode: extractionCode,
+		ExtractionCode: &extractionCode,
 		ExpireTime:     expireTime,
-		ClickCount:     0,
+		AccessCount:    0,
 		DownloadCount:  0,
-		SaveCount:      0,
 	}
 
 	return s.shareRepo.CreateShare(share)
 }
 
 type ShareItem struct {
-	Id            int        `json:"id"`
-	FileName      string     `json:"fileName"`
-	FileSize      int64      `json:"fileSize"`
-	FileType      string     `json:"fileType"`
-	ShareToken    string     `json:"shareToken"`
-	ShareUrl      string     `json:"shareUrl"`
-	ExtractCode   string     `json:"extractCode"`
-	ExpireAt      *time.Time `json:"expireAt"`
-	CreatedAt     time.Time  `json:"createdAt"`
-	ClickCount    int        `json:"clickCount"`
-	DownloadCount int        `json:"downloadCount"`
-	SaveCount     int        `json:"saveCount"`
-	Status        string     `json:"status"` // active, expired
+	Id            int       `json:"id"`
+	FileName      string    `json:"fileName"`
+	FileSize      int64     `json:"fileSize"`
+	FileType      string    `json:"fileType"`
+	ShareToken    string    `json:"shareToken"`
+	ShareUrl      string    `json:"shareUrl"`
+	ExtractCode   string    `json:"extractCode"`
+	ExpireAt      string    `json:"expireAt"`
+	CreatedAt     time.Time `json:"createdAt"`
+	AccessCount   int       `json:"accessCount"`
+	DownloadCount int       `json:"downloadCount"`
+	Status        string    `json:"status"` // active, expired
 }
 
 func (s *shareService) GetUserShares(userId int) ([]*ShareItem, error) {
@@ -109,29 +104,40 @@ func (s *shareService) GetUserShares(userId int) ([]*ShareItem, error) {
 			status = "expired"
 		}
 
-		extractCode := ""
-		if share.ExtractionCode != "" {
-			extractCode = share.ExtractionCode
-		}
+		extractCode := share.GetExtractionCode()
 
 		result = append(result, &ShareItem{
 			Id:            share.Id,
-			FileName:      file.FileName,
+			FileName:      file.Name,
 			FileSize:      file.Size,
 			FileType:      getFileTypeFromExtension(file.FileExtension),
 			ShareToken:    share.ShareToken,
 			ShareUrl:      fmt.Sprintf("http://localhost:8080/s/%s", share.ShareToken),
 			ExtractCode:   extractCode,
-			ExpireAt:      share.ExpireTime,
+			ExpireAt:      StatusText(share.ExpireTime),
 			CreatedAt:     share.CreatedAt,
-			ClickCount:    share.ClickCount,
+			AccessCount:   share.AccessCount,
 			DownloadCount: share.DownloadCount,
-			SaveCount:     share.SaveCount,
 			Status:        status,
 		})
 	}
 
 	return result, nil
+}
+
+func StatusText(ExpireAt *time.Time) string {
+
+	if ExpireAt == nil {
+		return "永久有效"
+	}
+
+	diff := time.Until(*ExpireAt).Hours() / 24
+
+	if diff > 0 {
+		return fmt.Sprintf("%d天后过期", int(math.Ceil(diff)))
+	}
+
+	return "已过期"
 }
 
 type ShareDetail struct {
@@ -144,8 +150,7 @@ type ShareDetail struct {
 	ExtractCode   string     `json:"extractCode"`
 	CreatedAt     time.Time  `json:"createdAt"`
 	ExpireAt      *time.Time `json:"expireAt"`
-	ClickCount    int        `json:"clickCount"`
-	SaveCount     int        `json:"saveCount"`
+	AccessCount   int        `json:"accessCount"`
 	DownloadCount int        `json:"downloadCount"`
 }
 
@@ -164,14 +169,11 @@ func (s *shareService) GetShareDetail(userId int, shareId int) (*ShareDetail, er
 		return nil, errors.New("文件不存在")
 	}
 
-	extractCode := ""
-	if share.ExtractionCode != "" {
-		extractCode = share.ExtractionCode
-	}
+	extractCode := share.GetExtractionCode()
 
 	return &ShareDetail{
 		Id:            share.Id,
-		FileName:      file.FileName,
+		FileName:      file.Name,
 		FileSize:      file.Size,
 		FileType:      getFileTypeFromExtension(file.FileExtension),
 		ShareToken:    share.ShareToken,
@@ -179,8 +181,7 @@ func (s *shareService) GetShareDetail(userId int, shareId int) (*ShareDetail, er
 		ExtractCode:   extractCode,
 		CreatedAt:     share.CreatedAt,
 		ExpireAt:      share.ExpireTime,
-		ClickCount:    share.ClickCount,
-		SaveCount:     share.SaveCount,
+		AccessCount:   share.AccessCount,
 		DownloadCount: share.DownloadCount,
 	}, nil
 }
@@ -198,10 +199,6 @@ func (s *shareService) CancelShare(userId int, shareId int) error {
 	return s.shareRepo.Delete(nil, shareId)
 }
 
-func (s *shareService) DeleteShare(userId int, shareId int) error {
-	return s.CancelShare(userId, shareId)
-}
-
 type ShareAccessResponse struct {
 	ShareToken  string     `json:"shareToken"`
 	FileName    string     `json:"fileName"`
@@ -213,7 +210,7 @@ type ShareAccessResponse struct {
 	NeedCode    bool       `json:"needCode"`
 }
 
-func (s *shareService) AccessShare(shareToken string, extractionCode string) (*ShareAccessResponse, error) {
+func (s *shareService) AccessShare(shareToken string, inputCode string) (*ShareAccessResponse, error) {
 	share, err := s.shareRepo.GetShareByToken(shareToken)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -227,13 +224,13 @@ func (s *shareService) AccessShare(shareToken string, extractionCode string) (*S
 	}
 
 	// Check code
-	if share.ExtractionCode != "" {
-		if extractionCode == "" {
+	if share.GetExtractionCode() != "" {
+		if inputCode == "" {
 			// Return basic info but indicate code needed
 			file, _ := s.fileRepo.GetFileById(share.FileId)
 			return &ShareAccessResponse{
 				ShareToken: shareToken,
-				FileName:   file.FileName,
+				FileName:   file.Name,
 				FileSize:   file.Size,
 				FileType:   getFileTypeFromExtension(file.FileExtension),
 				UpdatedAt:  share.UpdatedAt,
@@ -241,12 +238,12 @@ func (s *shareService) AccessShare(shareToken string, extractionCode string) (*S
 				NeedCode:   true,
 			}, errors.New("请输入提取码") // Or handled by caller as 403
 		}
-		if share.ExtractionCode != extractionCode {
+		if share.GetExtractionCode() != inputCode {
 			return nil, errors.New("提取码错误")
 		}
 	}
 
-	file, err := s.fileRepo.GetFileById(share.FileId)
+	file, err := s.fileRepo.GetUserFileByID(share.UserId, share.FileId)
 	if err != nil {
 		return nil, errors.New("文件不存在")
 	}
@@ -258,7 +255,7 @@ func (s *shareService) AccessShare(shareToken string, extractionCode string) (*S
 
 	return &ShareAccessResponse{
 		ShareToken:  shareToken,
-		FileName:    file.FileName,
+		FileName:    file.Name,
 		FileSize:    file.Size,
 		FileType:    getFileTypeFromExtension(file.FileExtension),
 		UpdatedAt:   share.UpdatedAt,
@@ -268,7 +265,7 @@ func (s *shareService) AccessShare(shareToken string, extractionCode string) (*S
 	}, nil
 }
 
-func (s *shareService) DownloadSharedFile(shareToken string, extractionCode string) (string, error) {
+func (s *shareService) DownloadSharedFile(shareToken string, inputCode string) (string, error) {
 	// Re-verify
 	share, err := s.shareRepo.GetShareByToken(shareToken)
 	if err != nil {
@@ -277,7 +274,7 @@ func (s *shareService) DownloadSharedFile(shareToken string, extractionCode stri
 	if share.ExpireTime != nil && share.ExpireTime.Before(time.Now()) {
 		return "", errors.New("分享已过期")
 	}
-	if share.ExtractionCode != "" && share.ExtractionCode != extractionCode {
+	if share.GetExtractionCode() != "" && share.GetExtractionCode() != inputCode {
 		return "", errors.New("提取码错误")
 	}
 

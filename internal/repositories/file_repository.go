@@ -13,6 +13,7 @@ import (
 
 type FileRepository interface {
 	InitFolder(folder *models.File) error
+
 	GetFiles(ctx context.Context, userId int, parentId string) ([]models.File, int64, error)
 	GetFilesByCategory(ctx context.Context, userId int, fileType string, sortBy string, sortOrder string, page int, pageSize int) ([]models.File, int64, error)
 

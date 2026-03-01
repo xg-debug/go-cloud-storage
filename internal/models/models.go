@@ -65,6 +65,13 @@ type Share struct {
 	UpdatedAt  time.Time  `gorm:"autoUpdateTime" json:"updated_at"`
 }
 
+func (s *Share) GetExtractionCode() string {
+	if s.ExtractionCode == nil {
+		return ""
+	}
+	return *s.ExtractionCode
+}
+
 // RecycleBin 回收站模型
 type RecycleBin struct {
 	Id        uint64    `gorm:"primaryKey;autoIncrement;column:id" json:"id"`

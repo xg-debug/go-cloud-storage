@@ -42,7 +42,6 @@
                     <el-option label="全部" value=""/>
                     <el-option label="有效" value="active"/>
                     <el-option label="已过期" value="expired"/>
-                    <el-option label="已失效" value="invalid"/>
                 </el-select>
             </div>
             <div class="toolbar-right">
@@ -87,7 +86,7 @@
                                 :type="getStatusType(share.status)"
                                 :effect="share.status === 'active' ? 'light' : 'plain'"
                         >
-                            {{ getStatusText(share) }}
+                            {{ share.expireAt }}
                         </el-tag>
                     </div>
 
@@ -147,12 +146,6 @@
                                             <Close/>
                                         </el-icon>
                                         取消分享
-                                    </el-dropdown-item>
-                                    <el-dropdown-item command="delete">
-                                        <el-icon>
-                                            <Delete/>
-                                        </el-icon>
-                                        删除记录
                                     </el-dropdown-item>
                                 </el-dropdown-menu>
                             </template>
@@ -223,13 +216,7 @@
                     </div>
                     <div class="detail-item">
                         <span class="label">过期时间：</span>
-                        <span class="value">{{ getExpiryText(currentShare) }}</span>
-                    </div>
-                    <div class="detail-item">
-                        <span class="label">分享状态：</span>
-                        <el-tag :type="getStatusType(currentShare.status)">
-                            {{ getStatusText(currentShare) }}
-                        </el-tag>
+                        <span class="value">{{ currentShare.expireAt }}</span>
                     </div>
                 </div>
 
@@ -383,7 +370,7 @@ import {
     VideoCamera,
     View
 } from '@element-plus/icons-vue'
-import {cancelShare, deleteShare, getUserShares, updateShare} from '@/api/share'
+import {cancelShare, getShareDetail, getUserShares, updateShare} from '@/api/share'
 
 // 响应式数据
 const loading = ref(false)
@@ -392,7 +379,7 @@ const statusFilter = ref('')
 const shares = ref([])
 const shareDetailVisible = ref(false)
 const qrcodeVisible = ref(false)
-const currentShare = ref(null)
+let currentShare = ref(null)
 
 const cancelDialogVisible = ref(false)
 const canceling = ref(false) // 取消操作的加载状态
@@ -505,36 +492,6 @@ const getStatusType = (status) => {
     return typeMap[status] || 'info'
 }
 
-// 获取状态文本
-const getStatusText = (share) => {
-    if (share.status === 'active') {
-        if (!share.expiresAt) {
-            return '永久有效'
-        }
-        const now = new Date()
-        const expires = new Date(share.expiresAt)
-        const diffDays = Math.ceil((expires - now) / (1000 * 60 * 60 * 24))
-        if (diffDays > 0) {
-            return `${diffDays}天后过期`
-        } else {
-            return '已过期'
-        }
-    } else if (share.status === 'expired') {
-        return '已过期'
-    } else if (share.status === 'invalid') {
-        return '已失效'
-    }
-    return '未知状态'
-}
-
-// 获取过期时间文本
-const getExpiryText = (share) => {
-    if (!share.expiresAt) {
-        return '永久有效'
-    }
-    return formatDate(share.expiresAt)
-}
-
 // 获取二维码URL
 const getQrCodeUrl = (url) => {
     if (!url) return ''
@@ -599,6 +556,7 @@ const handleShareCommand = (share, command) => {
     switch (command) {
         case 'detail':
             shareDetailVisible.value = true
+            // currentShare = getShareDetail(share.id)
             break
         case 'edit':
             editForm.value = {
@@ -613,10 +571,6 @@ const handleShareCommand = (share, command) => {
         case 'cancel':
             cancelDialogVisible.value = true
             break
-        case 'delete':
-            shareToDelete.value = share
-            deleteDialogVisible.value = true
-            break
     }
 }
 
@@ -628,9 +582,8 @@ const confirmCancel = async () => {
     try {
         await cancelShare(currentShare.value.id)
 
-        // 更新状态
-        currentShare.value.status = 'invalid'
         ElMessage.success('分享已取消')
+        refreshData()
         cancelDialogVisible.value = false
     } catch (error) {
         console.error('取消分享失败:', error)
@@ -669,34 +622,6 @@ const confirmEdit = async () => {
     } finally {
         editing.value = false
     }
-}
-
-// 删除分享记录
-const confirmDelete = async () => {
-    if (!shareToDelete.value) return
-
-    deleting.value = true
-    try {
-        await deleteShare(shareToDelete.value.id)
-
-        // 从前端列表移除
-        shares.value = shares.value.filter(s => s.id !== shareToDelete.value.id)
-        ElMessage.success('分享记录已删除')
-        deleteDialogVisible.value = false
-    } catch (error) {
-        // 拦截器已经显示了错误消息，这里无需再次调用 ElMessage.error
-        console.error('删除失败:', error)
-    } finally {
-        deleting.value = false
-        // 无论成功失败，重置待删除对象
-        shareToDelete.value = null
-    }
-}
-
-const handleDeleteDialogClose = () => {
-    // 确保关闭时重置待删除对象
-    shareToDelete.value = null
-    deleteDialogVisible.value = false
 }
 
 // 刷新数据
@@ -877,6 +802,10 @@ onMounted(() => {
 
 .share-status {
     margin: 0 24px;
+    width: 140px;              /* 关键：列宽固定 */
+    display: flex;
+    justify-content: center;   /* 水平居中 */
+    align-items: center;       /* 垂直居中 */
 }
 
 .download-stats {
