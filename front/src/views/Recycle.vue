@@ -1,31 +1,16 @@
 <template>
     <div class="recycle-bin">
-        <!-- 页面头部 -->
-        <div class="page-header">
-            <div class="header-content">
-                <div class="header-info">
-                    <div class="header-icon">
-                        <el-icon :size="28" color="#ffffff">
-                            <Delete />
-                        </el-icon>
-                    </div>
-                    <div class="header-text">
-                        <h1 class="page-title">回收站</h1>
-                        <p class="page-description">已删除的文件将在此保留10天</p>
-                    </div>
-                </div>
-                <div class="header-stats">
-                    <div class="stat-item">
-                        <span class="stat-number">{{ trashItems.length }}</span>
-                        <span class="stat-label">文件数量</span>
-                    </div>
-                    <div class="stat-item">
-                        <span class="stat-number">{{ selectedItems.length }}</span>
-                        <span class="stat-label">已选择</span>
-                    </div>
-                </div>
-            </div>
-        </div>
+        <PageHeader
+            :icon="Delete"
+            title="回收站"
+            description="已删除的文件将在此保留7天"
+            icon-bg="#fecaca"
+            icon-color="#ffffff"
+            :stats="[
+                { label: '文件数量', value: trashItems.length },
+                { label: '已选择', value: selectedItems.length }
+            ]"
+        />
 
         <!-- 工具栏 -->
         <div class="toolbar">
@@ -72,7 +57,7 @@
                     </el-icon>
                 </div>
                 <h3>回收站为空</h3>
-                <p>删除的文件会出现在这里，并保留10天</p>
+                <p>删除的文件会出现在这里，并保留7天</p>
             </div>
 
             <!-- 文件表格 -->
@@ -189,6 +174,7 @@
 import { ref, onMounted } from 'vue'
 import { Delete, Document, Folder, Refresh } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
+import PageHeader from '@/components/common/PageHeader.vue'
 import {
     loadSoftDeletedFiles,
     deletePermanent,
@@ -331,69 +317,6 @@ const handleDeleteDialogClose = () => {
   background: #f8fafc;
 }
 
-/* 页面头部 */
-.page-header {
-    background: #f8fafc;
-    padding: 6px 32px;
-    border-bottom: 1px solid var(--border-light);
-}
-
-.header-content {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.header-info {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-
-.header-icon {
-    width: 40px;
-    height: 40px;
-    background: #e2e8f0;
-    border-radius: var(--radius-md);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-
-.page-title {
-    font-size: 20px;
-    font-weight: 600;
-    color: var(--text-primary);
-    margin: 0 0 2px 0;
-}
-
-.page-description {
-  font-size: 14px;
-  opacity: 0.9;
-  margin: 0;
-}
-
-.header-stats {
-  display: flex;
-  gap: 32px;
-}
-
-.stat-item {
-  text-align: center;
-}
-
-.stat-number {
-  display: block;
-  font-size: 24px;
-  font-weight: 600;
-  line-height: 1;
-}
-
-.stat-label {
-  font-size: 12px;
-  opacity: 0.8;
-}
-
 /* 工具栏 */
 .toolbar {
   background: white;
@@ -505,20 +428,6 @@ const handleDeleteDialogClose = () => {
 
 /* 响应式设计 */
 @media (max-width: 768px) {
-  .page-header {
-    padding: 20px 16px;
-  }
-  
-  .header-content {
-    flex-direction: column;
-    gap: 20px;
-    text-align: center;
-  }
-  
-  .header-stats {
-    gap: 24px;
-  }
-  
   .toolbar {
     padding: 16px;
     flex-direction: column;

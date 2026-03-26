@@ -65,7 +65,7 @@ func (c *ShareController) GetShareDetail(ctx *gin.Context) {
 
 	userId := ctx.GetInt("userId")
 
-	share, err := c.shareService.GetShareDetail(shareId, userId)
+	share, err := c.shareService.GetShareDetail(userId, shareId)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

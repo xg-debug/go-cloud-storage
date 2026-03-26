@@ -1,28 +1,20 @@
 <template>
     <div class="recent-files">
-        <!-- 页面头部 -->
-        <div class="page-header">
-            <div class="header-content">
-                <div class="header-info">
-                    <div class="header-icon">
-                        <el-icon :size="28" color="#ffffff">
-                            <Clock />
-                        </el-icon>
-                    </div>
-                    <div class="header-text">
-                        <h1 class="page-title">最近文件</h1>
-                        <p class="page-description">查看您最近访问的文件</p>
-                    </div>
-                </div>
-                <div class="header-actions">
-                    <el-select v-model="timeRange" placeholder="时间范围" class="time-select">
-                        <el-option label="今天" value="today"/>
-                        <el-option label="本周" value="week"/>
-                        <el-option label="本月" value="month"/>
-                    </el-select>
-                </div>
-            </div>
-        </div>
+        <PageHeader
+            :icon="Clock"
+            title="最近文件"
+            description="查看您最近访问的文件"
+            icon-bg="#e2e8f0"
+            icon-color="#ffffff"
+        >
+            <template #actions>
+                <el-select v-model="timeRange" placeholder="时间范围" class="time-select">
+                    <el-option label="今天" value="today" />
+                    <el-option label="本周" value="week" />
+                    <el-option label="本月" value="month" />
+                </el-select>
+            </template>
+        </PageHeader>
 
         <!-- 文件内容 -->
         <div class="file-content">
@@ -58,8 +50,8 @@
                                 >
                                     <!-- 文件图标 -->
                                     <div class="file-icon">
-                                        <el-icon :size="32" :color="getIconColor(file)">
-                                            <component :is="getIconComponent(file)"/>
+                                        <el-icon :size="32" :color="getFileIconColor(file.name, file.is_dir === true)">
+                                            <component :is="getFileIcon(file.name, file.is_dir === true)"/>
                                         </el-icon>
                                     </div>
                                     
@@ -94,34 +86,15 @@
 </template>
 
 <script setup>
-import {computed, ref, watch, onMounted} from 'vue'
-import {Document, Folder, Clock, View, Location} from '@element-plus/icons-vue'
-import {getRecentFiles} from "@/api/file";
+import { computed, onMounted, ref, watch } from 'vue'
+import { Clock, Location, View } from '@element-plus/icons-vue'
+import { getRecentFiles } from '@/api/file'
+import { getFileIcon, getFileIconColor } from '@/utils/fileIcon'
+import PageHeader from '@/components/common/PageHeader.vue'
 
 // 时间范围
 const timeRange = ref('week')
 const allFiles = ref([])
-
-// 图标选择逻辑
-function getIconComponent(file) {
-    if (file.type === 'folder') return Folder
-    const ext = file.name.split('.').pop().toLowerCase()
-    if (['doc', 'docx'].includes(ext)) return Document
-    if (['xlsx', 'xls', 'csv'].includes(ext)) return Document
-    if (['ppt', 'pptx'].includes(ext)) return Document
-    if (['pdf'].includes(ext)) return Document
-    return Document
-}
-
-function getIconColor(file) {
-    if (file.type === 'folder') return '#FFB800'
-    const ext = file.name.split('.').pop().toLowerCase()
-    if (['doc', 'docx'].includes(ext)) return '#1E90FF'
-    if (['xlsx', 'xls', 'csv'].includes(ext)) return '#27ae60'
-    if (['ppt', 'pptx'].includes(ext)) return '#e67e22'
-    if (['pdf'].includes(ext)) return '#e74c3c'
-    return '#3a86ff'
-}
 
 // 拉取数据方法
 async function fetchRecentFiles() {
@@ -166,69 +139,13 @@ function handleLocate(file) {
   background: #f8fafc;
 }
 
-/* 页面头部 */
-.page-header {
-    background: #f8fafc;
-    padding: 6px 32px;
-    border-bottom: 1px solid var(--border-light);
-}
-
-.header-content {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.header-info {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-
-.header-icon {
-    width: 40px;
-    height: 40px;
-    background: #e2e8f0;
-    border-radius: var(--radius-md);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-
-.page-title {
-    font-size: 20px;
-    font-weight: 600;
-    color: var(--text-primary);
-    margin: 0 0 2px 0;
-}
-
-.page-description {
-  font-size: 14px;
-  opacity: 0.9;
-  margin: 0;
-}
-
-.header-actions {
-  display: flex;
-  align-items: center;
-}
-
 .time-select {
   width: 140px;
 }
 
 .time-select :deep(.el-input__wrapper) {
-  background: rgba(255, 255, 255, 0.2);
-  border: 1px solid rgba(255, 255, 255, 0.3);
-  color: white;
-}
-
-.time-select :deep(.el-input__inner) {
-  color: white;
-}
-
-.time-select :deep(.el-select__caret) {
-  color: white;
+  background: #fff;
+  border: 1px solid var(--border-light);
 }
 
 /* 文件内容 */
@@ -392,16 +309,6 @@ function handleLocate(file) {
 
 /* 响应式设计 */
 @media (max-width: 768px) {
-  .page-header {
-    padding: 20px 16px;
-  }
-  
-  .header-content {
-    flex-direction: column;
-    gap: 16px;
-    text-align: center;
-  }
-  
   .timeline-container {
     padding: 16px;
   }

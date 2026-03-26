@@ -213,7 +213,7 @@ func (s *MinioService) DeleteFiles(ctx context.Context, objectKeys []string) err
 
 	for err := range s.client.RemoveObjects(ctx, s.bucket, objectsCh, minio.RemoveObjectsOptions{}) {
 		if err.Err != nil {
-			return fmt.Errorf("删除对象失败: %w", &err.Err)
+			return fmt.Errorf("删除对象失败: %w", err.Err)
 		}
 	}
 	return nil

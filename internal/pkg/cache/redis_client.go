@@ -28,7 +28,7 @@ func InitRedis(cfg *config.RedisConfig) error {
 		}
 		globalClient = redis.NewClient(&redis.Options{
 			Addr: fmt.Sprintf("%s:%d", cfg.Host, cfg.Port),
-			//Password: cfg.Password,
+			Password: cfg.Password,
 			DB:       cfg.DB,
 			PoolSize: cfg.PoolSize,
 		})

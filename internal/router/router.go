@@ -1,11 +1,15 @@
 package router
 
 import (
+	"context"
 	"go-cloud-storage/internal/controller"
 	"go-cloud-storage/internal/middleware"
 	"go-cloud-storage/internal/pkg/cache"
+	"go-cloud-storage/internal/pkg/config"
 	"go-cloud-storage/internal/pkg/minio"
+	"go-cloud-storage/internal/pkg/mq"
 	"go-cloud-storage/internal/repositories"
+	"log"
 	"time"
 
 	"github.com/gin-contrib/cors"
@@ -16,7 +20,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func SetUpRouter(db *gorm.DB, minioService *minio.MinioService) *gin.Engine {
+func SetUpRouter(db *gorm.DB, minioService *minio.MinioService, rabbitClient *mq.RabbitMQClient, mqCfg *config.RabbitMQConfig) *gin.Engine {
 	// 创建一个服务
 	ginServer := gin.Default()
 
@@ -41,7 +45,8 @@ func SetUpRouter(db *gorm.DB, minioService *minio.MinioService) *gin.Engine {
 	// 初始化服务
 	userService := services.NewUserService(userRepo, fileRepo, storageQuotaRepo, minioService)
 	fileService := services.NewFileService(db, cache.GetClient(), fileRepo, storageQuotaRepo, minioService)
-	recycleService := services.NewRecycleService(db, minioService, recycleRepo, fileRepo, shareRepo, favoriteRepo)
+	recyclePurgeService := services.NewRecyclePurgeService(db, minioService, recycleRepo, fileRepo, shareRepo, favoriteRepo)
+	recycleService := services.NewRecycleService(db, recycleRepo, fileRepo, recyclePurgeService, rabbitClient)
 	favoriteService := services.NewFavoriteService(favoriteRepo, fileService)
 	categoryService := services.NewCategoryService(db, fileRepo)
 	shareService := services.NewShareService(shareRepo, fileRepo)
@@ -56,6 +61,10 @@ func SetUpRouter(db *gorm.DB, minioService *minio.MinioService) *gin.Engine {
 	categoryCtrl := controller.NewCategoryController(categoryService, fileService)
 	shareCtrl := controller.NewShareController(shareService)
 	statsCtrl := controller.NewStatsController(statsService, storageQuotaService)
+
+	if rabbitClient != nil {
+		startRecycleCleanupWorkers(recycleService, rabbitClient, mqCfg)
+	}
 
 	ginServer.POST("/login", loginCtrl.Login)
 	ginServer.POST("/register", loginCtrl.Register)
@@ -137,7 +146,6 @@ func SetUpRouter(db *gorm.DB, minioService *minio.MinioService) *gin.Engine {
 		share.GET("/:shareId", shareCtrl.GetShareDetail)     // 获取分享详情
 		share.PUT("/:shareId", shareCtrl.UpdateShare)        // 更新分享设置
 		share.PUT("/:shareId/cancel", shareCtrl.CancelShare) // 取消分享
-		share.DELETE("/:shareId", shareCtrl.DeleteShare)     // 删除分享记录
 	}
 
 	// 公开分享访问路由（无需认证）
@@ -145,4 +153,41 @@ func SetUpRouter(db *gorm.DB, minioService *minio.MinioService) *gin.Engine {
 	ginServer.GET("/s/:token/download", shareCtrl.DownloadSharedFile) // 下载分享文件
 
 	return ginServer
+}
+
+func startRecycleCleanupWorkers(recycleService services.RecycleService, rabbitClient *mq.RabbitMQClient, mqCfg *config.RabbitMQConfig) {
+	interval := 60 * time.Second
+	if mqCfg != nil && mqCfg.ScanIntervalSeconds > 0 {
+		interval = time.Duration(mqCfg.ScanIntervalSeconds) * time.Second
+	}
+	ctx := context.Background()
+
+	go func() {
+		if err := rabbitClient.ConsumeExpiredFilePurge(ctx, func(ctx context.Context, fileID string) error {
+			return recycleService.DeleteSelected(ctx, []string{fileID})
+		}); err != nil {
+			log.Printf("recycle cleanup consumer exited: %v", err)
+		}
+	}()
+
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		_, err := recycleService.DispatchExpiredPurgeJobs(ctx, 200)
+		if err != nil {
+			log.Printf("dispatch recycle cleanup job failed: %v", err)
+		}
+
+		for range ticker.C {
+			n, dispatchErr := recycleService.DispatchExpiredPurgeJobs(ctx, 200)
+			if dispatchErr != nil {
+				log.Printf("dispatch recycle cleanup job failed: %v", dispatchErr)
+				continue
+			}
+			if n > 0 {
+				log.Printf("dispatched %d recycle cleanup jobs", n)
+			}
+		}
+	}()
 }

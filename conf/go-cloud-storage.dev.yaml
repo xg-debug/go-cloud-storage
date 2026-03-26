@@ -2,10 +2,10 @@
 Server:
   port: 8081
   env: dev
-  storagePath: E:/go_work/go-cloud-storage/upload
+  storagePath: /Users/xugang/workspace/go-cloud-storage/upload
 
 Database:
-  host: localhost
+  host: 127.0.0.1
   port: 3306
   user: root
   password: 167219
@@ -18,11 +18,20 @@ Database:
 
 Redis:
   enabled: true
-  host: 192.168.101.129
+  host: 127.0.0.1
   port: 6379
   password: 167219
   db: 0
   poolSize: 10
+
+rabbitmq:
+  enabled: false
+  url: "amqp://guest:guest@127.0.0.1:5672/"
+  exchange: "recycle.exchange"
+  queue: "recycle.expired.queue"
+  routingKey: "recycle.expired"
+  consumerTag: "recycle-cleanup-worker"
+  scanIntervalSeconds: 60
 
 # 阿里云oss配置
 AliyunOss:
@@ -36,7 +45,7 @@ AliyunOss:
 
 storageType: "minio"
 minio:
-  endpoint: "192.168.101.129:9001"
+  endpoint: "127.0.0.1:9000"
   accessKeyID: "admin"
   secretAccessKey: "admin123"
   bucket: "go-cloud-storage"

@@ -19,6 +19,7 @@ type TrashItem struct {
 type RecycleRepository interface {
 	GetFiles(userId int) ([]TrashItem, error)
 	GetAllFileIds(tx *gorm.DB, userId int) ([]string, error)
+	GetExpiredFileIds(limit int) ([]string, error)
 	DeleteOne(db *gorm.DB, fileId string) error
 	DeleteBatch(db *gorm.DB, fileIds []string) error
 	DeleteAll(db *gorm.DB, userId int) error
@@ -60,6 +61,20 @@ func (r *recycleRepo) GetAllFileIds(tx *gorm.DB, userId int) ([]string, error) {
 	var fileIds []string
 	err := db.Model(&models.RecycleBin{}).Where("user_id = ?", userId).Pluck("file_id", &fileIds).Error
 	return fileIds, err
+}
+
+func (r *recycleRepo) GetExpiredFileIds(limit int) ([]string, error) {
+	var fileIDs []string
+	query := r.db.Model(&models.RecycleBin{}).
+		Where("expire_at <= ?", time.Now()).
+		Order("expire_at ASC")
+	if limit > 0 {
+		query = query.Limit(limit)
+	}
+	if err := query.Pluck("file_id", &fileIDs).Error; err != nil {
+		return nil, err
+	}
+	return fileIDs, nil
 }
 
 func (r *recycleRepo) DeleteOne(db *gorm.DB, fileId string) error {

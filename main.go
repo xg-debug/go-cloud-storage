@@ -5,6 +5,7 @@ import (
 	"go-cloud-storage/internal/pkg/cache"
 	"go-cloud-storage/internal/pkg/config"
 	"go-cloud-storage/internal/pkg/minio"
+	"go-cloud-storage/internal/pkg/mq"
 	"go-cloud-storage/internal/pkg/mysql"
 	"go-cloud-storage/internal/router"
 	"log"
@@ -35,9 +36,19 @@ func main() {
 		log.Fatalf("MinIO 初始化失败: %v", err)
 	}
 
+	rabbitClient, err := mq.NewRabbitMQClient(&cfg.RabbitMQ)
+	if err != nil {
+		log.Fatalf("RabbitMQ 初始化失败: %v", err)
+	}
+	defer func() {
+		if rabbitClient != nil {
+			_ = rabbitClient.Close()
+		}
+	}()
+
 	// 初始化其他组件（Redis、HTTP服务器等）
 
-	r := router.SetUpRouter(mysql.GormDB, minioService)
+	r := router.SetUpRouter(mysql.GormDB, minioService, rabbitClient, &cfg.RabbitMQ)
 
 	port := fmt.Sprintf(":%d", cfg.Server.Port)
 	if err := r.Run(port); err != nil {

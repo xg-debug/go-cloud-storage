@@ -1,27 +1,13 @@
 <template>
   <div class="starred-files">
-    <!-- 页面头部 -->
-    <div class="page-header">
-      <div class="header-content">
-        <div class="header-info">
-          <div class="header-icon">
-            <el-icon :size="28" color="#f59e0b">
-              <Star />
-            </el-icon>
-          </div>
-          <div class="header-text">
-            <h1 class="page-title">我的收藏</h1>
-            <p class="page-description">管理您收藏的重要文件</p>
-          </div>
-        </div>
-        <div class="header-stats">
-          <div class="stat-item">
-            <span class="stat-number">{{ totalCount }}</span>
-            <span class="stat-label">收藏文件</span>
-          </div>
-        </div>
-      </div>
-    </div>
+    <PageHeader
+      :icon="Star"
+      title="我的收藏"
+      description="管理您收藏的重要文件"
+      icon-bg="#fef3c7"
+      icon-color="#f59e0b"
+      :stats="[{ label: '收藏文件', value: totalCount }]"
+    />
 
     <!-- 工具栏 -->
     <div class="toolbar">
@@ -54,8 +40,8 @@
           <template #default="{ row }">
             <div class="file-name-cell">
               <div class="file-icon">
-                <el-icon :size="20" :color="row.is_dir ? '#FFB800' : getFileIconColor(row.name)">
-                  <component :is="row.is_dir ? Folder : getFileIcon(row.name)" />
+                <el-icon :size="20" :color="getFileIconColor(row.name, row.is_dir)">
+                  <component :is="getFileIcon(row.name, row.is_dir)" />
                 </el-icon>
               </div>
               <span class="file-name">{{ row.name }}</span>
@@ -106,22 +92,16 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { 
-  Document, 
-  Folder, 
   Search, 
   Star,
-  StarFilled,
   View,
   Download,
-  Location,
-  Refresh,
-  Picture,
-  VideoCamera,
-  Headset,
-  Files
+  Refresh
 } from '@element-plus/icons-vue'
 import { getFavorites, cancelFavorite } from '@/api/favorite'
 import { ElMessage } from 'element-plus'
+import { getFileIcon, getFileIconColor } from '@/utils/fileIcon'
+import PageHeader from '@/components/common/PageHeader.vue'
 
 const router = useRouter()
 
@@ -217,36 +197,6 @@ const previewFile = (row) => {
   }
 }
 
-// 获取文件图标
-const getFileIcon = (fileName) => {
-  const ext = fileName.split('.').pop()?.toLowerCase()
-  if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'].includes(ext)) {
-    return Picture
-  } else if (['mp4', 'avi', 'mov', 'wmv', 'mkv'].includes(ext)) {
-    return VideoCamera
-  } else if (['mp3', 'wav', 'flac', 'aac', 'ogg'].includes(ext)) {
-    return Headset
-  } else if (['pdf', 'doc', 'docx', 'txt', 'xls', 'xlsx', 'ppt', 'pptx'].includes(ext)) {
-    return Document
-  }
-  return Files
-}
-
-// 获取文件图标颜色
-const getFileIconColor = (fileName) => {
-  const ext = fileName.split('.').pop()?.toLowerCase()
-  if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'].includes(ext)) {
-    return '#f59e0b'
-  } else if (['mp4', 'avi', 'mov', 'wmv', 'mkv'].includes(ext)) {
-    return '#ef4444'
-  } else if (['mp3', 'wav', 'flac', 'aac', 'ogg'].includes(ext)) {
-    return '#8b5cf6'
-  } else if (['pdf', 'doc', 'docx', 'txt', 'xls', 'xlsx', 'ppt', 'pptx'].includes(ext)) {
-    return '#06b6d4'
-  }
-  return '#6b7280'
-}
-
 // 页面加载时获取 - 保持原有逻辑
 onMounted(fetchFavorites)
 </script>
@@ -257,69 +207,6 @@ onMounted(fetchFavorites)
   display: flex;
   flex-direction: column;
   background: #f8fafc;
-}
-
-/* 页面头部 */
-.page-header {
-    background: #f8fafc;
-    padding: 6px 32px;
-    border-bottom: 1px solid var(--border-light);
-}
-
-.header-content {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.header-info {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-
-.header-icon {
-    width: 40px;
-    height: 40px;
-    background: #e2e8f0;
-    border-radius: var(--radius-md);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-
-.page-title {
-    font-size: 20px;
-    font-weight: 600;
-    color: var(--text-primary);
-    margin: 0 0 2px 0;
-}
-
-.page-description {
-  font-size: 14px;
-  opacity: 0.9;
-  margin: 0;
-}
-
-.header-stats {
-  display: flex;
-  gap: 32px;
-}
-
-.stat-item {
-  text-align: center;
-}
-
-.stat-number {
-  display: block;
-  font-size: 24px;
-  font-weight: 600;
-  line-height: 1;
-}
-
-.stat-label {
-  font-size: 12px;
-  opacity: 0.8;
 }
 
 /* 工具栏 */
@@ -407,16 +294,6 @@ onMounted(fetchFavorites)
 
 /* 响应式设计 */
 @media (max-width: 768px) {
-  .page-header {
-    padding: 20px 16px;
-  }
-  
-  .header-content {
-    flex-direction: column;
-    gap: 20px;
-    text-align: center;
-  }
-  
   .toolbar {
     padding: 16px;
     flex-direction: column;

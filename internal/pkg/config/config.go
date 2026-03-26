@@ -10,6 +10,7 @@ type Config struct {
 	Server      ServerConfig    `yaml:"server"`
 	Database    DatabaseConfig  `yaml:"mysql"`
 	Redis       RedisConfig     `yaml:"redis"`
+	RabbitMQ    RabbitMQConfig  `yaml:"rabbitmq" mapstructure:"rabbitmq"`
 	QQ          QQConfig        `yaml:"qq"`
 	AliyunOss   AliyunOssConfig `yaml:"aliyun"`
 	StorageType string          `yaml:"minio"`
@@ -42,6 +43,16 @@ type RedisConfig struct {
 	Password string `yaml:"password"`
 	DB       int    `yaml:"db"`
 	PoolSize int    `yaml:"poolSize"`
+}
+
+type RabbitMQConfig struct {
+	Enabled             bool   `yaml:"enabled" mapstructure:"enabled"`
+	URL                 string `yaml:"url" mapstructure:"url"`
+	Exchange            string `yaml:"exchange" mapstructure:"exchange"`
+	Queue               string `yaml:"queue" mapstructure:"queue"`
+	RoutingKey          string `yaml:"routingKey" mapstructure:"routingKey"`
+	ConsumerTag         string `yaml:"consumerTag" mapstructure:"consumerTag"`
+	ScanIntervalSeconds int    `yaml:"scanIntervalSeconds" mapstructure:"scanIntervalSeconds"`
 }
 
 type QQConfig struct {

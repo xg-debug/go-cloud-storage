@@ -192,7 +192,7 @@ func (s *fileService) Delete(fileId string, userId int) error {
 			FileId:    fileId,
 			UserId:    userId,
 			DeletedAt: time.Now(),
-			ExpireAt:  time.Now().Add(10 * 24 * time.Hour),
+			ExpireAt:  time.Now().Add(7 * 24 * time.Hour),
 		}
 		if err := s.fileRepo.AddToRecycle(tx, recycleEntry); err != nil {
 			return err
