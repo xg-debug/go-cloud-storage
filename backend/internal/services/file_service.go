@@ -5,13 +5,14 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"go-cloud-storage/backend/internal/models"
 	miniosrv "go-cloud-storage/backend/infrastructure/minio"
-	"go-cloud-storage/backend/pkg/utils"
+	"go-cloud-storage/backend/internal/models"
 	"go-cloud-storage/backend/internal/repositories"
+	"go-cloud-storage/backend/pkg/utils"
 	"io"
+	"net/url"
 	"path/filepath"
-	"sort"	
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -52,17 +53,18 @@ type FileBrief struct {
 }
 
 type FilePreview struct {
-	Id           string `json:"id"`
-	Name         string `json:"name"`
-	Size         int64  `json:"size"`
-	SizeStr      string `json:"size_str"`
-	Extension    string `json:"extension"`
-	FileURL      string `json:"file_url"`
-	ThumbnailURL string `json:"thumbnail_url"`
-	CanPreview   bool   `json:"can_preview"`
-	PreviewType  string `json:"preview_type"` // image, video, audio, text, pdf, office, other
-	Modified     string `json:"modified"`
-	FilePath     string `json:"file_path"`
+	Id               string `json:"id"`
+	Name             string `json:"name"`
+	Size             int64  `json:"size"`
+	SizeStr          string `json:"size_str"`
+	Extension        string `json:"extension"`
+	FileURL          string `json:"file_url"`
+	ThumbnailURL     string `json:"thumbnail_url"`
+	CanPreview       bool   `json:"can_preview"`
+	PreviewType      string `json:"preview_type"` // image, video, audio, text, pdf, office, other
+	OfficePreviewURL string `json:"office_preview_url,omitempty"`
+	Modified         string `json:"modified"`
+	FilePath         string `json:"file_path"`
 }
 
 type FolderNode struct {
@@ -93,7 +95,7 @@ type FileService interface {
 	GetFolderTree(ctx context.Context, userId int) ([]FolderNode, error)
 	MoveFile(ctx context.Context, userId int, fileId, targetFolderId string) error
 
-	Download(ctx context.Context, fileId string) (io.ReadCloser, *models.File, error)
+	Download(ctx context.Context, userId int, fileId string) (io.ReadCloser, *models.File, error)
 }
 
 type fileService struct {
@@ -302,10 +304,13 @@ func (s *fileService) GetFilePath(file *models.File) (string, error) {
 
 // 判断文件类型是否可预览
 func getPreviewType(extension string) (bool, string) {
-	ext := strings.ToLower(extension)
+	ext := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(extension)), ".")
+	if ext == "" {
+		return false, "other"
+	}
 
 	// 图片类型
-	imageExts := []string{".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".svg"}
+	imageExts := []string{"jpg", "jpeg", "png", "gif", "bmp", "webp", "svg"}
 	for _, imgExt := range imageExts {
 		if ext == imgExt {
 			return true, "image"
@@ -313,7 +318,7 @@ func getPreviewType(extension string) (bool, string) {
 	}
 
 	// 视频类型
-	videoExts := []string{".mp4", ".avi", ".mov", ".wmv", ".flv", ".webm", ".mkv"}
+	videoExts := []string{"mp4", "avi", "mov", "wmv", "flv", "webm", "mkv"}
 	for _, vidExt := range videoExts {
 		if ext == vidExt {
 			return true, "video"
@@ -321,7 +326,7 @@ func getPreviewType(extension string) (bool, string) {
 	}
 
 	// 音频类型
-	audioExts := []string{".mp3", ".wav", ".flac", ".aac", ".ogg", ".m4a"}
+	audioExts := []string{"mp3", "wav", "flac", "aac", "ogg", "m4a"}
 	for _, audExt := range audioExts {
 		if ext == audExt {
 			return true, "audio"
@@ -329,7 +334,7 @@ func getPreviewType(extension string) (bool, string) {
 	}
 
 	// 文本类型
-	textExts := []string{".txt", ".md", ".json", ".xml", ".csv", ".log", ".js", ".css", ".html", ".go", ".java", ".py", ".c", ".cpp"}
+	textExts := []string{"txt", "md", "json", "xml", "csv", "log", "js", "css", "html", "go", "java", "py", "c", "cpp"}
 	for _, txtExt := range textExts {
 		if ext == txtExt {
 			return true, "text"
@@ -337,12 +342,12 @@ func getPreviewType(extension string) (bool, string) {
 	}
 
 	// PDF类型
-	if ext == ".pdf" {
+	if ext == "pdf" {
 		return true, "pdf"
 	}
 
 	// Office类型
-	officeExts := []string{".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx"}
+	officeExts := []string{"doc", "docx", "xls", "xlsx", "ppt", "pptx"}
 	for _, offExt := range officeExts {
 		if ext == offExt {
 			return true, "office"
@@ -382,20 +387,32 @@ func (s *fileService) PreviewFile(userId int, fileId string) (*FilePreview, erro
 
 	// 判断文件类型和是否可预览
 	canPreview, previewType := getPreviewType(file.FileExtension)
+	officePreviewURL := ""
+	if previewType == "office" {
+		officePreviewURL = buildOfficePreviewURL(file.FileURL)
+	}
 
 	return &FilePreview{
-		Id:           file.Id,
-		Name:         file.Name,
-		Size:         file.Size,
-		SizeStr:      file.SizeStr,
-		Extension:    file.FileExtension,
-		FileURL:      file.FileURL,
-		ThumbnailURL: file.ThumbnailURL,
-		CanPreview:   canPreview,
-		PreviewType:  previewType,
-		Modified:     file.UpdatedAt.Format("2006-01-02 15:04:05"),
-		FilePath:     filePath,
+		Id:               file.Id,
+		Name:             file.Name,
+		Size:             file.Size,
+		SizeStr:          file.SizeStr,
+		Extension:        file.FileExtension,
+		FileURL:          file.FileURL,
+		ThumbnailURL:     file.ThumbnailURL,
+		CanPreview:       canPreview,
+		PreviewType:      previewType,
+		OfficePreviewURL: officePreviewURL,
+		Modified:         file.UpdatedAt.Format("2006-01-02 15:04:05"),
+		FilePath:         filePath,
 	}, nil
+}
+
+func buildOfficePreviewURL(fileURL string) string {
+	if strings.TrimSpace(fileURL) == "" {
+		return ""
+	}
+	return "https://view.officeapps.live.com/op/view.aspx?src=" + url.QueryEscape(fileURL) + "&wdAr=1.3333333333333333"
 }
 
 // UploadFile 小文件上传
@@ -783,18 +800,16 @@ func (s *fileService) MoveFile(ctx context.Context, userId int, fileId, targetFo
 	return s.fileRepo.UpdateParent(ctx, fileId, targetFolderId)
 }
 
-func (s *fileService) Download(ctx context.Context, fileId string) (io.ReadCloser, *models.File, error) {
-	// 1.查询文件是否存在
-	file, err := s.fileRepo.GetFileById(fileId)
+func (s *fileService) Download(ctx context.Context, userId int, fileId string) (io.ReadCloser, *models.File, error) {
+	file, err := s.fileRepo.GetUserFileByID(userId, fileId)
 	if err != nil {
 		return nil, nil, errors.New("要下载的文件不存在")
 	}
-	// 2.从 MinIO 下载
+
 	reader, err := s.minio.DownloadFile(ctx, file.OssObjectKey)
 	if err != nil {
 		return nil, nil, err
 	}
-	// 返回 reader + 文件信息
 	return reader, file, nil
 }
 

@@ -13,6 +13,8 @@ type ShareRepository interface {
 	GetUserShares(userID int) ([]*models.Share, error)
 	GetShareByID(shareID int) (*models.Share, error)
 	GetShareByToken(token string) (*models.Share, error)
+	IncrementAccessCount(shareID int) error
+	IncrementDownloadCount(shareID int) error
 	UpdateShareExpireTime(shareID int, expireTime *time.Time) error
 	Delete(tx *gorm.DB, shareID int) error
 	DeleteBatch(tx *gorm.DB, fileIds []string) error
@@ -63,11 +65,23 @@ func (r *shareRepo) GetShareByID(shareID int) (*models.Share, error) {
 // GetShareByToken 根据token获取分享
 func (r *shareRepo) GetShareByToken(token string) (*models.Share, error) {
 	var share models.Share
-	err := r.db.Where("share_token = ?", token).First(&share).Error
+	err := r.db.Where("share_token = ? AND is_deleted = 0", token).First(&share).Error
 	if err != nil {
 		return nil, err
 	}
 	return &share, nil
+}
+
+func (r *shareRepo) IncrementAccessCount(shareID int) error {
+	return r.db.Model(&models.Share{}).
+		Where("id = ?", shareID).
+		UpdateColumn("access_count", gorm.Expr("access_count + 1")).Error
+}
+
+func (r *shareRepo) IncrementDownloadCount(shareID int) error {
+	return r.db.Model(&models.Share{}).
+		Where("id = ?", shareID).
+		UpdateColumn("download_count", gorm.Expr("download_count + 1")).Error
 }
 
 // UpdateShareExpireTime 更新分享过期时间
@@ -97,14 +111,12 @@ func (r *shareRepo) DeleteBatch(tx *gorm.DB, fileIds []string) error {
 }
 
 func (r *shareRepo) IsShared(fileId string) (bool, *models.Share) {
-	var count int64
 	var share models.Share
-	r.db.Model(&models.Share{}).Where("file_id = ?", fileId).First(&share).Count(&count)
-	if count == 1 {
+	err := r.db.Where("file_id = ? AND is_deleted = 0", fileId).First(&share).Error
+	if err == nil {
 		return true, &share
-	} else {
-		return false, nil
 	}
+	return false, nil
 }
 
 // UpdateShareInfo 更新分享信息

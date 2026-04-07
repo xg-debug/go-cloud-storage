@@ -105,10 +105,9 @@ func (c *RabbitMQClient) setup() error {
 	return c.channel.Qos(8, 0, false)
 }
 
+// PublishExpiredFilePurge 生产者：发布过期文件清理消息
 func (c *RabbitMQClient) PublishExpiredFilePurge(ctx context.Context, fileID string) error {
-	if c == nil {
-		return nil
-	}
+
 	if fileID == "" {
 		return fmt.Errorf("file id is required")
 	}
@@ -135,6 +134,7 @@ func (c *RabbitMQClient) PublishExpiredFilePurge(ctx context.Context, fileID str
 	)
 }
 
+// ConsumeExpiredFilePurge 消费者：消费过期文件清理消息
 func (c *RabbitMQClient) ConsumeExpiredFilePurge(ctx context.Context, handler func(context.Context, string) error) error {
 	if c == nil {
 		return nil

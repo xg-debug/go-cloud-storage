@@ -13,15 +13,7 @@ export const createShare = (data) => {
 export const getUserShares = () => {
     return request({
         url: '/share',
-        method: 'get',
-        silentError: true  // 设置静默处理标志
-    }).catch(error => {
-        // 静默处理404错误，返回空数据结构
-        if (error.response && error.response.status === 404) {
-            return []
-        }
-        // 其他错误继续抛出
-        throw error
+        method: 'get'
     })
 }
 

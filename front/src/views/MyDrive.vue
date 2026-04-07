@@ -154,6 +154,12 @@
                                         </el-icon>
                                         下载
                                     </el-dropdown-item>
+                                    <el-dropdown-item command="preview" v-if="!item.is_dir">
+                                        <el-icon>
+                                            <View/>
+                                        </el-icon>
+                                        预览
+                                    </el-dropdown-item>
                                     <el-dropdown-item command="share">
                                         <el-icon>
                                             <Share/>
@@ -250,6 +256,8 @@
                                 </el-button>
                                 <template #dropdown>
                                     <el-dropdown-menu>
+                                        <el-dropdown-item @click="handlePreview(row)" v-if="!row.is_dir">预览
+                                        </el-dropdown-item>
                                         <el-dropdown-item @click="handleDownload(row)" v-if="!row.is_dir">下载
                                         </el-dropdown-item>
                                         <el-dropdown-item @click="handleShare(row)">分享</el-dropdown-item>
@@ -366,6 +374,68 @@
                 </el-button>
             </template>
         </el-dialog>
+
+        <el-dialog
+            v-model="previewDialogVisible"
+            :title="previewData?.name || '文件预览'"
+            width="900px"
+            top="5vh"
+            destroy-on-close
+        >
+            <div v-loading="previewLoading" class="preview-wrapper">
+                <template v-if="previewData">
+                    <img
+                        v-if="previewData.preview_type === 'image'"
+                        :src="previewData.file_url"
+                        alt="preview"
+                        class="preview-image"
+                    />
+
+                    <video
+                        v-else-if="previewData.preview_type === 'video'"
+                        :src="previewData.file_url"
+                        controls
+                        class="preview-media"
+                    />
+
+                    <audio
+                        v-else-if="previewData.preview_type === 'audio'"
+                        :src="previewData.file_url"
+                        controls
+                        class="preview-audio"
+                    />
+
+                    <iframe
+                        v-else-if="previewData.preview_type === 'pdf'"
+                        :src="previewData.file_url"
+                        class="preview-frame"
+                        frameborder="0"
+                    />
+
+                    <iframe
+                        v-else-if="previewData.preview_type === 'office'"
+                        :src="previewData.office_preview_url"
+                        class="preview-frame"
+                        frameborder="0"
+                    />
+
+                    <iframe
+                        v-else-if="previewData.preview_type === 'text'"
+                        :src="previewData.file_url"
+                        class="preview-frame"
+                        frameborder="0"
+                    />
+
+                    <div v-else class="preview-empty">
+                        该文件类型暂不支持在线预览，请下载后查看。
+                    </div>
+                </template>
+            </div>
+            <template #footer>
+                <el-button @click="previewDialogVisible = false">关闭</el-button>
+                <el-button type="primary" @click="handleDownload({ id: previewData.id, name: previewData.name })">下载</el-button>
+            </template>
+        </el-dialog>
     </div>
 </template>
 
@@ -389,6 +459,7 @@ import {
     Search,
     Share,
     Star,
+    View,
     Upload
 } from '@element-plus/icons-vue'
 import {useStore} from 'vuex'
@@ -437,6 +508,9 @@ const folderTreeRef = ref()
 
 // 上传相关状态
 const uploadDialogVisible = ref(false)
+const previewDialogVisible = ref(false)
+const previewLoading = ref(false)
+const previewData = ref(null)
 
 const loadFiles = async () => {
     const res = await listFiles({
@@ -469,7 +543,7 @@ const loadFiles = async () => {
 
 const handleOpenFolder = (item) => {
     if (!item.is_dir) {
-        previewFile(item.id)
+        handlePreview(item)
         return
     }
     
@@ -639,7 +713,26 @@ const handleGridMenuCommand = (item, command) => {
     else if (command === 'star') handleStar(item)
     else if (command === 'share') handleShare(item)
     else if (command === 'download') handleDownload(item)
+    else if (command === 'preview') handlePreview(item)
     else if (command === 'move') handleMove(item)
+}
+
+const handlePreview = async (item) => {
+    if (!item || item.is_dir) return
+    previewLoading.value = true
+    previewDialogVisible.value = true
+    try {
+        const data = await previewFile(item.id)
+        previewData.value = data
+        if (!data.can_preview) {
+            ElMessage.warning('该文件类型暂不支持在线预览')
+        }
+    } catch (err) {
+        previewDialogVisible.value = false
+        ElMessage.error(err.message || '预览失败')
+    } finally {
+        previewLoading.value = false
+    }
 }
 
 const handleStar = (item) => {
@@ -1534,5 +1627,38 @@ const clearSearch = () => {
     .file-thumbnail {
         height: 100px;
     }
+}
+
+.preview-wrapper {
+    min-height: 320px;
+}
+
+.preview-image {
+    width: 100%;
+    max-height: 560px;
+    object-fit: contain;
+    display: block;
+}
+
+.preview-media {
+    width: 100%;
+    max-height: 560px;
+    background: #000;
+}
+
+.preview-audio {
+    width: 100%;
+    margin: 16px 0;
+}
+
+.preview-frame {
+    width: 100%;
+    height: 560px;
+}
+
+.preview-empty {
+    color: #909399;
+    text-align: center;
+    padding: 80px 0;
 }
 </style>

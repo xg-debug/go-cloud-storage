@@ -46,7 +46,7 @@ export const removeStar = (starId) => {
 // 文件预览：获取文件可预览链接：
 export const previewFile = (fileId) => {
     return request({
-        url: 'file/${fileId}/preview',
+        url: `/file/preview/${fileId}`,
         method: 'get'
     })
 }

@@ -6,6 +6,8 @@ import (
 	"go-cloud-storage/backend/internal/models"
 	"go-cloud-storage/backend/internal/repositories"
 	"math"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -112,7 +114,7 @@ func (s *shareService) GetUserShares(userId int) ([]*ShareItem, error) {
 			FileSize:      file.Size,
 			FileType:      getFileTypeFromExtension(file.FileExtension),
 			ShareToken:    share.ShareToken,
-			ShareUrl:      fmt.Sprintf("http://localhost:8080/s/%s", share.ShareToken),
+			ShareUrl:      fmt.Sprintf("/s/%s", share.ShareToken),
 			ExtractCode:   extractCode,
 			ExpireAt:      StatusText(share.ExpireTime),
 			CreatedAt:     share.CreatedAt,
@@ -177,7 +179,7 @@ func (s *shareService) GetShareDetail(userId int, shareId int) (*ShareDetail, er
 		FileSize:      file.Size,
 		FileType:      getFileTypeFromExtension(file.FileExtension),
 		ShareToken:    share.ShareToken,
-		ShareUrl:      fmt.Sprintf("http://localhost:8080/s/%s", share.ShareToken),
+		ShareUrl:      fmt.Sprintf("/s/%s", share.ShareToken),
 		ExtractCode:   extractCode,
 		CreatedAt:     share.CreatedAt,
 		ExpireAt:      share.ExpireTime,
@@ -200,14 +202,19 @@ func (s *shareService) CancelShare(userId int, shareId int) error {
 }
 
 type ShareAccessResponse struct {
-	ShareToken  string     `json:"shareToken"`
-	FileName    string     `json:"fileName"`
-	FileSize    int64      `json:"fileSize"`
-	FileType    string     `json:"fileType"`
-	UpdatedAt   time.Time  `json:"updatedAt"`
-	ExpireAt    *time.Time `json:"expireAt"`
-	DownloadUrl string     `json:"downloadUrl"` // Only if code verified or no code
-	NeedCode    bool       `json:"needCode"`
+	ShareToken       string     `json:"shareToken"`
+	FileName         string     `json:"fileName"`
+	FileSize         int64      `json:"fileSize"`
+	FileType         string     `json:"fileType"`
+	UpdatedAt        time.Time  `json:"updatedAt"`
+	ExpireAt         *time.Time `json:"expireAt"`
+	DownloadUrl      string     `json:"downloadUrl"`
+	FileURL          string     `json:"fileUrl"`
+	ThumbnailURL     string     `json:"thumbnailUrl"`
+	CanPreview       bool       `json:"canPreview"`
+	PreviewType      string     `json:"previewType"`
+	OfficePreviewURL string     `json:"officePreviewUrl"`
+	NeedCode         bool       `json:"needCode"`
 }
 
 func (s *shareService) AccessShare(shareToken string, inputCode string) (*ShareAccessResponse, error) {
@@ -223,45 +230,53 @@ func (s *shareService) AccessShare(shareToken string, inputCode string) (*ShareA
 		return nil, errors.New("分享链接已过期")
 	}
 
-	// Check code
-	if share.GetExtractionCode() != "" {
-		if inputCode == "" {
-			// Return basic info but indicate code needed
-			file, _ := s.fileRepo.GetFileById(share.FileId)
-			return &ShareAccessResponse{
-				ShareToken: shareToken,
-				FileName:   file.Name,
-				FileSize:   file.Size,
-				FileType:   getFileTypeFromExtension(file.FileExtension),
-				UpdatedAt:  share.UpdatedAt,
-				ExpireAt:   share.ExpireTime,
-				NeedCode:   true,
-			}, errors.New("请输入提取码") // Or handled by caller as 403
-		}
-		if share.GetExtractionCode() != inputCode {
-			return nil, errors.New("提取码错误")
-		}
-	}
-
 	file, err := s.fileRepo.GetUserFileByID(share.UserId, share.FileId)
 	if err != nil {
 		return nil, errors.New("文件不存在")
 	}
 
-	// Update stats (ClickCount) - maybe async?
-	// s.shareRepo.IncrementClick(share.Id)
+	canPreview, previewType := getSharePreviewType(file.FileExtension)
+	officePreviewURL := buildShareOfficePreviewURL(file.FileURL)
+	downloadURL := fmt.Sprintf("/s/%s/download", shareToken)
 
-	downloadUrl := file.FileURL
+	if share.GetExtractionCode() != "" && inputCode == "" {
+		return &ShareAccessResponse{
+			ShareToken:       shareToken,
+			FileName:         file.Name,
+			FileSize:         file.Size,
+			FileType:         getFileTypeFromExtension(file.FileExtension),
+			UpdatedAt:        share.UpdatedAt,
+			ExpireAt:         share.ExpireTime,
+			FileURL:          file.FileURL,
+			ThumbnailURL:     file.ThumbnailURL,
+			CanPreview:       canPreview,
+			PreviewType:      previewType,
+			OfficePreviewURL: officePreviewURL,
+			DownloadUrl:      downloadURL,
+			NeedCode:         true,
+		}, nil
+	}
+
+	if share.GetExtractionCode() != "" && share.GetExtractionCode() != inputCode {
+		return nil, errors.New("提取码错误")
+	}
+
+	_ = s.shareRepo.IncrementAccessCount(share.Id)
 
 	return &ShareAccessResponse{
-		ShareToken:  shareToken,
-		FileName:    file.Name,
-		FileSize:    file.Size,
-		FileType:    getFileTypeFromExtension(file.FileExtension),
-		UpdatedAt:   share.UpdatedAt,
-		ExpireAt:    share.ExpireTime,
-		DownloadUrl: downloadUrl,
-		NeedCode:    false,
+		ShareToken:       shareToken,
+		FileName:         file.Name,
+		FileSize:         file.Size,
+		FileType:         getFileTypeFromExtension(file.FileExtension),
+		UpdatedAt:        share.UpdatedAt,
+		ExpireAt:         share.ExpireTime,
+		DownloadUrl:      downloadURL,
+		FileURL:          file.FileURL,
+		ThumbnailURL:     file.ThumbnailURL,
+		CanPreview:       canPreview,
+		PreviewType:      previewType,
+		OfficePreviewURL: officePreviewURL,
+		NeedCode:         false,
 	}, nil
 }
 
@@ -278,16 +293,13 @@ func (s *shareService) DownloadSharedFile(shareToken string, inputCode string) (
 		return "", errors.New("提取码错误")
 	}
 
-	file, err := s.fileRepo.GetFileById(share.FileId)
+	file, err := s.fileRepo.GetUserFileByID(share.UserId, share.FileId)
 	if err != nil {
 		return "", errors.New("文件不存在")
 	}
 
-	// Increment download count
-	// s.shareRepo.IncrementDownload(share.Id)
+	_ = s.shareRepo.IncrementDownloadCount(share.Id)
 
-	// Return real download URL (e.g. MinIO signed URL or backend proxy URL)
-	// Return the FileURL which should be a public-read MinIO/OSS URL
 	return file.FileURL, nil
 }
 
@@ -342,16 +354,61 @@ func (s *shareService) UpdateShare(shareID int, userID int, extractionCode strin
 }
 
 func getFileTypeFromExtension(ext string) string {
-	switch ext {
-	case ".jpg", ".jpeg", ".png", ".gif":
+	switch normalizeExt(ext) {
+	case "jpg", "jpeg", "png", "gif", "bmp", "webp", "svg":
 		return "image"
-	case ".mp4", ".avi", ".mov":
+	case "mp4", "avi", "mov", "wmv", "flv", "webm", "mkv":
 		return "video"
-	case ".mp3", ".wav":
+	case "mp3", "wav", "flac", "aac", "ogg", "m4a":
 		return "audio"
-	case ".doc", ".docx", ".pdf", ".txt":
+	case "doc", "docx", "xls", "xlsx", "ppt", "pptx", "pdf", "txt", "md":
 		return "document"
 	default:
 		return "other"
 	}
+}
+
+func getSharePreviewType(extension string) (bool, string) {
+	ext := normalizeExt(extension)
+	if ext == "" {
+		return false, "other"
+	}
+
+	imageExts := map[string]bool{"jpg": true, "jpeg": true, "png": true, "gif": true, "bmp": true, "webp": true, "svg": true}
+	videoExts := map[string]bool{"mp4": true, "avi": true, "mov": true, "wmv": true, "flv": true, "webm": true, "mkv": true}
+	audioExts := map[string]bool{"mp3": true, "wav": true, "flac": true, "aac": true, "ogg": true, "m4a": true}
+	textExts := map[string]bool{"txt": true, "md": true, "json": true, "xml": true, "csv": true, "log": true, "js": true, "css": true, "html": true, "go": true, "java": true, "py": true, "c": true, "cpp": true}
+	officeExts := map[string]bool{"doc": true, "docx": true, "xls": true, "xlsx": true, "ppt": true, "pptx": true}
+
+	if imageExts[ext] {
+		return true, "image"
+	}
+	if videoExts[ext] {
+		return true, "video"
+	}
+	if audioExts[ext] {
+		return true, "audio"
+	}
+	if textExts[ext] {
+		return true, "text"
+	}
+	if ext == "pdf" {
+		return true, "pdf"
+	}
+	if officeExts[ext] {
+		return true, "office"
+	}
+	return false, "other"
+}
+
+func normalizeExt(ext string) string {
+	return strings.TrimPrefix(strings.ToLower(strings.TrimSpace(ext)), ".")
+}
+
+func buildShareOfficePreviewURL(fileURL string) string {
+	if strings.TrimSpace(fileURL) == "" {
+		return ""
+	}
+	encoded := url.QueryEscape(fileURL)
+	return "https://view.officeapps.live.com/op/view.aspx?src=" + encoded + "&wdAr=1.3333333333333333"
 }

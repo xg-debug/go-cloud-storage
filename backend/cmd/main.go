@@ -36,6 +36,7 @@ func main() {
 		log.Fatalf("MinIO 初始化失败: %v", err)
 	}
 
+	// 初始化 RabbitMQ 客户端
 	rabbitClient, err := mq.NewRabbitMQClient(&cfg.RabbitMQ)
 	if err != nil {
 		log.Fatalf("RabbitMQ 初始化失败: %v", err)
@@ -46,12 +47,10 @@ func main() {
 		}
 	}()
 
-	// 初始化其他组件（Redis、HTTP服务器等）
-
 	r := router.SetUpRouter(mysql.GormDB, minioService, rabbitClient, &cfg.RabbitMQ)
 
 	port := fmt.Sprintf(":%d", cfg.Server.Port)
 	if err := r.Run(port); err != nil {
-		log.Fatal("服务器启动失败...")
+		log.Fatalf("服务器启动失败: %v", err)
 	}
 }

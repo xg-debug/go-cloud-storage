@@ -137,7 +137,7 @@
                                     </el-dropdown-item>
                                     <el-dropdown-item command="qrcode">
                                         <el-icon>
-                                            <QrCode/>
+                                            <Promotion/>
                                         </el-icon>
                                         二维码
                                     </el-dropdown-item>
@@ -230,7 +230,7 @@
                                 </el-icon>
                             </div>
                             <div class="stat-info">
-                                <div class="stat-value">{{ currentShare.viewCount || 0 }}</div>
+                                <div class="stat-value">{{ currentShare.accessCount || 0 }}</div>
                                 <div class="stat-name">查看次数</div>
                             </div>
                         </div>
@@ -363,7 +363,7 @@ import {
     Headset,
     Link,
     Picture,
-    QrCode,
+    Promotion,
     Refresh,
     Search,
     Share,
@@ -425,35 +425,15 @@ const loadShares = async () => {
     loading.value = true
     try {
         const response = await getUserShares()
-        console.log(response)
-
-        // 处理正常响应
-        if (response && response.code === 200) {
-            const shareData = Array.isArray(response.data) ? response.data : []
-            shares.value = shareData.map(share => ({
-                ...share,
-                createdAt: new Date(share.createdAt),
-                expiresAt: share.expiresAt ? new Date(share.expiresAt) : null
-            }))
-        }
-        // 处理直接返回的数组（404情况下的空数组）
-        else if (Array.isArray(response)) {
-            shares.value = response.map(share => ({
-                ...share,
-                createdAt: new Date(share.createdAt),
-                expiresAt: share.expiresAt ? new Date(share.expiresAt) : null
-            }))
-        }
-        // 其他情况设为空数组
-        else {
-            shares.value = []
-        }
+        const shareData = Array.isArray(response) ? response : []
+        shares.value = shareData.map(share => ({
+            ...share,
+            createdAt: new Date(share.createdAt),
+            expiresAt: share.expiresAt ? new Date(share.expiresAt) : null
+        }))
     } catch (error) {
         console.error('加载分享数据失败:', error)
-        // 404错误已经在API层面处理，这里只处理其他错误
-        if (error.response && error.response.status !== 404) {
-            ElMessage.error('网络错误，请稍后重试')
-        }
+        ElMessage.error('网络错误，请稍后重试')
         shares.value = []
     } finally {
         loading.value = false
@@ -501,7 +481,10 @@ const getQrCodeUrl = (url) => {
 // 构造分享链接（以当前前端域名为准）
 const buildShareLink = (share) => {
     if (!share) return ''
-    if (share.shareUrl) return share.shareUrl
+    if (share.shareUrl) {
+        if (share.shareUrl.startsWith('http')) return share.shareUrl
+        return `${window.location.origin}${share.shareUrl}`
+    }
     if (share.shareToken) return `${window.location.origin}/s/${share.shareToken}`
     return ''
 }

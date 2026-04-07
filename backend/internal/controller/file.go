@@ -1,8 +1,8 @@
 package controller
 
 import (
-	"go-cloud-storage/backend/pkg/utils"
 	"go-cloud-storage/backend/internal/services"
+	"go-cloud-storage/backend/pkg/utils"
 	"io"
 	"net/http"
 	"strconv"
@@ -356,8 +356,9 @@ func (c *FileController) MoveFile(ctx *gin.Context) {
 
 func (c *FileController) Download(ctx *gin.Context) {
 	fileId := ctx.Param("fileId")
+	userId := ctx.GetInt("userId")
 
-	reader, fileInfo, err := c.fileService.Download(ctx, fileId)
+	reader, fileInfo, err := c.fileService.Download(ctx, userId, fileId)
 	if err != nil {
 		//utils.Fail(ctx, http.StatusInternalServerError, "下载失败")
 		ctx.Status(http.StatusInternalServerError)
