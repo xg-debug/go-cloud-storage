@@ -6,7 +6,7 @@ import store from './store'
 import { getProfile } from '@/api/user'
 
 // 引入全局css
-import './assets/global.css'
+import './assets/cloud-ui.css'
 import '@/assets/wxlogin/iconfont.css'
 import '@/assets/zfblogin/iconfont.css'
 import '@/assets/qqlogin/iconfont.css'

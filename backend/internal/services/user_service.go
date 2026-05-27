@@ -10,11 +10,12 @@ import (
 	"go-cloud-storage/backend/infrastructure/minio"
 	"go-cloud-storage/backend/pkg/utils"
 	"go-cloud-storage/backend/internal/repositories"
-	"log"
 	"math/rand"
 	"mime/multipart"
 	"strings"
 	"time"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 type UserService interface {
@@ -45,7 +46,7 @@ func (s *userService) AuthenticateUser(account, password string) (*models.User, 
 		return nil, errors.New("用户不存在")
 	}
 	// 2.验证密码
-	if user.Password != password {
+	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password)); err != nil {
 		return nil, errors.New("密码错误")
 	}
 
@@ -63,13 +64,18 @@ func (s *userService) RegisterUser(email, pwd, pwdConfirm string) error {
 		return errors.New("邮箱已被注册")
 	}
 
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(pwd), bcrypt.DefaultCost)
+	if err != nil {
+		return errors.New("密码加密失败")
+	}
+
 	// 3.生成username (User+邮箱前缀+随机数)
 	username := generateUsername(email)
 	user := models.User{
 		Username:     username,
 		Email:        email,
 		Phone:        nil,
-		Password:     pwd,
+		Password:     string(hashedPassword),
 		Avatar:       "https://cube.elemecdn.com/3/7c/3ea6beec64369c2642b92c6726f1epng.png",
 		RegisterTime: time.Now(),
 	}
@@ -150,12 +156,14 @@ func (s *userService) ChangePassword(userId int, oldPassword, newPassword string
 	if err != nil {
 		return err
 	}
-	log.Printf("user密码: %v, 旧密码：%v", user.Password, oldPassword)
-	// 数据库暂时明文存储
-	if user.Password != oldPassword {
+	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(oldPassword)); err != nil {
 		return errors.New("旧密码错误")
 	}
-	user.Password = newPassword
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return errors.New("密码加密失败")
+	}
+	user.Password = string(hashedPassword)
 	return s.userRepo.Update(user)
 }
 

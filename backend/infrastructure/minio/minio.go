@@ -14,7 +14,7 @@ import (
 	"io"
 	"log"
 	"mime/multipart"
-	"os"
+	"net/url"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -101,25 +101,21 @@ func NewMinioService(cfg *config.MinioConfig) (*MinioService, error) {
 	}, nil
 }
 
-func (s *MinioService) UploadFromStream(ctx context.Context, userId int, r io.Reader, fileName string, fileSize int64, parentId string) (*models.File, error) {
+// UploadFromStream 小文件上传 (流式)
+// fileHash 由前端计算传入（MD5 或 SHA-256），后端不做重复计算，确保秒传一致性
+func (s *MinioService) UploadFromStream(ctx context.Context, userId int, r io.Reader, fileName string, fileSize int64, fileHash, parentId string) (*models.File, error) {
 	if fileName == "" {
 		return nil, errors.New("文件名不能为空")
 	}
-	// 获取文件扩展名(exe, txt等)
 	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(fileName), "."))
-	data, err := io.ReadAll(r)
-
-	if err != nil {
-		return nil, fmt.Errorf("读取文件失败：%w", err)
-	}
-
-	sum := sha256.Sum256(data)
-	fileHash := fmt.Sprintf("%x", sum[:])
 
 	objectKey := s.GenerateObjectKey(userId, parentId, fileName)
-	body := bytes.NewReader(data)
 
-	_, err = s.client.PutObject(ctx, s.bucket, objectKey, body, int64(len(data)), minio.PutObjectOptions{
+	// 使用 TeeReader：边上传边缓冲，一份数据同时用于 MinIO 上传和缩略图生成
+	var buf bytes.Buffer
+	tee := io.TeeReader(r, &buf)
+
+	_, err := s.client.PutObject(ctx, s.bucket, objectKey, tee, fileSize, minio.PutObjectOptions{
 		ContentType: "application/octet-stream",
 	})
 	if err != nil {
@@ -137,7 +133,7 @@ func (s *MinioService) UploadFromStream(ctx context.Context, userId int, r io.Re
 		Id:            utils.NewUUID(),
 		UserId:        userId,
 		Name:          fileName,
-		Size:          int64(len(data)),
+		Size:          fileSize,
 		SizeStr:       utils.FormatFileSize(fileSize),
 		IsDir:         false,
 		FileExtension: ext,
@@ -151,7 +147,7 @@ func (s *MinioService) UploadFromStream(ctx context.Context, userId int, r io.Re
 		ThumbnailURL:  fileURL,
 	}
 
-	if thumbURL, err := s.generateThumbnailFromBytes(ctx, objectKey, ext, data); err == nil && thumbURL != "" {
+	if thumbURL, err := s.generateThumbnailFromBytes(ctx, objectKey, ext, buf.Bytes()); err == nil && thumbURL != "" {
 		newFile.ThumbnailURL = thumbURL
 	} else if err != nil {
 		log.Printf("generate thumbnail failed (small upload): %v\n", err)
@@ -190,12 +186,41 @@ func (s *MinioService) UploadAvatarFromStream(ctx context.Context, r io.Reader, 
 	return fmt.Sprintf("%s?t=%d", s.GenerateObjectURL(avatarPath), time.Now().Unix()), nil
 }
 
+func (s *MinioService) GetObjectInfo(ctx context.Context, objectKey string) (int64, error) {
+	info, err := s.client.StatObject(ctx, s.bucket, objectKey, minio.StatObjectOptions{})
+	if err != nil {
+		return 0, err
+	}
+	return info.Size, nil
+}
+
 func (s *MinioService) DownloadFile(ctx context.Context, objectKey string) (io.ReadCloser, error) {
 	obj, err := s.client.GetObject(ctx, s.bucket, objectKey, minio.GetObjectOptions{})
 	if err != nil {
 		return nil, err
 	}
 	return obj, nil
+}
+
+func (s *MinioService) DownloadFileRange(ctx context.Context, objectKey string, start, end int64) (io.ReadCloser, error) {
+	opts := minio.GetObjectOptions{}
+	if err := opts.SetRange(start, end); err != nil {
+		return nil, err
+	}
+	obj, err := s.client.GetObject(ctx, s.bucket, objectKey, opts)
+	if err != nil {
+		return nil, err
+	}
+	return obj, nil
+}
+
+func (s *MinioService) PresignedGetURL(ctx context.Context, objectKey string, expiry time.Duration) (string, error) {
+	reqParams := make(url.Values)
+	u, err := s.client.PresignedGetObject(ctx, s.bucket, objectKey, expiry, reqParams)
+	if err != nil {
+		return "", err
+	}
+	return u.String(), nil
 }
 
 func (s *MinioService) DeleteFile(ctx context.Context, objectKey string) error {
@@ -232,19 +257,26 @@ func (s *MinioService) InitiateMultipartUpload(ctx context.Context, objectKey st
 	return uploadId, nil
 }
 
-// UploadPart 上传单个分片，返回 minio.PartInfo，其中包含 ETag，这是完成上传所必须的
-func (s *MinioService) UploadPart(ctx context.Context, objectKey, uploadId string, partNumber int, data []byte) (minio.ObjectPart, error) {
-	// 限制分片大小，MinIO/S3 要求除最后一块外，每块至少 5MB
-	// 这里不做强制校验，交由上层业务逻辑控制，但在实际调用 core 时如果太小可能会报错
+// UploadPart 上传单个分片，流式上传同时计算 SHA-256 用于完整性校验
+// expectedHash 为空则跳过校验；chunkSize 为分片实际字节数
+func (s *MinioService) UploadPart(ctx context.Context, objectKey, uploadId string, partNumber int, r io.Reader, chunkSize int64, expectedHash string) (minio.ObjectPart, string, error) {
+	hash := sha256.New()
+	tee := io.TeeReader(r, hash)
 
-	reader := bytes.NewReader(data)
-	size := int64(len(data))
-
-	part, err := s.core.PutObjectPart(ctx, s.bucket, objectKey, uploadId, partNumber, reader, size, minio.PutObjectPartOptions{})
+	part, err := s.core.PutObjectPart(ctx, s.bucket, objectKey, uploadId, partNumber, tee, chunkSize, minio.PutObjectPartOptions{})
 	if err != nil {
-		return minio.ObjectPart{}, fmt.Errorf("上传分片 %d 失败: %w", partNumber, err)
+		return minio.ObjectPart{}, "", fmt.Errorf("上传分片 %d 失败: %w", partNumber, err)
 	}
-	return part, nil
+
+	computedHash := fmt.Sprintf("%x", hash.Sum(nil))
+
+	// 如果前端传了 expectedHash 就校验
+	if expectedHash != "" && computedHash != expectedHash {
+		return minio.ObjectPart{}, computedHash, fmt.Errorf(
+			"分片 %d hash 校验失败: got=%s expected=%s", partNumber, computedHash[:16], expectedHash[:16])
+	}
+
+	return part, computedHash, nil
 }
 
 // CompleteMultipartUpload 完成分片上传，parts 参数必须包含所有分片的 PartNumber 和 ETag，且通常需要按 PartNumber 排序
@@ -339,57 +371,53 @@ func (s *MinioService) generateImageThumbnail(ctx context.Context, objectKey str
 }
 
 func (s *MinioService) generateVideoThumbnailFromBytes(ctx context.Context, objectKey string, data []byte) (string, error) {
-	tmpFile, err := os.CreateTemp("", "upload-video-*"+filepath.Ext(objectKey))
-	if err != nil {
-		return "", err
-	}
-	defer os.Remove(tmpFile.Name())
-	if _, err := tmpFile.Write(data); err != nil {
-		tmpFile.Close()
-		return "", err
-	}
-	tmpFile.Close()
-	return s.generateVideoThumbnailFromPath(ctx, objectKey, tmpFile.Name())
-}
-
-func (s *MinioService) generateVideoThumbnailFromObject(ctx context.Context, objectKey string) (string, error) {
-	tmpFile, err := os.CreateTemp("", "merged-video-*"+filepath.Ext(objectKey))
-	if err != nil {
-		return "", err
-	}
-	defer os.Remove(tmpFile.Name())
-	obj, err := s.client.GetObject(ctx, s.bucket, objectKey, minio.GetObjectOptions{})
-	if err != nil {
-		tmpFile.Close()
-		return "", err
-	}
-	defer obj.Close()
-	if _, err := io.Copy(tmpFile, obj); err != nil {
-		tmpFile.Close()
-		return "", err
-	}
-	tmpFile.Close()
-	return s.generateVideoThumbnailFromPath(ctx, objectKey, tmpFile.Name())
-}
-
-func (s *MinioService) generateVideoThumbnailFromPath(ctx context.Context, objectKey, videoPath string) (string, error) {
-	frameFile, err := os.CreateTemp("", "video-thumb-*.jpg")
-	if err != nil {
-		return "", err
-	}
-	frameFile.Close()
-	defer os.Remove(frameFile.Name())
-
-	cmd := exec.CommandContext(ctx, "ffmpeg", "-y", "-i", videoPath, "-ss", "00:00:01", "-frames:v", "1", "-vf", "scale=360:-1", frameFile.Name())
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return "", fmt.Errorf("ffmpeg thumbnail error: %w, output: %s", err, string(output))
-	}
-
-	data, err := os.ReadFile(frameFile.Name())
+	data, err := s.extractVideoThumbnailData(ctx, bytes.NewReader(data))
 	if err != nil {
 		return "", err
 	}
 	return s.uploadThumbnail(ctx, objectKey, data, "image/jpeg")
+}
+
+func (s *MinioService) generateVideoThumbnailFromObject(ctx context.Context, objectKey string) (string, error) {
+	obj, err := s.client.GetObject(ctx, s.bucket, objectKey, minio.GetObjectOptions{})
+	if err != nil {
+		return "", err
+	}
+	defer obj.Close()
+
+	data, err := s.extractVideoThumbnailData(ctx, obj)
+	if err != nil {
+		return "", err
+	}
+	return s.uploadThumbnail(ctx, objectKey, data, "image/jpeg")
+}
+
+func (s *MinioService) extractVideoThumbnailData(ctx context.Context, r io.Reader) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, "ffmpeg",
+		"-y",
+		"-i", "pipe:0",
+		"-ss", "00:00:01",
+		"-frames:v", "1",
+		"-vf", "scale=360:-1",
+		"-f", "image2",
+		"pipe:1",
+	)
+	cmd.Stdin = r
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("ffmpeg thumbnail error: %w, output: %s", err, stderr.String())
+	}
+
+	if stdout.Len() == 0 {
+		return nil, errors.New("ffmpeg produced no thumbnail output")
+	}
+
+	return stdout.Bytes(), nil
 }
 
 func (s *MinioService) uploadThumbnail(ctx context.Context, objectKey string, data []byte, contentType string) (string, error) {

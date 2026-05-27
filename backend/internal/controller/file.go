@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"fmt"
 	"go-cloud-storage/backend/internal/services"
 	"go-cloud-storage/backend/pkg/utils"
 	"io"
@@ -231,6 +232,7 @@ func (c *FileController) ChunkUploadPart(ctx *gin.Context) {
 	// 1. 获取参数
 	fileHash := ctx.PostForm("fileHash")
 	chunkIndexStr := ctx.PostForm("chunkIndex")
+	chunkHash := ctx.PostForm("chunkHash") // 可选：分片 SHA-256，用于完整性校验
 
 	if fileHash == "" || chunkIndexStr == "" {
 		utils.Fail(ctx, http.StatusBadRequest, "缺少必要参数 fileHash 或 chunkIndex")
@@ -240,14 +242,12 @@ func (c *FileController) ChunkUploadPart(ctx *gin.Context) {
 	chunkIndex, _ := strconv.Atoi(chunkIndexStr)
 	userId := ctx.GetInt("userId")
 
-	// 获取上传的文件分片流
 	fileHeader, err := ctx.FormFile("chunk")
 	if err != nil {
 		utils.Fail(ctx, http.StatusBadRequest, "未找到分片文件流")
 		return
 	}
 
-	// 3.打开文件流
 	srcfile, err := fileHeader.Open()
 	if err != nil {
 		utils.Fail(ctx, http.StatusInternalServerError, "无法读取分片文件")
@@ -255,17 +255,9 @@ func (c *FileController) ChunkUploadPart(ctx *gin.Context) {
 	}
 	defer srcfile.Close()
 
-	// 4.读取二进制数据 (MinIO PutObjectPart 需要 Reader 或 []byte，这里读入内存传给 Service)
-	// 注意：分片通常为 5MB~20MB，读入内存是安全的
-	data, err := io.ReadAll(srcfile)
-	if err != nil {
-		utils.Fail(ctx, http.StatusInternalServerError, "读取分片数据失败")
-		return
-	}
-
-	// 5.调用 Service 上传: 这里要保证 并发安全 + 幂等。
-	// Service 层逻辑：根据 fileHash 从 Redis 获取 UploadID -> 调用 MinIO UploadPart -> 保存 ETag 到 Redis
-	err = c.fileService.UploadChunk(ctx, userId, fileHash, chunkIndex, data)
+	// 流式上传: 数据从 HTTP body 直通 MinIO，零内存缓冲
+	// chunkHash 非空时，服务端会边上传边校验 hash
+	err = c.fileService.UploadChunk(ctx, userId, fileHash, chunkIndex, srcfile, fileHeader.Size, chunkHash)
 	if err != nil {
 		utils.Fail(ctx, http.StatusInternalServerError, "分片上传失败: "+err.Error())
 		return
@@ -297,6 +289,23 @@ func (c *FileController) ChunkUploadMerge(ctx *gin.Context) {
 	}
 	// 返回完整的文件对象/仅返回 URL
 	utils.Success(ctx, file)
+}
+
+// GetChunkUploadProgress 查询服务端上传进度（断点续传用）
+func (c *FileController) GetChunkUploadProgress(ctx *gin.Context) {
+	fileHash := ctx.Query("fileHash")
+	if fileHash == "" {
+		utils.Fail(ctx, http.StatusBadRequest, "缺少 fileHash 参数")
+		return
+	}
+	userId := ctx.GetInt("userId")
+
+	progress, err := c.fileService.GetChunkUploadProgress(ctx, userId, fileHash)
+	if err != nil {
+		utils.Fail(ctx, http.StatusInternalServerError, "查询进度失败: "+err.Error())
+		return
+	}
+	utils.Success(ctx, progress)
 }
 
 // ChunkUploadCancel 取消上传
@@ -354,26 +363,102 @@ func (c *FileController) MoveFile(ctx *gin.Context) {
 	utils.Success(ctx, gin.H{"message": "移动成功"})
 }
 
+// GetDownloadInfo 返回下载策略：推荐分块大小、块数、是否支持 Range 等
+func (c *FileController) GetDownloadInfo(ctx *gin.Context) {
+	fileId := ctx.Param("fileId")
+	userId := ctx.GetInt("userId")
+
+	info, err := c.fileService.GetDownloadInfo(ctx, userId, fileId)
+	if err != nil {
+		utils.Fail(ctx, http.StatusBadRequest, err.Error())
+		return
+	}
+	utils.Success(ctx, info)
+}
+
 func (c *FileController) Download(ctx *gin.Context) {
 	fileId := ctx.Param("fileId")
 	userId := ctx.GetInt("userId")
 
+	file, err := c.fileService.GetFileById(fileId)
+	if err != nil {
+		utils.Fail(ctx, http.StatusBadRequest, "文件不存在")
+		return
+	}
+
+	// 大文件 (>100MB): 返回 MinIO 预签名 URL 让客户端直连
+	// 客户端可用 Range 头并行下载，且不经过应用服务器
+	if file.Size > 100*1024*1024 {
+		u, _, err := c.fileService.GetPresignedDownloadURL(ctx, userId, fileId)
+		if err != nil {
+			utils.Fail(ctx, http.StatusInternalServerError, "生成下载链接失败")
+			return
+		}
+		ctx.Header("Content-Disposition", "attachment; filename=\""+file.Name+"\"")
+		ctx.Redirect(http.StatusFound, u)
+		return
+	}
+
+	objSize, err := c.fileService.GetObjectSize(ctx, userId, fileId)
+	if err != nil {
+		utils.Fail(ctx, http.StatusInternalServerError, "获取文件信息失败")
+		return
+	}
+
+	rangeHeader := ctx.GetHeader("Range")
+
+	// 支持 Range 请求: 客户端可多线程分段下载
+	if rangeHeader != "" {
+		var start, end int64
+		_, err := fmt.Sscanf(rangeHeader, "bytes=%d-%d", &start, &end)
+		if err != nil {
+			// 尝试 "bytes=0-" 格式
+			_, err = fmt.Sscanf(rangeHeader, "bytes=%d-", &start)
+			if err != nil {
+				utils.Fail(ctx, http.StatusBadRequest, "无效的 Range 头")
+				return
+			}
+			end = objSize - 1
+		}
+
+		if start > end || start >= objSize {
+			ctx.Header("Content-Range", fmt.Sprintf("bytes */%d", objSize))
+			ctx.Status(http.StatusRequestedRangeNotSatisfiable)
+			return
+		}
+		if end >= objSize {
+			end = objSize - 1
+		}
+
+		reader, fileInfo, infoSize, err := c.fileService.DownloadRange(ctx, userId, fileId, start, end)
+		if err != nil {
+			utils.Fail(ctx, http.StatusInternalServerError, "下载失败")
+			return
+		}
+		defer reader.Close()
+
+		contentLen := end - start + 1
+		ctx.Header("Content-Disposition", "attachment; filename=\""+fileInfo.Name+"\"")
+		ctx.Header("Content-Type", "application/octet-stream")
+		ctx.Header("Content-Length", fmt.Sprintf("%d", contentLen))
+		ctx.Header("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, infoSize))
+		ctx.Header("Accept-Ranges", "bytes")
+		ctx.Status(http.StatusPartialContent)
+		io.Copy(ctx.Writer, reader)
+		return
+	}
+
+	// 无 Range: 全量下载
 	reader, fileInfo, err := c.fileService.Download(ctx, userId, fileId)
 	if err != nil {
-		//utils.Fail(ctx, http.StatusInternalServerError, "下载失败")
-		ctx.Status(http.StatusInternalServerError)
+		utils.Fail(ctx, http.StatusInternalServerError, "下载失败")
 		return
 	}
 	defer reader.Close()
 
-	// 设置下载头
 	ctx.Header("Content-Disposition", "attachment; filename=\""+fileInfo.Name+"\"")
 	ctx.Header("Content-Type", "application/octet-stream")
-
-	// 返回数据流给前端
-	_, err = io.Copy(ctx.Writer, reader)
-	if err != nil {
-		utils.Fail(ctx, http.StatusInternalServerError, "文件下载失败")
-		return
-	}
+	ctx.Header("Content-Length", fmt.Sprintf("%d", objSize))
+	ctx.Header("Accept-Ranges", "bytes")
+	io.Copy(ctx.Writer, reader)
 }

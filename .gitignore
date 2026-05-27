@@ -1,0 +1,31 @@
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Dependencies
+node_modules/
+front/node_modules/
+
+# Build output
+front/dist/
+backend/tmp/
+
+# Environment & secrets
+.env
+.env.local
+*.log
+
+# Documentation (design docs, architecture notes)
+docs/
+
+# Go build artifacts
+backend/main
+*.exe
+*.test
+*.out

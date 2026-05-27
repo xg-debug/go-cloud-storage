@@ -15,35 +15,14 @@ const routes = [
     component: Container,
     meta: { requiresAuth: true },
     children: [
-        {path: '', name: 'MyDrive', component: () => import('@/views/MyDrive.vue'), meta: {title: '全部文件'}},
-        {path: 'recent', name: 'Recent', component: () => import('@/views/RecentFiles.vue'), meta: {title: '最近文件'}},
-        {
-            path: 'starred',
-            name: 'Starred',
-            component: () => import('@/views/StarredFiles.vue'),
-            meta: {title: '收藏夹'}
-        },
-        {
-            path: 'file',
-            name: 'FileCategory',
-            component: () => import('@/views/FileCategory.vue'),
-            meta: {title: '文件分类', icon: 'FolderOpened'}
-        },
-        {
-            path: 'file/:type',
-            name: 'FileCategoryType',
-            component: () => import('@/views/FileCategory.vue'),
-            meta: {title: '文件分类'}
-        },
-        {path: 'shared', name: 'Shared', component: () => import('@/views/SharedFiles.vue'), meta: {title: '我的分享'}},
-        {path: 'recycle', name: 'Recycle', component: () => import('@/views/Recycle.vue'), meta: {title: '回收站'}},
-        {
-            path: 'user',
-            name: 'UserProfile',
-            component: () => import('@/views/UserProfile.vue'),
-            meta: {title: '个人中心'}
-        },
-        // {path: 'settings', name: 'Settings', component: () => import('@/views/Settings.vue'), meta: {title: '设置'}}
+      { path: '', name: 'MyDrive', component: () => import('@/views/MyDrive.vue'), meta: { title: '全部文件' } },
+      { path: 'recent', name: 'Recent', component: () => import('@/views/RecentFiles.vue'), meta: { title: '最近文件' } },
+      { path: 'starred', name: 'Starred', component: () => import('@/views/StarredFiles.vue'), meta: { title: '收藏夹' } },
+      { path: 'file', name: 'FileCategory', component: () => import('@/views/FileCategory.vue'), meta: { title: '文件分类' } },
+      { path: 'file/:type', name: 'FileCategoryType', component: () => import('@/views/FileCategory.vue'), meta: { title: '文件分类' } },
+      { path: 'shared', name: 'Shared', component: () => import('@/views/SharedFiles.vue'), meta: { title: '我的分享' } },
+      { path: 'recycle', name: 'Recycle', component: () => import('@/views/Recycle.vue'), meta: { title: '回收站' } },
+      { path: 'user', name: 'UserProfile', component: () => import('@/views/UserProfile.vue'), meta: { title: '个人中心' } }
     ]
   },
   {
@@ -65,12 +44,8 @@ const router = createRouter({
   routes
 })
 
-function setPageTitle(title) {
-  document.title = title ? `${title} - 云网盘` : '云网盘'
-}
-
 router.beforeEach((to, from, next) => {
-  setPageTitle(to.meta.title)
+  document.title = to.meta.title ? `${to.meta.title} - CloudBox` : 'CloudBox'
   const requiresAuth = to.matched.some(record => record.meta.requiresAuth)
   const token = store.state.token || localStorage.getItem('token')
 
@@ -78,7 +53,6 @@ router.beforeEach((to, from, next) => {
     ElMessage.warning('请先登录')
     next({ path: '/login' })
   } else if (to.path === '/login' && token) {
-    ElMessage.info('您已登录')
     next({ path: '/' })
   } else {
     next()

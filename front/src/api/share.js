@@ -42,14 +42,6 @@ export const cancelShare = (shareId) => {
     })
 }
 
-// 删除分享记录
-export const deleteShare = (shareId) => {
-    return request({
-        url: `/share/${shareId}`,
-        method: 'delete'
-    })
-}
-
 // 访问分享（公开接口）
 export const accessShare = (token, code) => {
     return request({

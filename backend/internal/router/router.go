@@ -41,6 +41,7 @@ func SetUpRouter(db *gorm.DB, minioService *minio.MinioService, rabbitClient *mq
 	favoriteRepo := repositories.NewFavoriteRepository(db)
 	shareRepo := repositories.NewShareRepository(db)
 	storageQuotaRepo := repositories.NewStorageQuotaRepository(db)
+	notificationRepo := repositories.NewNotificationRepository(db)
 
 	// 初始化服务
 	userService := services.NewUserService(userRepo, fileRepo, storageQuotaRepo, minioService)
@@ -52,6 +53,7 @@ func SetUpRouter(db *gorm.DB, minioService *minio.MinioService, rabbitClient *mq
 	shareService := services.NewShareService(shareRepo, fileRepo)
 	statsService := services.NewStatsService(fileRepo, storageQuotaRepo, shareRepo)
 	storageQuotaService := services.NewStorageQuotaService(storageQuotaRepo)
+	notificationService := services.NewNotificationService(notificationRepo)
 
 	loginCtrl := controller.NewLoginController(userService)
 	fileCtrl := controller.NewFileController(fileService)
@@ -61,6 +63,7 @@ func SetUpRouter(db *gorm.DB, minioService *minio.MinioService, rabbitClient *mq
 	categoryCtrl := controller.NewCategoryController(categoryService, fileService)
 	shareCtrl := controller.NewShareController(shareService)
 	statsCtrl := controller.NewStatsController(statsService, storageQuotaService)
+	notificationCtrl := controller.NewNotificationController(notificationService)
 
 	if rabbitClient != nil {
 		startRecycleCleanupWorkers(recycleService, rabbitClient, mqCfg)
@@ -98,6 +101,7 @@ func SetUpRouter(db *gorm.DB, minioService *minio.MinioService, rabbitClient *mq
 		file.POST("/chunk/upload", fileCtrl.ChunkUploadPart)
 		file.POST("/chunk/merge", fileCtrl.ChunkUploadMerge)
 		file.POST("/chunk/cancel", fileCtrl.ChunkUploadCancel)
+		file.GET("/chunk/progress", fileCtrl.GetChunkUploadProgress)
 
 		file.DELETE("/:fileId", fileCtrl.Delete)
 		file.POST("/rename", fileCtrl.Rename)
@@ -107,6 +111,7 @@ func SetUpRouter(db *gorm.DB, minioService *minio.MinioService, rabbitClient *mq
 		file.GET("/recent", fileCtrl.GetRecentFiles)
 		file.POST("/search", fileCtrl.SearchFiles)
 		file.GET("/download/:fileId", fileCtrl.Download)
+		file.GET("/download-info/:fileId", fileCtrl.GetDownloadInfo)
 	}
 
 	favorite := ginServer.Group("favorite")
@@ -146,6 +151,19 @@ func SetUpRouter(db *gorm.DB, minioService *minio.MinioService, rabbitClient *mq
 		share.GET("/:shareId", shareCtrl.GetShareDetail)     // 获取分享详情
 		share.PUT("/:shareId", shareCtrl.UpdateShare)        // 更新分享设置
 		share.PUT("/:shareId/cancel", shareCtrl.CancelShare) // 取消分享
+	}
+
+	// 通知路由
+	notification := ginServer.Group("notification")
+	notification.Use(middleware.JWTAuthMiddleware())
+	{
+		notification.GET("", notificationCtrl.GetNotifications)
+		notification.GET("/unread-count", notificationCtrl.GetUnreadCount)
+		notification.PUT("/:id/read", notificationCtrl.MarkAsRead)
+		notification.PUT("/read-all", notificationCtrl.MarkAllAsRead)
+		notification.DELETE("/:id", notificationCtrl.DeleteNotification)
+		notification.DELETE("/all", notificationCtrl.DeleteAllNotifications)
+		notification.POST("", notificationCtrl.CreateNotification)
 	}
 
 	// 公开分享访问路由（无需认证）

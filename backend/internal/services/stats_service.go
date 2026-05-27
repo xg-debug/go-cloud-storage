@@ -1,6 +1,7 @@
 package services
 
 import (
+	"fmt"
 	"go-cloud-storage/backend/internal/models"
 	"go-cloud-storage/backend/internal/repositories"
 	"math"
@@ -88,7 +89,7 @@ func (s *statsService) GetUserDashboardStats(userId int) (*models.UserDashboardS
 			fileType := getFileType(file.FileExtension)
 			if stat, exists := fileTypeMap[fileType]; exists {
 				stat.Count++
-				//stat.Size += file.Size
+				stat.Size += file.Size
 			}
 		}
 	}
@@ -165,4 +166,23 @@ func getFileType(extension string) string {
 
 	// 其他类型
 	return "other"
+}
+
+
+func formatSize(bytes int64) string {
+	if bytes == 0 {
+		return "0 B"
+	}
+	units := []string{"B", "KB", "MB", "GB", "TB"}
+	k := float64(1024)
+	size := float64(bytes)
+	i := 0
+	for size >= k && i < len(units)-1 {
+		size /= k
+		i++
+	}
+	if i == 0 {
+		return fmt.Sprintf("%d B", bytes)
+	}
+	return fmt.Sprintf("%.1f %s", size, units[i])
 }

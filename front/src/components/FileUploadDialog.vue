@@ -265,50 +265,44 @@ const resetState = () => {
 
 <style scoped>
 .drop-zone {
-    border: 2px dashed var(--border-medium);
+    border: 2px dashed var(--cb-line);
     padding: 48px 24px;
     text-align: center;
     cursor: pointer;
-    transition: all var(--transition-normal);
-    border-radius: var(--radius-xl);
-    background: linear-gradient(135deg, rgba(248, 250, 252, 0.8) 0%, rgba(241, 245, 249, 0.8) 100%);
+    transition: all var(--cb-transition);
+    border-radius: var(--cb-radius-lg);
+    background: var(--cb-surface-muted);
 }
 
-.drop-zone:hover {
-    border-color: var(--primary-color);
-    background: linear-gradient(135deg, rgba(238, 242, 255, 0.9) 0%, rgba(250, 245, 255, 0.9) 100%);
-}
-
+.drop-zone:hover,
 .drop-zone.dragging {
-    border-color: var(--primary-color);
-    background: linear-gradient(135deg, rgba(238, 242, 255, 0.95) 0%, rgba(250, 245, 255, 0.95) 100%);
-    transform: scale(1.02);
-    box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.1);
+    border-color: var(--cb-primary);
+    background: var(--cb-primary-light);
 }
 
 .drop-zone .el-icon {
-    color: var(--primary-color);
+    color: var(--cb-primary);
 }
 
 .drop-zone p {
     margin: 16px 0;
-    color: var(--text-secondary);
+    color: var(--cb-text-soft);
     font-size: 15px;
 }
+
 .upload-progress-info {
     text-align: center;
     padding: 20px 0;
 }
 
 .upload-progress-info h4 {
-    color: var(--text-primary);
+    color: var(--cb-text);
     font-weight: 600;
 }
 
 .upload-progress-info p {
-    color: var(--text-secondary);
+    color: var(--cb-text-soft);
     margin-top: 12px;
     font-size: 14px;
 }
-
 </style>

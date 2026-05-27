@@ -5,75 +5,6 @@
 </template>
 
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
-
-:root {
-    /* 主色调 - 现代渐变蓝紫 (更统一的渐变) */
-    --primary-color: #6366f1;
-    --primary-light: #eef2ff;
-    --primary-dark: #4f46e5;
-    /* 优化渐变色：从主蓝紫色 (#6366f1) 到深紫色 (#7c3aed)，色彩过渡更自然 */
-    --primary-gradient: linear-gradient(135deg, #6366f1 0%, #7c3aed 100%);
-
-    /* 辅助色 */
-    --secondary-color: #8b5cf6;
-    --success-color: #10b981;
-    --success-light: #d1fae5;
-    --warning-color: #f59e0b;
-    --warning-light: #fef3c7;
-    --danger-color: #ef4444; /* 保持红色作为错误提示色 */
-    --danger-light: #fee2e2;
-    --info-color: #06b6d4;
-    --info-light: #cffafe;
-
-    /* 背景色 */
-    --bg-primary: #f8fafc;
-    --bg-secondary: #f1f5f9;
-    --bg-tertiary: #e2e8f0;
-    --card-bg: #ffffff;
-    --glass-bg: rgba(255, 255, 255, 0.8);
-    --glass-border: rgba(255, 255, 255, 0.3);
-
-    /* 文字色 */
-    --text-primary: #0f172a;
-    --text-secondary: #475569;
-    --text-tertiary: #94a3b8;
-    --text-inverse: #ffffff;
-
-    /* 边框色 */
-    --border-light: #e2e8f0;
-    --border-medium: #cbd5e1;
-    --border-dark: #94a3b8;
-
-    /* 阴影 */
-    --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
-    --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
-    --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
-    --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
-    --shadow-glow: 0 0 20px rgba(99, 102, 241, 0.3);
-    --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.06);
-
-    /* 圆角 */
-    --radius-sm: 6px;
-    --radius-md: 10px;
-    --radius-lg: 16px;
-    --radius-xl: 24px;
-    --radius-full: 9999px;
-
-    /* 过渡 */
-    --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
-    --transition-normal: 250ms cubic-bezier(0.4, 0, 0.2, 1);
-    --transition-slow: 350ms cubic-bezier(0.4, 0, 0.2, 1);
-
-    /* 间距 */
-    --spacing-xs: 4px;
-    --spacing-sm: 8px;
-    --spacing-md: 16px;
-    --spacing-lg: 24px;
-    --spacing-xl: 32px;
-    --spacing-2xl: 48px;
-}
-
 * {
     margin: 0;
     padding: 0;
@@ -87,55 +18,7 @@ html, body {
 
 #app {
     height: 100vh;
-    margin: 0;
-    padding: 0;
-    background: #f1f5f9;
-    color: var(--text-primary);
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-}
-
-/* 全局滚动条样式 */
-::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
-}
-
-::-webkit-scrollbar-track {
-    background: transparent;
-    border-radius: var(--radius-full);
-}
-
-::-webkit-scrollbar-thumb {
-    background: var(--border-medium);
-    border-radius: var(--radius-full);
-    transition: background var(--transition-fast);
-}
-
-::-webkit-scrollbar-thumb:hover {
-    background: var(--border-dark);
-}
-
-/* 全局动画 */
-@keyframes fadeIn {
-    from { opacity: 0; transform: translateY(10px); }
-    to { opacity: 1; transform: translateY(0); }
-}
-
-@keyframes slideIn {
-    from { opacity: 0; transform: translateX(-20px); }
-    to { opacity: 1; transform: translateX(0); }
-}
-
-@keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.5; }
-}
-
-@keyframes shimmer {
-    0% { background-position: -200% 0; }
-    100% { background-position: 200% 0; }
+    background: var(--cb-bg);
+    color: var(--cb-text);
 }
 </style>

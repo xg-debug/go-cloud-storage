@@ -1,342 +1,118 @@
 <template>
-    <div class="recent-files">
-        <PageHeader
-            :icon="Clock"
-            title="最近文件"
-            description="查看您最近访问的文件"
-            icon-bg="#e2e8f0"
-            icon-color="#ffffff"
-        >
-            <template #actions>
-                <el-select v-model="timeRange" placeholder="时间范围" class="time-select">
-                    <el-option label="今天" value="today" />
-                    <el-option label="本周" value="week" />
-                    <el-option label="本月" value="month" />
-                </el-select>
-            </template>
-        </PageHeader>
-
-        <!-- 文件内容 -->
-        <div class="file-content">
-            <!-- 空状态 -->
-            <div v-if="!filteredFiles || filteredFiles.length === 0" class="empty-state">
-                <div class="empty-icon">
-                    <el-icon :size="80" color="#c0c4cc">
-                        <Clock />
-                    </el-icon>
-                </div>
-                <h3>暂无最近文件</h3>
-                <p>您在所选时间范围内没有访问任何文件</p>
-            </div>
-
-            <!-- 时间线视图 -->
-            <div v-else class="timeline-container">
-                <el-timeline class="file-timeline">
-                    <el-timeline-item
-                        v-for="(day, index) in filteredFiles"
-                        :key="index"
-                        :timestamp="day.date"
-                        placement="top"
-                        size="large"
-                        type="primary"
-                    >
-                        <div class="day-files">
-                            
-                            <div class="files-grid">
-                                <div 
-                                    class="file-card" 
-                                    v-for="file in day.files" 
-                                    :key="file.id"
-                                >
-                                    <!-- 文件图标 -->
-                                    <div class="file-icon">
-                                        <el-icon :size="32" :color="getFileIconColor(file.name, file.is_dir === true)">
-                                            <component :is="getFileIcon(file.name, file.is_dir === true)"/>
-                                        </el-icon>
-                                    </div>
-                                    
-                                    <!-- 文件信息 -->
-                                    <div class="file-info">
-                                        <div class="file-name" :title="file.name">{{ file.name }}</div>
-                                        <div class="file-meta">
-                                            <span class="file-size">{{ file.size_str }}</span>
-                                            <span class="file-time">{{ file.modified }}</span>
-                                        </div>
-                                    </div>
-                                    
-                                    <!-- 操作按钮 -->
-                                    <div class="file-actions">
-                                        <el-button size="small" link class="action-btn" @click="handleOpen(file)">
-                                            <el-icon><View /></el-icon>
-                                            打开
-                                        </el-button>
-                                        <el-button size="small" link class="action-btn" @click="handleLocate(file)">
-                                            <el-icon><Location /></el-icon>
-                                            定位
-                                        </el-button>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </el-timeline-item>
-                </el-timeline>
-            </div>
+  <div class="page-wrap">
+    <div class="page-hdr">
+      <div class="page-hdr-title">
+        <div class="page-hdr-icon" style="background:#FFFBEB;color:#F59E0B;">
+          <el-icon :size="20"><Clock /></el-icon>
         </div>
+        <div>
+          <h1>最近访问</h1>
+          <p>快速找回近期使用的文件</p>
+        </div>
+      </div>
+      <el-select v-model="timeRange" size="default" @change="fetchData" style="width:120px;">
+        <el-option label="今天" value="today" />
+        <el-option label="本周" value="week" />
+        <el-option label="本月" value="month" />
+      </el-select>
     </div>
+
+    <div class="page-body">
+      <div v-if="!files || files.length === 0" class="cb-empty-state">
+        <div class="empty-icon"><el-icon :size="36"><Clock /></el-icon></div>
+        <h3>暂无最近文件</h3>
+        <p>在所选时间范围内没有访问记录</p>
+      </div>
+
+      <template v-else>
+        <div v-for="(day, idx) in files" :key="idx" class="day-group">
+          <div class="day-label">{{ formatDay(day.date) }}</div>
+          <div class="day-list">
+            <div v-for="file in day.files" :key="file.id" class="recent-row" @dblclick="openFile(file)">
+              <div class="rr-icon" :style="{ background: iconBg(file) }">
+                <el-icon :size="20" :color="getFileIconColor(file.name, file.is_dir)">
+                  <component :is="getFileIcon(file.name, file.is_dir)" />
+                </el-icon>
+              </div>
+              <div class="rr-info">
+                <div class="rr-name">{{ file.name }}</div>
+                <div class="rr-meta">{{ file.size_str }} &middot; {{ file.modified || file.created_at }}</div>
+              </div>
+              <button class="rr-btn" @click.stop="openFile(file)">
+                <el-icon :size="16"><ArrowRight /></el-icon>
+              </button>
+            </div>
+          </div>
+        </div>
+      </template>
+    </div>
+  </div>
 </template>
 
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
-import { Clock, Location, View } from '@element-plus/icons-vue'
+import { ref, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
+import { ArrowRight, Clock } from '@element-plus/icons-vue'
 import { getRecentFiles } from '@/api/file'
 import { getFileIcon, getFileIconColor } from '@/utils/fileIcon'
-import PageHeader from '@/components/common/PageHeader.vue'
 
-// 时间范围
+const router = useRouter()
 const timeRange = ref('week')
-const allFiles = ref([])
+const files = ref([])
 
-// 拉取数据方法
-async function fetchRecentFiles() {
-    try {
-        const res = await getRecentFiles(timeRange.value)
-        allFiles.value = res || []
-    } catch (err) {
-        console.error('获取最近文件失败', err)
-        allFiles.value = []
-    }
+async function fetchData() {
+  try { files.value = await getRecentFiles(timeRange.value) || [] } catch { files.value = [] }
 }
-
-// 监听时间范围变化
-watch(timeRange, () => {
-    fetchRecentFiles()
-})
-
-// 首次加载
-onMounted(() => {
-    fetchRecentFiles()
-})
-
-const filteredFiles = computed(() => allFiles.value) // 后端已经按 timeRange 过滤好
-
-// 操作按钮方法
-function handleOpen(file) {
-    console.log('打开文件:', file)
-    // TODO: 实现文件打开逻辑
+function openFile(f) {
+  if (f.is_dir) router.push({ name: 'MyDrive', query: { parentId: f.id } })
+  else window.open(f.file_url, '_blank')
 }
-
-function handleLocate(file) {
-    console.log('定位文件:', file)
-    // TODO: 实现文件定位逻辑
+function iconBg(f) {
+  if (f.is_dir) return '#FFFBF0'
+  const e = (f.extension || '').toLowerCase()
+  if (['jpg','jpeg','png','gif','webp'].includes(e)) return '#FDF2F8'
+  if (['mp4','avi','mov','mkv','webm'].includes(e)) return '#FEF2F2'
+  if (['mp3','wav','flac'].includes(e)) return '#F5F3FF'
+  if (['pdf','doc','docx','txt'].includes(e)) return '#EEF4FF'
+  return '#F8F9FB'
 }
+function formatDay(d) {
+  if (!d) return '更早'
+  const diff = Math.floor((Date.now() - new Date(d).getTime()) / 864e5)
+  if (diff === 0) return '今天'
+  if (diff === 1) return '昨天'
+  return d
+}
+onMounted(fetchData)
 </script>
 
 <style scoped>
-.recent-files {
-  height: 100vh;
-  display: flex;
-  flex-direction: column;
-  background: #f8fafc;
+.day-group { margin-bottom: 4px; }
+.day-group:first-child { margin-top: 0; }
+.day-label {
+  font-size: 11px; font-weight: 700; color: var(--cb-text-muted);
+  text-transform: uppercase; letter-spacing: .5px; padding: 6px 4px 8px;
 }
-
-.time-select {
-  width: 140px;
+.day-list { display: grid; gap: 2px; }
+.recent-row {
+  display: flex; align-items: center; gap: 14px;
+  padding: 10px 14px; border-radius: var(--cb-radius-sm);
+  cursor: pointer; transition: background var(--cb-transition-fast);
 }
-
-.time-select :deep(.el-input__wrapper) {
-  background: #fff;
-  border: 1px solid var(--border-light);
+.recent-row:hover { background: var(--cb-surface-muted); }
+.rr-icon {
+  width: 40px; height: 40px; border-radius: 10px;
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
 }
-
-/* 文件内容 */
-.file-content {
-  flex: 1;
-  background: white;
-  overflow: auto;
+.rr-info { flex: 1; min-width: 0; }
+.rr-name { font-size: 14px; font-weight: 600; color: var(--cb-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-bottom: 2px; }
+.rr-meta { font-size: 12px; color: var(--cb-text-muted); }
+.rr-btn {
+  width: 32px; height: 32px; border: 1px solid var(--cb-border); border-radius: 50%;
+  background: var(--cb-surface); color: var(--cb-text-muted); cursor: pointer;
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  opacity: 0; transition: all var(--cb-transition-fast);
 }
-
-/* 空状态 */
-.empty-state {
-  padding: 80px 24px;
-  text-align: center;
-  color: #909399;
-}
-
-.empty-icon {
-  margin-bottom: 24px;
-}
-
-.empty-state h3 {
-  font-size: 20px;
-  color: #4a5568;
-  margin: 0 0 12px 0;
-}
-
-.empty-state p {
-  margin: 0;
-  font-size: 14px;
-}
-
-/* 时间线容器 */
-.timeline-container {
-  padding: 24px 24px 48px 24px;
-}
-
-.file-timeline {
-  padding-left: 0;
-}
-
-.file-timeline :deep(.el-timeline-item__wrapper) {
-  padding-left: 32px;
-  margin-bottom: 24px;
-}
-
-.file-timeline :deep(.el-timeline-item:last-child .el-timeline-item__wrapper) {
-  margin-bottom: 48px;
-}
-
-.file-timeline :deep(.el-timeline-item__tail) {
-  border-left: 2px solid #e2e8f0;
-}
-
-.file-timeline :deep(.el-timeline-item__node) {
-  background: #8b5cf6;
-  border-color: #8b5cf6;
-  width: 16px;
-  height: 16px;
-}
-
-.file-timeline :deep(.el-timeline-item__timestamp) {
-  font-size: 16px;
-  font-weight: 600;
-  color: #374151;
-  margin-bottom: 16px;
-}
-
-/* 每日文件 */
-.day-files {
-  background: white;
-  border-radius: 12px;
-  padding: 20px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
-  border: 1px solid #e2e8f0;
-}
-
-.day-header {
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  margin-bottom: 16px;
-  padding-bottom: 12px;
-  border-bottom: 1px solid #f1f5f9;
-}
-
-.file-count {
-  font-size: 12px;
-  color: #6b7280;
-  background: #f3f4f6;
-  padding: 4px 8px;
-  border-radius: 12px;
-}
-
-/* 文件网格 */
-.files-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 16px;
-}
-
-.file-card {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px;
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
-  transition: all 0.2s ease;
-  cursor: pointer;
-}
-
-.file-card:hover {
-  border-color: #8b5cf6;
-  box-shadow: 0 4px 12px rgba(139, 92, 246, 0.15);
-  transform: translateY(-1px);
-}
-
-.file-icon {
-  flex-shrink: 0;
-  width: 48px;
-  height: 48px;
-  background: #f9fafb;
-  border-radius: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.file-info {
-  flex: 1;
-  min-width: 0;
-}
-
-.file-name {
-  font-size: 14px;
-  font-weight: 500;
-  color: #1f2937;
-  margin-bottom: 4px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.file-meta {
-  display: flex;
-  gap: 12px;
-  font-size: 12px;
-  color: #6b7280;
-}
-
-.file-actions {
-  display: flex;
-  gap: 8px;
-  flex-shrink: 0;
-}
-
-.file-actions .el-button {
-  padding: 4px 8px;
-  font-size: 12px;
-}
-
-/* 响应式设计 */
-@media (max-width: 768px) {
-  .timeline-container {
-    padding: 16px;
-  }
-  
-  .day-files {
-    padding: 16px;
-  }
-  
-  .files-grid {
-    grid-template-columns: 1fr;
-    gap: 12px;
-  }
-  
-  .file-card {
-    padding: 10px;
-  }
-  
-  .file-actions {
-    flex-direction: column;
-    gap: 4px;
-  }
-}
-
-.action-btn {
-  color: #3b82f6 !important;
-}
-
-.action-btn:hover {
-  color: #2563eb !important;
-}
+.recent-row:hover .rr-btn { opacity: 1; }
+.rr-btn:hover { background: var(--cb-primary); color: #fff; border-color: var(--cb-primary); }
 </style>

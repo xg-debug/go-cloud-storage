@@ -88,14 +88,19 @@ type FileService interface {
 
 	UploadFile(ctx context.Context, r io.Reader, userId int, fileName string, fileSize int64, fileHash string, parentId string) (*models.File, error)
 	InitChunkUpload(ctx context.Context, userId int, filename, fileMd5 string, parentId string, fileSize int64) (gin.H, error)
-	UploadChunk(ctx context.Context, userId int, fileHash string, chunkIndex int, data []byte) error
+	UploadChunk(ctx context.Context, userId int, fileHash string, chunkIndex int, r io.Reader, chunkSize int64, expectedChunkHash string) error
 	MergeChunks(ctx context.Context, userId int, fileHash, fileName, parentId string, fileSize int64) (*models.File, error)
 	CancelChunkUpload(ctx context.Context, userId int, fileHash string) error
+	GetChunkUploadProgress(ctx context.Context, userId int, fileHash string) (map[string]interface{}, error)
 
 	GetFolderTree(ctx context.Context, userId int) ([]FolderNode, error)
 	MoveFile(ctx context.Context, userId int, fileId, targetFolderId string) error
 
 	Download(ctx context.Context, userId int, fileId string) (io.ReadCloser, *models.File, error)
+	DownloadRange(ctx context.Context, userId int, fileId string, start, end int64) (io.ReadCloser, *models.File, int64, error)
+	GetObjectSize(ctx context.Context, userId int, fileId string) (int64, error)
+	GetPresignedDownloadURL(ctx context.Context, userId int, fileId string) (string, *models.File, error)
+	GetDownloadInfo(ctx context.Context, userId int, fileId string) (map[string]interface{}, error)
 }
 
 type fileService struct {
@@ -184,31 +189,47 @@ func (s *fileService) Delete(fileId string, userId int) error {
 	}
 
 	return s.db.Transaction(func(tx *gorm.DB) error {
-		// 1.软删除文件
-		if err := s.fileRepo.SoftDeleteFile(tx, userId, fileId); err != nil {
-			return err
-		}
-
-		// 2.构造回收站记录
-		recycleEntry := &models.RecycleBin{
-			FileId:    fileId,
-			UserId:    userId,
-			DeletedAt: time.Now(),
-			ExpireAt:  time.Now().Add(7 * 24 * time.Hour),
-		}
-		if err := s.fileRepo.AddToRecycle(tx, recycleEntry); err != nil {
-			return err
-		}
-
-		// 3.如果是文件（非文件夹），更新存储配额
-		if !file.IsDir && fileSize > 0 {
-			// 减少已使用空间（传入负数表示减少）
-			if err := s.storageQuotaRepo.UpdateUsedSpace(tx, userId, -fileSize); err != nil {
+		if file.IsDir {
+			// 文件夹：递归软删除文件夹及其所有子孙节点
+			deletedIds, err := s.fileRepo.SoftDeleteFolder(tx, userId, fileId)
+			if err != nil {
 				return err
+			}
+
+			// 为每个被删除的节点创建回收站记录
+			for _, id := range deletedIds {
+				if err := s.fileRepo.AddToRecycle(tx, &models.RecycleBin{
+					FileId:    id,
+					UserId:    userId,
+					DeletedAt: time.Now(),
+					ExpireAt:  time.Now().Add(7 * 24 * time.Hour),
+				}); err != nil {
+					return err
+				}
+			}
+		} else {
+			// 单文件：直接软删除
+			if err := s.fileRepo.SoftDeleteFile(tx, userId, fileId); err != nil {
+				return err
+			}
+
+			if err := s.fileRepo.AddToRecycle(tx, &models.RecycleBin{
+				FileId:    fileId,
+				UserId:    userId,
+				DeletedAt: time.Now(),
+				ExpireAt:  time.Now().Add(7 * 24 * time.Hour),
+			}); err != nil {
+				return err
+			}
+
+			// 更新存储配额
+			if fileSize > 0 {
+				if err := s.storageQuotaRepo.UpdateUsedSpace(tx, userId, -fileSize); err != nil {
+					return err
+				}
 			}
 		}
 
-		// 如果到这里都没报错，事务会自动提交
 		return nil
 	})
 }
@@ -270,36 +291,22 @@ func (s *fileService) GetRecentFiles(userId int, timeRange string) ([]*RecentFil
 }
 
 func (s *fileService) GetFilePath(file *models.File) (string, error) {
-	if file.ParentId.Valid == false || file.ParentId.String == "" {
-		// 已经是根目录
+	if !file.ParentId.Valid || file.ParentId.String == "" {
 		return "/" + file.Name, nil
 	}
 
-	var pathParts []string
-	currentParentId := file.ParentId.String
-	for currentParentId != "" {
-		parent, err := s.fileRepo.GetFileById(currentParentId)
-		if err != nil {
-			return "", err
-		}
-
-		// 跳过根目录(name = "/")
-		if parent.Name != "/" {
-			pathParts = append(pathParts, parent.Name)
-		}
-
-		if parent.ParentId.Valid && parent.ParentId.String != "" { // 父级的 parentId 不为 NULL
-			currentParentId = parent.ParentId.String
-		} else {
-			break
-		}
-	}
-	// 反转 pathParts
-	for i, j := 0, len(pathParts)-1; i < j; i, j = i+1, j-1 {
-		pathParts[i], pathParts[j] = pathParts[j], pathParts[i]
+	// 用递归 CTE 一次查询所有祖先目录名（从根到直接父节点）
+	names, err := s.fileRepo.GetAncestorNames(context.Background(), file.Id)
+	if err != nil {
+		return "", err
 	}
 
-	return "/" + strings.Join(pathParts, "/"), nil
+	// CTE 返回的是从文件自底向上的祖先链，需要反转以得到从根向下的路径
+	for i, j := 0, len(names)-1; i < j; i, j = i+1, j-1 {
+		names[i], names[j] = names[j], names[i]
+	}
+
+	return "/" + strings.Join(names, "/"), nil
 }
 
 // 判断文件类型是否可预览
@@ -434,7 +441,7 @@ func (s *fileService) UploadFile(ctx context.Context, r io.Reader, userId int, f
 	}
 
 	// 上传文件至 MinIO
-	uploadFile, err := s.minio.UploadFromStream(ctx, userId, r, fileName, fileSize, parentId)
+	uploadFile, err := s.minio.UploadFromStream(ctx, userId, r, fileName, fileSize, fileHash, parentId)
 	if err != nil {
 		return nil, fmt.Errorf("MinIO 上传失败: %w", err)
 	}
@@ -482,43 +489,53 @@ func (s *fileService) InitChunkUpload(ctx context.Context, userId int, fileName,
 	}
 
 	// 3.断点续传检查
-	uploadIdKey := fmt.Sprintf("upload:%d:%s:id", userId, fileHash)
-	objectKeyKey := fmt.Sprintf("upload:%d:%s:key", userId, fileHash)
+	sessionKey := fmt.Sprintf("upload:%d:%s", userId, fileHash)
 
-	uploadId, err := s.redis.Get(ctx, uploadIdKey).Result()
+	// 检查是否有进行中的上传会话
+	sessionExists, err := s.redis.Exists(ctx, sessionKey).Result()
+	uploadId := ""
 	objectKey := ""
 
-	if err == redis.Nil || uploadId == "" {
-		// 3.1 没有正在进行的上传，初始化一个新的
+	if err != nil || sessionExists == 0 {
+		// 3.1 无会话：初始化新的 MinIO 分片上传
 		objectKey = s.minio.GenerateObjectKey(userId, parentId, fileName)
-		uploadId, err := s.minio.InitiateMultipartUpload(ctx, objectKey)
+		uploadId, err = s.minio.InitiateMultipartUpload(ctx, objectKey)
 		if err != nil {
 			return nil, fmt.Errorf("初始化 OSS 上传失败: %w", err)
 		}
 
-		// 存入 Redis，有效期 24 小时
-		pipe := s.redis.Pipeline()
-		pipe.Set(ctx, uploadIdKey, uploadId, 24*time.Hour)
-		pipe.Set(ctx, objectKeyKey, objectKey, 24*time.Hour)
-		_, err = pipe.Exec(ctx)
+		// 存入 Redis Hash，所有字段共享 24h TTL
+		err = s.redis.HSet(ctx, sessionKey,
+			"id", uploadId,
+			"key", objectKey,
+		).Err()
 		if err != nil {
 			return nil, err
 		}
+		s.redis.Expire(ctx, sessionKey, 24*time.Hour)
 	} else {
-		// 3.2 存在上传任务，获取 ObjectKey
-		objectKey, _ = s.redis.Get(ctx, objectKeyKey).Result()
+		// 3.2 会话存在：从 Hash 中读取 uploadId 和 objectKey
+		uploadId, _ = s.redis.HGet(ctx, sessionKey, "id").Result()
+		objectKey, _ = s.redis.HGet(ctx, sessionKey, "key").Result()
 	}
 
-	// 4.获取已上传的分片列表
-	// Redis Key: upload:parts:{fileHash} -> Hash结构 { "0": "etag1", "1": "etag2" }
-	uploadedPartsKey := fmt.Sprintf("upload:%d:%s:parts", userId, fileHash)
-	uploadedMap, err := s.redis.HGetAll(ctx, uploadedPartsKey).Result()
+	// 4.获取已上传的分片列表（从 Hash 中读取 ETag 字段，排除 id/key/锁字段）
+	allFields, err := s.redis.HGetAll(ctx, sessionKey).Result()
 
 	uploadedChunks := make([]int, 0)
-	if err != nil {
-		for k := range uploadedMap {
-			idx, _ := strconv.Atoi(k) // 分片 Id
-			uploadedChunks = append(uploadedChunks, idx)
+	if err == nil {
+		for k := range allFields {
+			// 跳过元数据字段和 hash 字段，只提取纯数字 key（分片索引）
+			if k == "id" || k == "key" {
+				continue
+			}
+			if strings.HasSuffix(k, "_hash") {
+				continue
+			}
+			idx, convErr := strconv.Atoi(k)
+			if convErr == nil {
+				uploadedChunks = append(uploadedChunks, idx)
+			}
 		}
 	}
 
@@ -528,96 +545,96 @@ func (s *fileService) InitChunkUpload(ctx context.Context, userId int, fileName,
 	return gin.H{
 		"finished":       false,
 		"fileHash":       fileHash,
-		"uploadId":       uploadId, // 前端不一定需要 uploadId，后端存着就行，前端只需要 fileHash
+		"uploadId":       uploadId,
 		"uploadedChunks": uploadedChunks,
 	}, nil
 }
 
-// UploadChunk 上传单个分片
-func (s *fileService) UploadChunk(ctx context.Context, userId int, fileHash string, chunkIndex int, data []byte) error {
-	// 1.获取上下文信息
-	uploadIdKey := fmt.Sprintf("upload:%d:%s:id", userId, fileHash)
-	objectKeyKey := fmt.Sprintf("upload:%d:%s:key", userId, fileHash)
+// UploadChunk 流式上传单个分片，可选 hash 校验
+// expectedChunkHash 为空时跳过校验；不为空时，服务端边上传边计算 SHA-256 并比对
+func (s *fileService) UploadChunk(ctx context.Context, userId int, fileHash string, chunkIndex int, r io.Reader, chunkSize int64, expectedChunkHash string) error {
+	sessionKey := fmt.Sprintf("upload:%d:%s", userId, fileHash)
 
-	uploadId, err := s.redis.Get(ctx, uploadIdKey).Result()
+	uploadId, err := s.redis.HGet(ctx, sessionKey, "id").Result()
 	if err != nil || uploadId == "" {
 		return errors.New("上传任务不存在或已过期，请重新初始化")
 	}
-	objectKey, err := s.redis.Get(ctx, objectKeyKey).Result()
+	objectKey, err := s.redis.HGet(ctx, sessionKey, "key").Result()
 	if err != nil {
 		return errors.New("文件路径丢失")
 	}
 
-	// 2.调用 OSS 上传分片
-	// MinIO/S3 partNumber 从 1 开始，所以 +1
 	partNumber := chunkIndex + 1
-	partInfo, err := s.minio.UploadPart(ctx, objectKey, uploadId, partNumber, data)
+	partInfo, computedHash, err := s.minio.UploadPart(ctx, objectKey, uploadId, partNumber, r, chunkSize, expectedChunkHash)
 	if err != nil {
 		return fmt.Errorf("OSS 分片上传失败: %w", err)
 	}
 
-	// 3.保存分片信息到 Redis
-	// 使用 Hset 保证幂等性（同一个分片传多次只会覆盖，不会重复添加）
-	// Key: upload:parts:{fileHash}, Field: {chunkIndex}, Value: {ETag}
-	uploadedPartsKey := fmt.Sprintf("upload:%d:%s:parts", userId, fileHash)
-
-	// 这里只存 ETag 也可以，因为 field 是 index。
-	// 为了方便后续 Complete，只存 ETag 字符串。
-	err = s.redis.HSet(ctx, uploadedPartsKey, strconv.Itoa(chunkIndex), partInfo.ETag).Err()
+	// 幂等存储：ETag + 分片 hash 写入同一个 Hash
+	err = s.redis.HSet(ctx, sessionKey,
+		strconv.Itoa(chunkIndex), partInfo.ETag,
+		strconv.Itoa(chunkIndex)+"_hash", computedHash,
+	).Err()
 	if err != nil {
 		return err
 	}
 
-	// 刷新过期时间
-	s.redis.Expire(ctx, uploadIdKey, 24*time.Hour)
-	s.redis.Expire(ctx, uploadedPartsKey, 24*time.Hour)
+	// 单次 Expire 刷新整个会话的 TTL
+	s.redis.Expire(ctx, sessionKey, 24*time.Hour)
 	return nil
 }
 
 // MergeChunks 合并分片
 func (s *fileService) MergeChunks(ctx context.Context, userId int, fileHash, fileName, parentId string, fileSize int64) (*models.File, error) {
-	uploadIdKey := fmt.Sprintf("upload:%d:%s:id", userId, fileHash)
-	objectKeyKey := fmt.Sprintf("upload:%d:%s:key", userId, fileHash)
-	uploadedPartsKey := fmt.Sprintf("upload:%d:%s:parts", userId, fileHash)
+	sessionKey := fmt.Sprintf("upload:%d:%s", userId, fileHash)
 
-	uploadId, err := s.redis.Get(ctx, uploadIdKey).Result()
+	// 分布式锁
+	lockKey := fmt.Sprintf("upload:%d:%s:lock", userId, fileHash)
+	locked, err := s.redis.SetNX(ctx, lockKey, "1", 30*time.Second).Result()
+	if err != nil || !locked {
+		return nil, errors.New("合并正在进行中，请稍后重试")
+	}
+	defer s.redis.Del(ctx, lockKey)
+
+	uploadId, err := s.redis.HGet(ctx, sessionKey, "id").Result()
 	if err != nil || uploadId == "" {
 		return nil, errors.New("上传任务失败")
 	}
-	objectKey, err := s.redis.Get(ctx, objectKeyKey).Result()
+	objectKey, err := s.redis.HGet(ctx, sessionKey, "key").Result()
 
-	// 1.获取所有分片 ETag
-	partsMap, err := s.redis.HGetAll(ctx, uploadedPartsKey).Result()
-	if err != nil || len(partsMap) == 0 {
+	// 1.获取所有分片 ETag（过滤 id/key 和非数字字段）
+	allFields, err := s.redis.HGetAll(ctx, sessionKey).Result()
+	if err != nil || len(allFields) <= 2 { // 只有 id 和 key，没有分片
 		return nil, errors.New("未找到已上传的分片数据")
 	}
 
-	// 2.构造 MinIO 需要的 CompletePart 数组，并按 PartNumber 排序
 	var completeParts []minio.CompletePart
-	for chunkIdxStr, etag := range partsMap {
-		idx, _ := strconv.Atoi(chunkIdxStr)
-		completeParts = append(completeParts, minio.CompletePart{
-			PartNumber: idx + 1, // 还原为 S3 的 1-based index
-			ETag:       etag,
-		})
+	for k, v := range allFields {
+		if k == "id" || k == "key" || strings.HasSuffix(k, "_hash") {
+			continue
+		}
+		idx, convErr := strconv.Atoi(k)
+		if convErr == nil {
+			completeParts = append(completeParts, minio.CompletePart{
+				PartNumber: idx + 1,
+				ETag:       v,
+			})
+		}
 	}
 
-	// 排序，MinIO 要求 PartNumber 升序
+	// 按 PartNumber 升序
 	sort.Slice(completeParts, func(i, j int) bool {
 		return completeParts[i].PartNumber < completeParts[j].PartNumber
 	})
 
-	// 3.调用 MinIO 合并分片，成功后产生 fileURL 与缩略图
+	// 2.调用 MinIO 合并
 	fileURL, thumbnailURL, err := s.minio.CompleteMultipartUpload(ctx, objectKey, uploadId, completeParts)
 	if err != nil {
 		return nil, fmt.Errorf("OSS 合并失败: %w", err)
 	}
 
-	// 4.写入数据库
-	// 使用 filepath.Ext 获取带点的扩展名 (例如 ".txt")
-	extWithDot := filepath.Ext(fileName)
-	ext := strings.TrimPrefix(extWithDot, ".")
-
+	// 3.写入数据库
+	ext := strings.TrimPrefix(filepath.Ext(fileName), ".")
 	pid := sql.NullString{String: parentId, Valid: parentId != ""}
 
 	newFile := &models.File{
@@ -636,43 +653,34 @@ func (s *fileService) MergeChunks(ctx context.Context, userId int, fileHash, fil
 		UpdatedAt:     time.Now(),
 	}
 
-	// 事务处理：保存文件 + 更新配额
 	err = s.db.Transaction(func(tx *gorm.DB) error {
 		if err := s.fileRepo.CreateFile(newFile); err != nil {
 			return err
 		}
-		// 更新用户已用空间
 		return s.storageQuotaRepo.UpdateUsedSpace(tx, userId, fileSize)
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	// 写入秒传缓存
-	//fileInfoJSON, _ := json.Marshal(newFile)
-	//s.redis.Set(ctx, "file:hash:"+fileHash, fileInfoJSON, 24*time.Hour)
-
-	// 5.清理 Redis 缓存
-	s.redis.Del(ctx, uploadIdKey, objectKeyKey, uploadedPartsKey)
+	// 4.清理：一次 DEL 清掉整个 Hash
+	s.redis.Del(ctx, sessionKey)
 
 	return newFile, nil
 }
 
 // CancelChunkUpload 取消上传
 func (s *fileService) CancelChunkUpload(ctx context.Context, userId int, fileHash string) error {
-	uploadIdKey := fmt.Sprintf("upload:%d:%s:id", userId, fileHash)
-	objectKeyKey := fmt.Sprintf("upload:%d:%s:key", userId, fileHash)
-	uploadedPartsKey := fmt.Sprintf("upload:%d:%s:parts", userId, fileHash)
+	sessionKey := fmt.Sprintf("upload:%d:%s", userId, fileHash)
 
-	uploadId, err := s.redis.Get(ctx, uploadIdKey).Result()
-	objectKey, _ := s.redis.Get(ctx, objectKeyKey).Result()
+	uploadId, err := s.redis.HGet(ctx, sessionKey, "id").Result()
+	objectKey, _ := s.redis.HGet(ctx, sessionKey, "key").Result()
 	if err == nil && uploadId != "" && objectKey != "" {
-		// 通知 MinIO 取消
 		_ = s.minio.AbortMultipartUpload(ctx, objectKey, uploadId)
 	}
 
-	// 清理 Redis
-	s.redis.Del(ctx, uploadIdKey, objectKey, uploadedPartsKey)
+	// 一次 DEL 清理整个会话
+	s.redis.Del(ctx, sessionKey)
 	return nil
 }
 
@@ -811,6 +819,124 @@ func (s *fileService) Download(ctx context.Context, userId int, fileId string) (
 		return nil, nil, err
 	}
 	return reader, file, nil
+}
+
+func (s *fileService) DownloadRange(ctx context.Context, userId int, fileId string, start, end int64) (io.ReadCloser, *models.File, int64, error) {
+	file, err := s.fileRepo.GetUserFileByID(userId, fileId)
+	if err != nil {
+		return nil, nil, 0, errors.New("要下载的文件不存在")
+	}
+
+	infoSize, err := s.minio.GetObjectInfo(ctx, file.OssObjectKey)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+
+	reader, err := s.minio.DownloadFileRange(ctx, file.OssObjectKey, start, end)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	return reader, file, infoSize, nil
+}
+
+func (s *fileService) GetObjectSize(ctx context.Context, userId int, fileId string) (int64, error) {
+	file, err := s.fileRepo.GetUserFileByID(userId, fileId)
+	if err != nil {
+		return 0, errors.New("要下载的文件不存在")
+	}
+	return s.minio.GetObjectInfo(ctx, file.OssObjectKey)
+}
+
+func (s *fileService) GetPresignedDownloadURL(ctx context.Context, userId int, fileId string) (string, *models.File, error) {
+	file, err := s.fileRepo.GetUserFileByID(userId, fileId)
+	if err != nil {
+		return "", nil, errors.New("要下载的文件不存在")
+	}
+
+	u, err := s.minio.PresignedGetURL(ctx, file.OssObjectKey, 10*time.Minute)
+	if err != nil {
+		return "", nil, err
+	}
+	return u, file, nil
+}
+
+// GetDownloadInfo 返回下载策略信息，告诉客户端如何最优地分段下载
+// GetChunkUploadProgress 查询服务端上传进度
+func (s *fileService) GetChunkUploadProgress(ctx context.Context, userId int, fileHash string) (map[string]interface{}, error) {
+	sessionKey := fmt.Sprintf("upload:%d:%s", userId, fileHash)
+
+	uploadId, err := s.redis.HGet(ctx, sessionKey, "id").Result()
+	if err != nil || uploadId == "" {
+		return map[string]interface{}{
+			"status":         "not_found",
+			"uploadedChunks": []int{},
+		}, nil
+	}
+
+	allFields, err := s.redis.HGetAll(ctx, sessionKey).Result()
+	uploadedChunks := make([]int, 0)
+	if err == nil {
+		for k := range allFields {
+			if k == "id" || k == "key" || strings.HasSuffix(k, "_hash") {
+				continue
+			}
+			idx, convErr := strconv.Atoi(k)
+			if convErr == nil {
+				uploadedChunks = append(uploadedChunks, idx)
+			}
+		}
+		sort.Ints(uploadedChunks)
+	}
+
+	return map[string]interface{}{
+		"status":         "in_progress",
+		"uploadId":       uploadId,
+		"uploadedChunks": uploadedChunks,
+		"uploadedCount":  len(uploadedChunks),
+	}, nil
+}
+
+func (s *fileService) GetDownloadInfo(ctx context.Context, userId int, fileId string) (map[string]interface{}, error) {
+	file, err := s.fileRepo.GetUserFileByID(userId, fileId)
+	if err != nil {
+		return nil, errors.New("文件不存在")
+	}
+
+	const (
+		midChunkSize       int64 = 5 * 1024 * 1024   // 中等文件 5MB/块
+		largeChunkSize     int64 = 10 * 1024 * 1024  // 大文件 10MB/块
+		presignedThreshold int64 = 100 * 1024 * 1024
+	)
+
+	var chunkSize int64
+	switch {
+	case file.Size <= 10*1024*1024:
+		chunkSize = 0 // 不需要分块
+	case file.Size <= 100*1024*1024:
+		chunkSize = midChunkSize
+	default:
+		chunkSize = largeChunkSize
+	}
+
+	chunks := int64(0)
+	if chunkSize > 0 {
+		chunks = (file.Size + chunkSize - 1) / chunkSize
+	}
+
+	directURL := ""
+	if file.Size > presignedThreshold {
+		directURL, _ = s.minio.PresignedGetURL(ctx, file.OssObjectKey, 10*time.Minute)
+	}
+
+	return map[string]interface{}{
+		"fileId":            file.Id,
+		"fileName":          file.Name,
+		"fileSize":          file.Size,
+		"chunkSize":         chunkSize,
+		"chunks":            chunks,
+		"supportsRange":     true,
+		"directDownloadUrl": directURL,
+	}, nil
 }
 
 func nullToString(ns sql.NullString) string {

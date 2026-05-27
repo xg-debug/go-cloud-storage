@@ -1,88 +1,42 @@
 <template>
-  <div class="starred-files">
-    <PageHeader
-      :icon="Star"
-      title="我的收藏"
-      description="管理您收藏的重要文件"
-      icon-bg="#fef3c7"
-      icon-color="#f59e0b"
-      :stats="[{ label: '收藏文件', value: totalCount }]"
-    />
-
-    <!-- 工具栏 -->
-    <div class="toolbar">
-      <div class="toolbar-left">
-        <el-input
-          placeholder="搜索收藏文件..."
-          :prefix-icon="Search"
-          clearable
-          style="width: 300px;"
-        />
-      </div>
-      <div class="toolbar-right">
-        <el-button :icon="Refresh" @click="fetchFavorites">
-          刷新
-        </el-button>
+  <div class="page-wrap">
+    <div class="page-hdr">
+      <div class="page-hdr-title">
+        <div class="page-hdr-icon" style="background:#FDF2F8;color:#DB2777;">
+          <el-icon :size="20"><StarFilled /></el-icon>
+        </div>
+        <div><h1>收藏夹</h1><p>{{ totalCount }} 个收藏</p></div>
       </div>
     </div>
-
-    <!-- 收藏文件内容 -->
-    <div class="starred-content">
-      <!-- 收藏列表 -->
-      <el-table
-        :data="starredItems"
-        v-loading="loading"
-        style="width: 100%"
-        empty-text="暂无收藏内容"
-        class="starred-table"
-      >
-        <el-table-column label="名称" min-width="300">
-          <template #default="{ row }">
-            <div class="file-name-cell">
-              <div class="file-icon">
-                <el-icon :size="20" :color="getFileIconColor(row.name, row.is_dir)">
-                  <component :is="getFileIcon(row.name, row.is_dir)" />
-                </el-icon>
-              </div>
-              <span class="file-name">{{ row.name }}</span>
-            </div>
-          </template>
-        </el-table-column>
-
-        <el-table-column prop="path" label="所在目录" min-width="200" show-overflow-tooltip />
-        
-        <el-table-column prop="size_str" label="大小" width="120" />
-        
-        <el-table-column prop="created_at" label="收藏时间" width="180" />
-        
-        <el-table-column label="操作" width="200" fixed="right">
-          <template #default="{ row }">
-            <el-button size="small" type="primary" link @click="previewFile(row)">
-              <el-icon><View /></el-icon>
-              预览
-            </el-button>
-            <el-button size="small" type="primary" link @click="downloadFile(row)" :disabled="row.is_dir">
-              <el-icon><Download /></el-icon>
-              下载
-            </el-button>
-            <el-button size="small" type="danger" link @click="unFavorite(row)">
-              <el-icon><Delete /></el-icon>
-              取消收藏
-            </el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-
-      <!-- 分页器 -->
-      <div class="pagination" v-if="totalCount > pageSize">
-        <el-pagination
-          background
-          layout="prev, pager, next, total"
-          :total="totalCount"
-          :page-size="pageSize"
-          v-model:current-page="currentPage"
-          @current-change="onPageChange"
-        />
+    <div class="page-body">
+      <div v-if="loading" class="cb-empty-state"><el-icon class="is-loading" :size="36"><Loading /></el-icon><p style="margin-top:16px;">加载中...</p></div>
+      <template v-else-if="starredItems.length > 0">
+        <div class="cb-table-wrap">
+          <el-table :data="starredItems" row-key="file_id" @row-dblclick="openFile">
+            <el-table-column width="48">
+              <template #default="{ row }"><el-icon :size="22" :color="getFileIconColor(row.name, row.is_dir)"><component :is="getFileIcon(row.name, row.is_dir)" /></el-icon></template>
+            </el-table-column>
+            <el-table-column label="名称" min-width="280" show-overflow-tooltip>
+              <template #default="{ row }"><span class="tbl-link">{{ row.name }}</span></template>
+            </el-table-column>
+            <el-table-column label="大小" width="100"><template #default="{ row }">{{ row.size_str || '-' }}</template></el-table-column>
+            <el-table-column label="收藏时间" width="170"><template #default="{ row }">{{ row.created_at }}</template></el-table-column>
+            <el-table-column label="操作" width="220" fixed="right">
+              <template #default="{ row }">
+                <el-button size="small" link @click="previewFile(row)" v-if="!row.is_dir"><el-icon><View /></el-icon>预览</el-button>
+                <el-button size="small" link @click="downloadFile(row)" v-if="!row.is_dir"><el-icon><Download /></el-icon>下载</el-button>
+                <el-button size="small" type="danger" link @click="unFavorite(row)"><el-icon><StarFilled /></el-icon>取消</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
+        <div style="margin-top:24px;display:flex;justify-content:center;" v-if="totalCount > pageSize">
+          <el-pagination background layout="prev, pager, next, total" :total="totalCount" :page-size="pageSize" v-model:current-page="currentPage" @current-change="fetchFavorites" />
+        </div>
+      </template>
+      <div v-else class="cb-empty-state">
+        <div class="empty-icon"><el-icon :size="36"><Star /></el-icon></div>
+        <h3>暂无收藏</h3><p>在文件列表中点击收藏按钮即可添加</p>
       </div>
     </div>
   </div>
@@ -91,228 +45,44 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { 
-  Search, 
-  Star,
-  View,
-  Download,
-  Refresh
-} from '@element-plus/icons-vue'
-import { getFavorites, cancelFavorite } from '@/api/favorite'
 import { ElMessage } from 'element-plus'
+import { Download, Loading, Star, StarFilled, View } from '@element-plus/icons-vue'
+import { getFavorites, cancelFavorite } from '@/api/favorite'
+import { previewFile as previewApi, downloadFile as dlFile } from '@/api/file'
 import { getFileIcon, getFileIconColor } from '@/utils/fileIcon'
-import PageHeader from '@/components/common/PageHeader.vue'
 
 const router = useRouter()
-
-// 加载状态
 const loading = ref(false)
-
-// 收藏列表
 const starredItems = ref([])
 const totalCount = ref(0)
-
-// 分页参数
 const currentPage = ref(1)
 const pageSize = 10
 
-// 获取收藏列表 - 保持原有函数
-const fetchFavorites = async () => {
+async function fetchFavorites() {
   loading.value = true
-  try {
-    const res = await getFavorites({ page: currentPage.value, pageSize })
-    starredItems.value = res.favoriteList
-    totalCount.value = res.total
-  } catch (err) {
-    console.error('获取收藏列表失败', err)
-  } finally {
-    loading.value = false
-  }
+  try { const r = await getFavorites(currentPage.value, pageSize); starredItems.value = r.favoriteList || []; totalCount.value = r.total || 0 }
+  catch {} finally { loading.value = false }
 }
-
-// 页码变化回调 - 保持原有函数
-const onPageChange = (page) => {
-  currentPage.value = page
-  fetchFavorites()
+async function unFavorite(row) {
+  try { await cancelFavorite(row.file_id); starredItems.value = starredItems.value.filter(i => i.file_id !== row.file_id); totalCount.value--; ElMessage.success('已取消') }
+  catch { ElMessage.error('操作失败') }
 }
-
-// 操作方法 - 保持原有函数
-const openFile = (row) => {
-  if (row.is_dir) {
-    // 跳转到目录页面
-    router.push({ name: 'FileList', query: { parentId: row.file_id } })
-  } else {
-    // 文件预览，可以在新窗口打开或者使用内置预览组件
-    window.open(row.file_url, '_blank')
-  }
+function openFile(row) {
+  if (row.is_dir) router.push({ name: 'MyDrive', query: { parentId: row.file_id } })
+  else window.open(row.file_url, '_blank')
 }
-
-const downloadFile = (row) => {
-  if (!row.is_dir && row.fileURL) {
-    const a = document.createElement('a')
-    a.href = row.fileURL
-    a.download = row.name
-    a.click()
-  }
+async function previewFile(row) {
+  try { const r = await previewApi(row.file_id); if (r?.file_url) window.open(r.file_url, '_blank'); else ElMessage.info('暂不支持预览') }
+  catch { ElMessage.info('暂不支持预览') }
 }
-
-const unFavorite = async (row) => {
-  try {
-      console.log(row.file_id)
-    await cancelFavorite(row.file_id)
-    starredItems.value = starredItems.value.filter(i => i.file_id !== row.file_id)
-    totalCount.value = totalCount.value - 1
-  } catch (err) {
-    console.error('取消收藏失败', err)
-  }
+async function downloadFile(row) {
+  try { const b = await dlFile(row.file_id); const u = URL.createObjectURL(b); const a = document.createElement('a'); a.href = u; a.download = row.name; a.click(); URL.revokeObjectURL(u) }
+  catch { ElMessage.error('下载失败') }
 }
-
-const locateFile = (row) => {
-  // 跳转到所在目录，并传 fileId 用于高亮
-  router.push({
-    name: 'FileList',
-    query: { parentId: row.parentId, highlightFileId: row.file_id }
-  })
-}
-
-// 预览文件功能
-const previewFile = (row) => {
-  if (row.is_dir) {
-    // 文件夹直接打开
-    openFile(row)
-  } else {
-    // 文件预览 - 需要后端提供预览接口
-    const fileName = row.name.toLowerCase()
-    const ext = fileName.split('.').pop()
-    
-    // 可预览的文件类型
-    if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'mp4', 'avi', 'mov', 'mp3', 'wav', 'pdf', 'txt', 'doc', 'docx'].includes(ext)) {
-      // 构建预览URL - 需要后端提供 /api/files/preview/:id 接口
-      const previewUrl = `/api/files/preview/${row.file_id}`
-      window.open(previewUrl, '_blank')
-    } else {
-      // 不支持预览的文件类型提示用户
-      ElMessage.info('此文件类型不支持预览，请下载后查看')
-    }
-  }
-}
-
-// 页面加载时获取 - 保持原有逻辑
 onMounted(fetchFavorites)
 </script>
 
 <style scoped>
-.starred-files {
-  height: 100vh;
-  display: flex;
-  flex-direction: column;
-  background: #f8fafc;
-}
-
-/* 工具栏 */
-.toolbar {
-  background: white;
-  padding: 20px 24px;
-  border-bottom: 1px solid #e2e8f0;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.toolbar-left {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-
-.toolbar-right {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-/* 收藏内容 */
-.starred-content {
-  flex: 1;
-  background: white;
-  padding: 24px;
-  overflow: auto;
-}
-
-/* 表格样式 */
-.starred-table {
-  border-radius: 8px;
-  overflow: hidden;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
-}
-
-.starred-table :deep(.el-table__header) {
-  background: #f8fafc;
-}
-
-.starred-table :deep(.el-table__row:hover) {
-  background: #f0f9ff;
-}
-
-.file-name-cell {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.file-icon {
-  flex-shrink: 0;
-}
-
-.file-name {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-weight: 500;
-  color: #1f2937;
-}
-
-.action-buttons {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.action-buttons .el-button {
-  margin: 0;
-}
-
-/* 分页器 */
-.pagination {
-  margin-top: 24px;
-  display: flex;
-  justify-content: center;
-  padding: 20px 0;
-  border-top: 1px solid #e5e7eb;
-}
-
-/* 响应式设计 */
-@media (max-width: 768px) {
-  .toolbar {
-    padding: 16px;
-    flex-direction: column;
-    gap: 16px;
-    align-items: stretch;
-  }
-  
-  .starred-content {
-    padding: 16px;
-  }
-  
-  .action-buttons {
-    flex-direction: column;
-    gap: 4px;
-  }
-  
-  .action-buttons .el-button {
-    width: 100%;
-    justify-content: flex-start;
-  }
-}
+.tbl-link { font-weight: 600; color: var(--cb-text); cursor: pointer; }
+.tbl-link:hover { color: var(--cb-primary); }
 </style>

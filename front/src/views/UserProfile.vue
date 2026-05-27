@@ -1,819 +1,387 @@
 <template>
-    <div class="user-profile">
-        <div class="profile-container">
-            <!-- 用户信息头部 -->
-            <div class="profile-header">
-                <div class="user-info">
-                    <div class="avatar-section">
-                        <el-avatar :size="80" :src="user.avatar || defaultAvatar" class="user-avatar"/>
-                        <div class="avatar-edit" @click="handleAvatarClick">
-                            <el-icon>
-                                <Camera/>
-                            </el-icon>
-                        </div>
-                        <input ref="avatarInput" type="file" accept="image/*" style="display: none"
-                               @change="handleAvatarChange"/>
-                    </div>
-                    <div class="user-details">
-                        <h1 class="user-name">{{ user.username }}</h1>
-                        <p class="user-email">{{ user.email }}</p>
-                        <p class="user-meta">注册于 {{ user.registerTime }}</p>
-                    </div>
-                </div>
+  <div class="page-wrap">
+    <div class="page-hdr">
+      <div class="page-hdr-title">
+        <div class="page-hdr-icon" style="background:var(--cb-primary-light);color:var(--cb-primary);">
+          <el-icon :size="20"><User /></el-icon>
+        </div>
+        <div><h1>个人中心</h1><p>管理你的账户和存储空间</p></div>
+      </div>
+    </div>
+    <div class="page-body">
+      <!-- Profile info card -->
+      <div class="info-card">
+        <div class="info-bg"></div>
+        <div class="info-body">
+          <div class="avatar-stack" @click="avatarInput?.click()">
+            <div class="avatar-ring">
+              <el-avatar :size="88" :src="user?.avatar" class="hero-avatar">
+                <el-icon :size="34"><User /></el-icon>
+              </el-avatar>
             </div>
-
-            <!-- 内容区域 -->
-            <div class="content-grid">
-                <!-- 左侧：基本信息和存储统计 -->
-                <div class="left-column">
-                    <!-- 基本信息卡片 -->
-                    <div class="info-card">
-                        <div class="card-header">
-                            <div class="card-icon">
-                                <el-icon>
-                                    <User/>
-                                </el-icon>
-                            </div>
-                            <h3>基本信息</h3>
-                        </div>
-                        <div class="card-body">
-                            <el-form :model="userForm" label-width="80px" class="info-form">
-                                <el-form-item label="用户名">
-                                    <el-input v-model="userForm.username" placeholder="请输入用户名"/>
-                                </el-form-item>
-                                <el-form-item label="手机号">
-                                    <el-input v-model="userForm.phone" placeholder="请输入手机号"/>
-                                </el-form-item>
-                                <el-form-item>
-                                    <el-button type="primary" @click="saveUserInfo" :loading="saving"
-                                               class="action-btn">
-                                        <el-icon>
-                                            <Check/>
-                                        </el-icon>
-                                        保存修改
-                                    </el-button>
-                                </el-form-item>
-                            </el-form>
-                        </div>
-                    </div>
-
-                    <!-- 存储统计卡片 -->
-                    <div class="stats-card">
-                        <div class="card-header">
-                            <div class="card-icon">
-                                <el-icon>
-                                    <DataAnalysis/>
-                                </el-icon>
-                            </div>
-                            <h3>存储统计</h3>
-                        </div>
-                        <div class="card-body">
-                            <div class="storage-visual">
-                                <div class="storage-circle">
-                                    <el-progress type="dashboard" :percentage="storageStats.percentage"
-                                                 :color="storageColor"
-                                                 :width="120">
-                                        <template #default>
-                                            <div class="circle-content">
-                                                <div class="percentage">{{ storageStats.percentage }}%</div>
-                                                <div class="storage-text">{{ storageStats.used }}GB /
-                                                    {{ storageStats.total }}GB
-                                                </div>
-                                            </div>
-                                        </template>
-                                    </el-progress>
-                                </div>
-                                <div class="storage-details">
-                                    <div class="detail-item">
-                                        <div class="detail-icon">
-                                            <el-icon>
-                                                <Document/>
-                                            </el-icon>
-                                        </div>
-                                        <div class="detail-content">
-                                            <span class="detail-label">文件总数</span>
-                                            <span class="detail-value">{{ fileStats.totalFiles }} 个</span>
-                                        </div>
-                                    </div>
-                                    <div class="detail-item">
-                                        <div class="detail-icon">
-                                            <el-icon>
-                                                <Folder/>
-                                            </el-icon>
-                                        </div>
-                                        <div class="detail-content">
-                                            <span class="detail-label">文件夹</span>
-                                            <span class="detail-value">{{ fileStats.folders }} 个</span>
-                                        </div>
-                                    </div>
-                                    <div class="detail-item">
-                                        <div class="detail-icon">
-                                            <el-icon>
-                                                <Share/>
-                                            </el-icon>
-                                        </div>
-                                        <div class="detail-content">
-                                            <span class="detail-label">共享文件</span>
-                                            <span class="detail-value">{{ fileStats.sharedFiles }} 个</span>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- 右侧：文件类型和安全设置 -->
-                <div class="right-column">
-                    <!-- 文件类型分布卡片 -->
-                    <div class="file-types-card">
-                        <div class="card-header">
-                            <div class="card-icon">
-                                <el-icon>
-                                    <FolderOpened/>
-                                </el-icon>
-                            </div>
-                            <h3>文件类型分布</h3>
-                        </div>
-                        <div class="card-body">
-                            <div class="file-types">
-                                <div v-for="type in fileTypeStats" :key="type.type" class="file-type-item">
-                                    <div class="type-header">
-                                        <div class="type-icon" :style="{ backgroundColor: type.color + '20' }">
-                                            <el-icon v-if="type.type === 'document'">
-                                                <Document/>
-                                            </el-icon>
-                                            <el-icon v-else-if="type.type === 'image'">
-                                                <Picture/>
-                                            </el-icon>
-                                            <el-icon v-else-if="type.type === 'video'">
-                                                <VideoCamera/>
-                                            </el-icon>
-                                            <el-icon v-else-if="type.type === 'audio'">
-                                                <Headset/>
-                                            </el-icon>
-                                            <el-icon v-else>
-                                                <Files/>
-                                            </el-icon>
-                                        </div>
-                                        <div class="type-info">
-                                            <span class="type-name">{{ type.name }}</span>
-                                            <span class="type-count">{{ type.count }} 个文件</span>
-                                        </div>
-                                        <span class="type-percentage">{{ type.percentage }}%</span>
-                                    </div>
-                                    <div class="type-progress">
-                                        <div class="progress-bar"
-                                             :style="{ width: type.percentage + '%', backgroundColor: type.color }">
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- 安全设置卡片 -->
-                    <div class="security-card">
-                        <div class="card-header">
-                            <div class="card-icon">
-                                <el-icon>
-                                    <Lock/>
-                                </el-icon>
-                            </div>
-                            <h3>安全设置</h3>
-                        </div>
-                        <div class="card-body">
-                            <div class="security-item">
-                                <div class="security-info">
-                                    <h4>账户密码</h4>
-                                    <p>定期更换密码以确保账户安全</p>
-                                </div>
-                                <el-button type="primary" @click="showPasswordDialog = true" class="action-btn">
-                                    <el-icon>
-                                        <Key/>
-                                    </el-icon>
-                                    修改密码
-                                </el-button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
+            <div class="avatar-badge"><el-icon :size="13"><Camera /></el-icon></div>
+            <input ref="avatarInput" type="file" accept="image/*" hidden @change="onAvatarChange" />
+          </div>
+          <div class="info-main">
+            <h2 class="info-name">{{ user?.username || '用户' }}</h2>
+            <div class="info-tags">
+              <span class="info-tag"><el-icon :size="14"><Message /></el-icon>{{ user?.email }}</span>
+              <span v-if="user?.phone" class="info-tag"><el-icon :size="14"><Phone /></el-icon>{{ user?.phone }}</span>
+              <span class="info-tag"><el-icon :size="14"><Clock /></el-icon>{{ user?.registerTime || '未知' }}</span>
             </div>
+          </div>
+          <div class="info-stats">
+            <div class="is-item">
+              <span class="is-val">{{ fileStats.totalFiles }}</span>
+              <span class="is-lbl">文件总数</span>
+            </div>
+            <div class="is-item">
+              <span class="is-val">{{ storage.used }}<small> GB</small></span>
+              <span class="is-lbl">已用空间</span>
+            </div>
+            <div class="is-item">
+              <span class="is-val">{{ fileStats.sharedFiles }}</span>
+              <span class="is-lbl">分享中</span>
+            </div>
+            <div class="is-item">
+              <span class="is-val">{{ storage.total }}<small> GB</small></span>
+              <span class="is-lbl">总容量</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Edit profile form -->
+      <div class="card">
+        <div class="card-title"><el-icon :size="17"><User /></el-icon>编辑个人资料</div>
+        <el-form :model="profileForm" label-width="80px" class="edit-form">
+          <div class="form-grid">
+            <el-form-item label="用户名">
+              <el-input v-model="profileForm.username" placeholder="设置用户名" />
+            </el-form-item>
+            <el-form-item label="邮箱">
+              <el-input :model-value="user?.email" readonly disabled />
+            </el-form-item>
+            <el-form-item label="手机号">
+              <el-input v-model="profileForm.phone" placeholder="绑定手机号" />
+            </el-form-item>
+            <el-form-item label="注册时间">
+              <el-input :model-value="user?.registerTime || '-'" readonly disabled />
+            </el-form-item>
+          </div>
+          <div class="form-actions">
+            <el-button type="primary" size="default" @click="saveProfile" :loading="saving" round>
+              <el-icon :size="15"><Check /></el-icon>保存更改
+            </el-button>
+          </div>
+        </el-form>
+      </div>
+
+      <!-- Cards row -->
+      <div class="cards-row">
+        <div class="card">
+          <div class="card-title"><el-icon :size="17"><PieChart /></el-icon>存储空间</div>
+          <div class="storage-inline">
+            <div class="ring-wrap">
+              <svg class="ring-svg" viewBox="0 0 140 140">
+                <circle class="ring-bg" cx="70" cy="70" r="58" />
+                <circle class="ring-fill" cx="70" cy="70" r="58"
+                  :style="{ strokeDashoffset: 364.42 - (364.42 * storage.pct / 100), stroke: storageColor(storage.pct) }" />
+              </svg>
+              <div class="ring-center">
+                <strong>{{ storage.pct }}%</strong>
+                <small>{{ storage.used }} / {{ storage.total }} GB</small>
+              </div>
+            </div>
+            <div class="type-bars">
+              <div v-for="t in fileTypes" :key="t.type" class="tb-row">
+                <span class="tb-dot" :style="{ background: t.color }"></span>
+                <span class="tb-label">{{ t.name }}</span>
+                <span class="tb-size">{{ t.size || '-' }}</span>
+                <div class="tb-track"><div class="tb-fill" :style="{ width: Math.max(t.percentage, 2) + '%', background: t.color }"></div></div>
+              </div>
+            </div>
+          </div>
         </div>
 
-        <!-- 修改密码对话框 -->
-        <el-dialog v-model="showPasswordDialog" title="修改密码" width="400px" :close-on-click-modal="false">
-            <el-form :model="passwordForm" :rules="passwordRules" ref="passwordFormRef" label-width="100px">
-                <el-form-item label="当前密码" prop="oldPassword">
-                    <el-input v-model="passwordForm.oldPassword" type="password" placeholder="请输入当前密码"
-                              show-password/>
-                </el-form-item>
-                <el-form-item label="新密码" prop="newPassword">
-                    <el-input v-model="passwordForm.newPassword" type="password" placeholder="请输入新密码"
-                              show-password/>
-                </el-form-item>
-                <el-form-item label="确认密码" prop="confirmPassword">
-                    <el-input v-model="passwordForm.confirmPassword" type="password" placeholder="请再次输入新密码"
-                              show-password/>
-                </el-form-item>
-            </el-form>
-            <template #footer>
-                <el-button @click="showPasswordDialog = false">取消</el-button>
-                <el-button type="primary" @click="changePassword" :loading="changingPassword">
-                    确认修改
-                </el-button>
-            </template>
-        </el-dialog>
+        <div class="card">
+          <div class="card-title"><el-icon :size="17"><Lock /></el-icon>修改密码</div>
+          <el-form ref="pwdFormRef" :model="pwdForm" :rules="pwdRules" label-width="80px" class="styled-form">
+            <el-form-item label="当前密码" prop="oldPassword">
+              <el-input v-model="pwdForm.oldPassword" type="password" show-password placeholder="输入当前密码" />
+            </el-form-item>
+            <el-form-item label="新密码" prop="newPassword">
+              <el-input v-model="pwdForm.newPassword" type="password" show-password placeholder="至少6位，含大小写字母和数字" />
+            </el-form-item>
+            <el-form-item label="确认密码" prop="confirmPassword">
+              <el-input v-model="pwdForm.confirmPassword" type="password" show-password placeholder="再次输入新密码" />
+            </el-form-item>
+            <el-form-item>
+              <el-button type="primary" @click="changePassword" :loading="changingPwd" round>
+                <el-icon :size="15"><Key /></el-icon>更新密码
+              </el-button>
+            </el-form-item>
+          </el-form>
+        </div>
+      </div>
     </div>
+  </div>
 </template>
 
 <script setup>
-import {computed, onMounted, ref} from 'vue'
-import {ElMessage} from 'element-plus'
-import {useStore} from 'vuex'
-import {updatePassword, updateProfile, uploadAvatar, getUserStats} from '@/api/user'
+import { computed, onMounted, reactive, ref } from 'vue'
+import { useStore } from 'vuex'
+import { ElMessage } from 'element-plus'
+import { Camera, Check, Clock, Key, Lock, Message, Phone, PieChart, User } from '@element-plus/icons-vue'
+import { updateProfile, uploadAvatar, getUserStats, updatePassword } from '@/api/user'
 
 const store = useStore()
-const userInfo = ref(store.state.userInfo)
 const user = computed(() => store.state.userInfo)
 
-const avatarInput = ref(null)
-const passwordFormRef = ref(null)
-
-// 响应式数据
-const userForm = ref({
-    username: '',
-    phone: '',
-})
+const profileForm = reactive({ username: '', phone: '' })
 const saving = ref(false)
-const changingPassword = ref(false)
-const showPasswordDialog = ref(false)
+const avatarInput = ref(null)
+const storage = reactive({ used: '0', total: '10', pct: 0 })
+const fileStats = reactive({ totalFiles: 0, folders: 0, sharedFiles: 0 })
+const fileTypes = ref([])
+const typeColors = ['#2F6BFF', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6']
 
-// 存储统计
-const storageStats = ref({
-    used: 0,
-    total: 100,
-    percentage: 0
-})
+function storageColor(pct) { if (pct > 90) return 'var(--cb-danger)'; if (pct > 70) return 'var(--cb-warning)'; return 'var(--cb-primary)' }
 
-const fileStats = ref({
-    totalFiles: 0,
-    folders: 0,
-    sharedFiles: 0
-})
+const pwdForm = reactive({ oldPassword: '', newPassword: '', confirmPassword: '' })
+const pwdFormRef = ref(null)
+const changingPwd = ref(false)
 
-const fileTypeStats = ref([])
-
-// 修改密码表单
-const passwordForm = ref({
-    oldPassword: '',
-    newPassword: '',
-    confirmPassword: ''
-})
-
-// 默认头像
-const defaultAvatar = 'https://cube.elemecdn.com/3/7c/3ea6beec64369c2642b92c5926d6.png'
-
-// 计算属性
-const storageColor = computed(() => {
-    const percent = storageStats.value.percentage
-    return percent > 90 ? '#f56c6c' : percent > 70 ? '#e6a23c' : '#409eff'
-})
-
-// 密码验证规则
-const passwordRules = {
-    oldPassword: [
-        {required: true, message: '请输入当前密码', trigger: 'blur'}
-    ],
-    newPassword: [
-        {required: true, message: '请输入新密码', trigger: 'blur'},
-        {min: 6, message: '密码长度至少6位', trigger: 'blur'}
-    ],
-    confirmPassword: [
-        {required: true, message: '请确认新密码', trigger: 'blur'},
-        {
-            validator: (rule, value, callback) => {
-                if (value !== passwordForm.value.newPassword) {
-                    callback(new Error('两次输入的密码不一致'))
-                } else {
-                    callback()
-                }
-            },
-            trigger: 'blur'
-        }
-    ]
+const pwdRules = {
+  oldPassword: [{ required: true, message: '请输入当前密码', trigger: 'blur' }],
+  newPassword: [
+    { required: true, min: 6, message: '至少6位', trigger: 'blur' },
+    { pattern: /(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/, message: '需包含大小写字母和数字', trigger: 'blur' }
+  ],
+  confirmPassword: [
+    { required: true, message: '请确认密码', trigger: 'blur' },
+    { validator: (_, v, cb) => v !== pwdForm.newPassword ? cb(new Error('两次密码不一致')) : cb(), trigger: 'blur' }
+  ]
 }
 
-const loadStats = async () => {
-    try {
-        // 调用API获取用户统计信息
-        const response = await getUserStats();
-        const statsData = response;
-        
-        // 更新存储统计
-        storageStats.value = {
-            used: statsData.storage_quota.used_gb || 0,
-            total: statsData.storage_quota.total_gb || 100,
-            percentage: statsData.storage_quota.used_percent || 0
-        }
-
-        // 更新文件统计
-        fileStats.value = {
-            totalFiles: statsData.file_stats.total_files || 0,
-            folders: statsData.file_stats.folders || 0,
-            sharedFiles: statsData.file_stats.shared_files || 0
-        }
-
-        // 更新文件类型统计
-        const colors = ['#409eff', '#67c23a', '#e6a23c', '#f56c6c', '#909399'];
-        fileTypeStats.value = statsData.file_type_stats.map((type, index) => ({
-            ...type,
-            color: colors[index % colors.length]
-        }))
-    } catch (error) {
-        ElMessage.error('获取统计信息失败')
+async function loadStats() {
+  try {
+    const d = await getUserStats()
+    if (d) {
+      const q = d.storage_quota || {}
+      storage.used = (q.used_gb || 0).toFixed(1)
+      storage.total = (q.total_gb || 10).toFixed(1)
+      storage.pct = q.used_percent || 0
+      const fs = d.file_stats || {}
+      fileStats.totalFiles = fs.total_files || 0
+      fileStats.folders = fs.folders || 0
+      fileStats.sharedFiles = fs.shared_files || 0
+      fileTypes.value = (d.file_type_stats || []).map((t, i) => ({ ...t, color: typeColors[i % typeColors.length] }))
     }
+  } catch {}
 }
 
-const handleAvatarClick = () => {
-    avatarInput.value.click()
+function initForm() {
+  if (user.value) {
+    profileForm.username = user.value.username || ''
+    profileForm.phone = user.value.phone || ''
+  }
 }
 
-const handleAvatarChange = async (event) => {
-    const file = event.target.files[0]
-    if (!file) return
-
-    // 验证文件类型和大小
-    if (!file.type.startsWith('image/')) {
-        ElMessage.error('请选择图片文件')
-        return
-    }
-
-    if (file.size > 5 * 1024 * 1024) {
-        ElMessage.error('图片大小不能超过5MB')
-        return
-    }
-
-    try {
-        const formData = new FormData()
-        formData.append('avatar', file)
-        const res = await uploadAvatar(formData)
-        const avatarUrl = res.avatar
-        // 更新本地用户信息
-        userInfo.value.avatar = avatarUrl
-        store.commit('setUserInfo', { ...store.state.userInfo, avatar: avatarUrl })
-        ElMessage.success('头像更新成功')
-    } catch (error) {
-        ElMessage.error('头像更新失败')
-    } finally {
-        // 清空input
-        event.target.value = ''
-    }
+async function saveProfile() {
+  saving.value = true
+  try {
+    await updateProfile(profileForm)
+    store.commit('setUserInfo', { ...user.value, username: profileForm.username, phone: profileForm.phone })
+    ElMessage.success('资料已更新')
+  } catch {} finally { saving.value = false }
 }
 
-const saveUserInfo = async () => {
-    try {
-        saving.value = true
-        await updateProfile(userForm.value)
-        // 更新store中的用户信息
-        store.commit('setUserInfo', {
-            ...user.value,
-            username: userForm.value.username,
-            phone: userForm.value.phone
-        })
-
-        ElMessage.success('更新成功')
-    } catch (error) {
-        ElMessage.error('更新失败，请重试')
-    } finally {
-        saving.value = false
-    }
+async function onAvatarChange(e) {
+  const f = e.target.files[0]
+  if (!f) return
+  if (f.size > 5 * 1024 * 1024) { ElMessage.error('图片不超过5MB'); return }
+  try {
+    const fd = new FormData(); fd.append('avatar', f)
+    const res = await uploadAvatar(fd)
+    store.commit('setUserInfo', { ...store.state.userInfo, avatar: res.avatar })
+    ElMessage.success('头像已更新')
+  } catch {} finally { e.target.value = '' }
 }
 
-const changePassword = async () => {
-    try {
-        await passwordFormRef.value.validate()
-        changingPassword.value = true
-        await updatePassword({
-            oldPassword: passwordForm.value.oldPassword,
-            newPassword: passwordForm.value.newPassword
-        })
-
-        ElMessage.success('密码修改成功')
-        showPasswordDialog.value = false
-        passwordForm.value = {
-            oldPassword: '',
-            newPassword: '',
-            confirmPassword: ''
-        }
-    } catch (error) {
-        if (error.message) {
-            ElMessage.error(error.message)
-        }
-    } finally {
-        changingPassword.value = false
-    }
+async function changePassword() {
+  const ok = await pwdFormRef.value?.validate().catch(() => false)
+  if (!ok) return
+  changingPwd.value = true
+  try {
+    await updatePassword({ oldPassword: pwdForm.oldPassword, newPassword: pwdForm.newPassword })
+    ElMessage.success('密码已修改')
+    Object.assign(pwdForm, { oldPassword: '', newPassword: '', confirmPassword: '' })
+  } catch {} finally { changingPwd.value = false }
 }
 
-// 初始化用户表单数据
-const initUserForm = () => {
-    if (user.value) {
-        userForm.value = {
-            username: user.value.username || '',
-            phone: user.value.phone || '',
-        }
-    }
-}
-
-// 生命周期
-onMounted(() => {
-    initUserForm()
-    loadStats()
-})
+onMounted(() => { initForm(); loadStats() })
 </script>
 
 <style scoped>
-.user-profile {
-    background: #f8fafc;
-    height: 100%;
-    padding: 16px;
-    overflow-x: hidden;
+/* Info card */
+.info-card {
+  position: relative;
+  overflow: hidden;
+  background: var(--cb-surface);
+  border: 1px solid var(--cb-border);
+  border-radius: var(--cb-radius-xl);
+  box-shadow: var(--cb-shadow-xs);
+  margin-bottom: 20px;
+}
+.info-bg {
+  position: absolute; inset: 0;
+  background: radial-gradient(ellipse 80% 140% at 30% -20%, rgba(47,107,255,.04), transparent),
+              radial-gradient(ellipse 50% 100% at 85% 120%, rgba(139,92,255,.03), transparent);
+  pointer-events: none;
+}
+.info-body {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 32px;
+  padding: 36px 40px;
 }
 
-.profile-container {
-    max-width: 1200px;
-    margin: 0 auto;
+.avatar-stack { position: relative; cursor: pointer; flex-shrink: 0; }
+.avatar-ring { padding: 4px; border-radius: 50%; background: var(--cb-primary-gradient); }
+.hero-avatar { border: 3px solid #fff; }
+.avatar-badge {
+  position: absolute; bottom: 0; right: -2px;
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  background: var(--cb-text);
+  color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  border: 3px solid #fff;
+  transition: background .2s;
+}
+.avatar-stack:hover .avatar-badge { background: var(--cb-primary); }
+
+.info-main { flex: 1; min-width: 0; }
+.info-name { font-size: 22px; font-weight: 800; color: var(--cb-text); margin: 0 0 12px; letter-spacing: -0.4px; }
+.info-tags { display: flex; flex-wrap: wrap; gap: 8px; }
+.info-tag {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 13px; color: var(--cb-text-secondary);
+  background: var(--cb-bg); padding: 5px 14px; border-radius: 99px; font-weight: 500;
+}
+.info-tag .el-icon { color: var(--cb-text-muted); }
+
+.info-stats {
+  display: flex;
+  gap: 32px;
+  padding-left: 32px;
+  border-left: 1px solid var(--cb-border);
+  flex-shrink: 0;
+}
+.is-item { text-align: right; }
+.is-val {
+  display: block;
+  font-size: 24px;
+  font-weight: 800;
+  color: var(--cb-text);
+  letter-spacing: -0.5px;
+  line-height: 1.2;
+}
+.is-val small { font-size: 14px; font-weight: 600; color: var(--cb-text-muted); }
+.is-lbl {
+  display: block;
+  font-size: 12px;
+  color: var(--cb-text-muted);
+  font-weight: 500;
+  margin-top: 2px;
 }
 
-.profile-header {
-    background: #fff;
-    border-radius: 16px;
-    padding: 32px;
-    margin-bottom: 32px;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
-    border: 1px solid #e2e8f0;
+/* Card */
+.card {
+  background: var(--cb-surface);
+  border: 1px solid var(--cb-border);
+  border-radius: var(--cb-radius-lg);
+  padding: 28px 32px;
+  box-shadow: var(--cb-shadow-xs);
+  margin-bottom: 20px;
 }
-
-.user-info {
-    display: flex;
-    align-items: center;
-    gap: 24px;
+.card-title {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 15px; font-weight: 700; color: var(--cb-text); margin: 0 0 24px;
 }
+.card-title .el-icon { color: var(--cb-primary); }
 
-.avatar-section {
-    position: relative;
+/* Edit form */
+.edit-form :deep(.el-form-item) { margin-bottom: 20px; }
+.edit-form :deep(.el-form-item__label) { font-weight: 600; color: var(--cb-text-secondary); font-size: 13px; }
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 32px;
 }
+.form-actions { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--cb-border-light); }
 
-.user-avatar {
-    border: 4px solid #fff;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+.edit-form :deep(.el-input__wrapper) {
+  border-radius: var(--cb-radius-sm); background: var(--cb-bg);
+  box-shadow: none !important; border: 1px solid var(--cb-border);
 }
-
-.avatar-edit {
-    position: absolute;
-    right: -8px;
-    bottom: -8px;
-    background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
-    color: #fff;
-    border-radius: 50%;
-    width: 32px;
-    height: 32px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    border: 2px solid #fff;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-    transition: all 0.3s;
+.edit-form :deep(.el-input__wrapper:hover) { border-color: var(--cb-border-strong); }
+.edit-form :deep(.el-input__wrapper.is-focus) {
+  border-color: var(--cb-primary); background: var(--cb-surface);
+  box-shadow: var(--cb-focus-ring) !important;
 }
+.edit-form :deep(.el-input.is-disabled .el-input__wrapper) { background: var(--cb-bg-alt); opacity: .7; }
 
-.avatar-edit:hover {
-    transform: scale(1.1);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+/* Cards row */
+.cards-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
 }
+.cards-row .card { margin-bottom: 0; }
 
-.user-details {
-    flex: 1;
+/* Storage */
+.storage-inline { display: flex; gap: 36px; align-items: center; }
+.ring-wrap { position: relative; flex-shrink: 0; }
+.ring-svg { width: 150px; height: 150px; transform: rotate(-90deg); }
+.ring-bg { fill: none; stroke: var(--cb-bg-alt); stroke-width: 9; }
+.ring-fill { fill: none; stroke-width: 9; stroke-linecap: round; stroke-dasharray: 364.42; transition: stroke-dashoffset .8s var(--cb-ease), stroke .4s; }
+.ring-center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.ring-center strong { font-size: 26px; font-weight: 800; color: var(--cb-text); letter-spacing: -1px; line-height: 1; }
+.ring-center small { font-size: 11px; color: var(--cb-text-muted); font-weight: 500; margin-top: 2px; }
+
+.type-bars { flex: 1; display: grid; gap: 12px; }
+.tb-row { display: grid; grid-template-columns: 8px 36px 44px 1fr; align-items: center; gap: 10px; }
+.tb-dot { width: 8px; height: 8px; border-radius: 50%; }
+.tb-label { font-size: 12px; font-weight: 600; color: var(--cb-text-secondary); }
+.tb-size { font-size: 12px; font-weight: 600; color: var(--cb-text); }
+.tb-track { height: 5px; background: var(--cb-bg-alt); border-radius: 99px; overflow: hidden; }
+.tb-fill { height: 100%; border-radius: 99px; transition: width .6s var(--cb-ease); }
+
+/* Password form */
+.styled-form :deep(.el-form-item) { margin-bottom: 18px; }
+.styled-form :deep(.el-form-item:last-child) { margin-bottom: 0; margin-top: 6px; }
+.styled-form :deep(.el-input__wrapper) {
+  border-radius: var(--cb-radius-sm); background: var(--cb-bg);
+  box-shadow: none !important; border: 1px solid var(--cb-border);
 }
-
-.user-name {
-    margin: 0 0 8px 0;
-    font-size: 28px;
-    font-weight: 700;
-    color: #1e293b;
-    background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
+.styled-form :deep(.el-input__wrapper:hover) { border-color: var(--cb-border-strong); }
+.styled-form :deep(.el-input__wrapper.is-focus) {
+  border-color: var(--cb-primary); background: var(--cb-surface);
+  box-shadow: var(--cb-focus-ring) !important;
 }
+.styled-form :deep(.el-form-item__label) { font-weight: 600; color: var(--cb-text-secondary); font-size: 13px; }
 
-.user-email {
-    margin: 0 0 4px 0;
-    color: #64748b;
-    font-size: 16px;
+@media (max-width: 900px) {
+  .info-body { flex-direction: column; text-align: center; align-items: center; }
+  .info-stats { padding-left: 0; border-left: 0; padding-top: 24px; border-top: 1px solid var(--cb-border); }
+  .is-item { text-align: center; }
+  .cards-row { grid-template-columns: 1fr; }
 }
-
-.user-meta {
-    margin: 0;
-    color: #94a3b8;
-    font-size: 14px;
-}
-
-.content-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 24px;
-}
-
-.left-column,
-.right-column {
-    display: flex;
-    flex-direction: column;
-    gap: 24px;
-}
-
-.info-card,
-.stats-card,
-.file-types-card,
-.security-card {
-    background: #fff;
-    border-radius: 16px;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
-    border: 1px solid #e2e8f0;
-    transition: all 0.3s ease;
-    overflow: hidden;
-}
-
-.info-card:hover,
-.stats-card:hover,
-.file-types-card:hover,
-.security-card:hover {
-    //transform: translateY(-4px);
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
-}
-
-.card-header {
-    background: linear-gradient(135deg, #f7fafc 0%, #edf2f7 100%);
-    padding: 20px 24px;
-    border-bottom: 1px solid #e2e8f0;
-    display: flex;
-    align-items: center;
-    gap: 12px;
-}
-
-.card-icon {
-    width: 40px;
-    height: 40px;
-    background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
-    border-radius: 10px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: #fff;
-    font-size: 18px;
-}
-
-.card-header h3 {
-    margin: 0;
-    font-size: 18px;
-    font-weight: 600;
-    color: #1e293b;
-}
-
-.card-body {
-    padding: 24px;
-}
-
-.info-form {
-    margin-top: 0;
-}
-
-.action-btn {
-    background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
-    border: none;
-    border-radius: 8px;
-    font-weight: 500;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    transition: all 0.3s;
-}
-
-.action-btn:hover {
-    //transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
-}
-
-.storage-visual {
-    display: flex;
-    align-items: center;
-    gap: 32px;
-}
-
-.storage-circle {
-    flex-shrink: 0;
-}
-
-.circle-content {
-    text-align: center;
-}
-
-.percentage {
-    font-size: 24px;
-    font-weight: 700;
-    color: #1e293b;
-    line-height: 1;
-}
-
-.storage-text {
-    font-size: 12px;
-    color: #64748b;
-    margin-top: 4px;
-}
-
-.storage-details {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-}
-
-.detail-item {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 12px;
-    background: #f8fafc;
-    border-radius: 8px;
-    transition: all 0.3s;
-}
-
-.detail-item:hover {
-    background: #f1f5f9;
-    //transform: translateX(4px);
-}
-
-.detail-icon {
-    width: 32px;
-    height: 32px;
-    background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
-    border-radius: 8px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: #fff;
-}
-
-.detail-content {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-}
-
-.detail-label {
-    font-size: 12px;
-    color: #64748b;
-}
-
-.detail-value {
-    font-size: 16px;
-    font-weight: 600;
-    color: #1e293b;
-}
-
-.file-types {
-    display: flex;
-    flex-direction: column;
-    gap: 20px;
-}
-
-.file-type-item {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-}
-
-.type-header {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-}
-
-.type-icon {
-    width: 36px;
-    height: 36px;
-    border-radius: 8px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: #1e293b;
-    font-size: 16px;
-}
-
-.type-info {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-}
-
-.type-name {
-    font-size: 14px;
-    font-weight: 600;
-    color: #1e293b;
-}
-
-.type-count {
-    font-size: 12px;
-    color: #64748b;
-}
-
-.type-percentage {
-    font-size: 16px;
-    font-weight: 700;
-    color: #3b82f6;
-}
-
-.type-progress {
-    height: 8px;
-    background: #e2e8f0;
-    border-radius: 4px;
-    overflow: hidden;
-}
-
-.progress-bar {
-    height: 100%;
-    border-radius: 4px;
-    transition: width 0.6s ease;
-}
-
-.security-item {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 16px;
-}
-
-.security-info h4 {
-    margin: 0 0 4px 0;
-    font-size: 16px;
-    font-weight: 600;
-    color: #1e293b;
-}
-
-.security-info p {
-    margin: 0;
-    font-size: 14px;
-    color: #64748b;
-}
-
-/* 响应式设计 */
-@media (max-width: 1024px) {
-    .content-grid {
-        grid-template-columns: 1fr;
-        gap: 20px;
-    }
-
-    .storage-visual {
-        flex-direction: column;
-        gap: 20px;
-        text-align: center;
-    }
-}
-
-@media (max-width: 768px) {
-    .user-profile {
-        padding: 16px;
-    }
-
-    .profile-header {
-        padding: 24px;
-        margin-bottom: 24px;
-    }
-
-    .user-info {
-        flex-direction: column;
-        text-align: center;
-        gap: 16px;
-    }
-
-    .user-name {
-        font-size: 24px;
-    }
-
-    .content-grid {
-        gap: 16px;
-    }
-
-    .card-body {
-        padding: 20px;
-    }
-
-    .security-item {
-        flex-direction: column;
-        align-items: flex-start;
-        gap: 12px;
-    }
+@media (max-width: 640px) {
+  .form-grid { grid-template-columns: 1fr; }
+  .storage-inline { flex-direction: column; }
 }
 </style>

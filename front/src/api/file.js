@@ -18,30 +18,6 @@ export const createFolder = (data) => {
     })
 }
 
-// 收藏列表
-export const lisStarred = () => {
-    return request({
-        url: '/star',
-        method: 'get'
-    })
-}
-
-// 添加收藏
-export const addStarred = (fileId) => {
-    return request({
-        url: '/star',
-        method: 'post',
-        data: {fileId}
-    })
-}
-
-// 取消收藏
-export const removeStar = (starId) => {
-    return request({
-        url: '/star/${starId}',
-        method: 'delete'
-    })
-}
 
 // 文件预览：获取文件可预览链接：
 export const previewFile = (fileId) => {

@@ -2,11 +2,12 @@ package models
 
 // FileTypeStat 文件类型统计信息
 type FileTypeStat struct {
-	Type  string `json:"type"`  // 文件类型标识 (image, video, audio, document, other)
-	Name  string `json:"name"`  // 文件类型中文名称 (图片, 视频, 音频, 文档, 其他)
-	Count int    `json:"count"` // 该类型文件数量
-	//Size       int64   `json:"size"`       // 该类型文件总大小(字节)
-	//SizeGB     float64 `json:"size_gb"`    // 该类型文件总大小(GB)
+	Type       string  `json:"type"`       // 文件类型标识 (image, video, audio, document, other)
+	Name       string  `json:"name"`       // 文件类型中文名称 (图片, 视频, 音频, 文档, 其他)
+	Count      int     `json:"count"`      // 该类型文件数量
+	Size       int64   `json:"size"`       // 该类型文件总大小(字节)
+	SizeGB     float64 `json:"size_gb"`    // 该类型文件总大小(GB)
+	SizeStr    string  `json:"size_str"`   // 该类型文件总大小(格式化的字符串, 如 "28 GB")
 	Percentage float64 `json:"percentage"` // 占总文件数量的百分比
 }
 

@@ -31,6 +31,7 @@ type FileRepository interface {
 	GetObjectKeysByUserId(userId int) ([]string, error)
 
 	SoftDeleteFile(db *gorm.DB, userId int, fileId string) error
+	SoftDeleteFolder(db *gorm.DB, userId int, folderId string) ([]string, error)
 	AddToRecycle(db *gorm.DB, recycleEntry *models.RecycleBin) error
 	DeletePermanent(db *gorm.DB, fileIds []string) error
 	DeleteByUserId(db *gorm.DB, userId int) error
@@ -49,6 +50,7 @@ type FileRepository interface {
 	GetAllFolders(ctx context.Context, userId int) ([]models.File, error)
 	UpdateParent(ctx context.Context, id, parentId string) error
 	IsSubFolder(ctx context.Context, userId int, sourceId, targetId string) (bool, error)
+	GetAncestorNames(ctx context.Context, fileId string) ([]string, error)
 }
 
 type fileRepo struct {
@@ -113,7 +115,12 @@ func (r *fileRepo) GetFilesByCategory(ctx context.Context, userId int, fileType 
 		return nil, 0, err
 	}
 
-	// 排序
+	allowedSortCols := map[string]bool{
+		"name": true, "size": true, "created_at": true, "updated_at": true,
+	}
+	if !allowedSortCols[sortBy] {
+		sortBy = "created_at"
+	}
 	if sortOrder == "asc" {
 		query = query.Order(sortBy + " asc")
 	} else {
@@ -183,13 +190,41 @@ func (r *fileRepo) GetObjectKeysByUserId(userId int) ([]string, error) {
 	return objectKeys, err
 }
 
-// SoftDeleteFile 软删除文件
+// SoftDeleteFile 软删除单个文件
 func (r *fileRepo) SoftDeleteFile(db *gorm.DB, userId int, fileId string) error {
 	return db.Model(&models.File{}).
 		Where("id = ? AND user_id = ?", fileId, userId).
 		Updates(map[string]interface{}{
 			"is_deleted": 1,
 		}).Error
+}
+
+// SoftDeleteFolder 递归软删除文件夹及其所有子孙节点
+// 返回所有被删除的文件ID（包括文件夹自身）
+func (r *fileRepo) SoftDeleteFolder(db *gorm.DB, userId int, folderId string) ([]string, error) {
+	// 第一步：用递归 CTE 查出所有子孙节点 ID
+	var ids []string
+	err := db.Raw(`
+		WITH RECURSIVE descendants AS (
+			SELECT id FROM files WHERE id = ? AND user_id = ? AND is_deleted = 0
+			UNION ALL
+			SELECT f.id FROM files f
+			INNER JOIN descendants d ON f.parent_id = d.id
+			WHERE f.is_deleted = 0
+		)
+		SELECT id FROM descendants
+	`, folderId, userId).Scan(&ids).Error
+	if err != nil || len(ids) == 0 {
+		return ids, err
+	}
+
+	// 第二步：批量标记为已删除
+	err = db.Model(&models.File{}).
+		Where("id IN ?", ids).
+		Updates(map[string]interface{}{
+			"is_deleted": 1,
+		}).Error
+	return ids, err
 }
 
 func (r *fileRepo) DeletePermanent(db *gorm.DB, fileIds []string) error {
@@ -375,4 +410,20 @@ func (r *fileRepo) IsSubFolder(ctx context.Context, userId int, sourceId, target
 	}
 
 	return false, nil
+}
+
+// GetAncestorNames 用递归 CTE 一次查询所有祖先目录名（从根到直接父目录）
+// 比逐级循环查询减少 N-1 次数据库往返
+func (r *fileRepo) GetAncestorNames(ctx context.Context, fileId string) ([]string, error) {
+	var names []string
+	err := r.db.WithContext(ctx).Raw(`
+		WITH RECURSIVE ancestors AS (
+			SELECT id, name, parent_id FROM files WHERE id = ?
+			UNION ALL
+			SELECT f.id, f.name, f.parent_id FROM files f
+			INNER JOIN ancestors a ON f.id = a.parent_id
+		)
+		SELECT name FROM ancestors WHERE name != '/'
+	`, fileId).Scan(&names).Error
+	return names, err
 }

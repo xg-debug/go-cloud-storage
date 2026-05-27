@@ -2,8 +2,9 @@ package config
 
 import (
 	"errors"
-	"github.com/spf13/viper"
 	"time"
+
+	"github.com/spf13/viper"
 )
 
 type Config struct {
@@ -14,7 +15,7 @@ type Config struct {
 	QQ          QQConfig        `yaml:"qq"`
 	AliyunOss   AliyunOssConfig `yaml:"aliyun"`
 	StorageType string          `yaml:"minio"`
-	Minio       MinioConfig     `yaml:minio`
+	Minio       MinioConfig     `yaml:"minio"`
 }
 
 type ServerConfig struct {
@@ -82,10 +83,20 @@ type MinioConfig struct {
 func LoadConfig() (*Config, error) {
 	v := viper.New()
 
-	// 设置配置文件类型和路径
+	// 设置配置文件名称（不带后缀）
+	v.SetConfigName("go-cloud-storage.dev")
+	// 设置配置文件类型
 	v.SetConfigType("yaml")
-	configPath := "conf/go-cloud-storage.dev.yaml"
-	v.SetConfigFile(configPath)
+
+	// 添加搜索路径：
+	// 1. 当前目录下的 conf 文件夹
+	v.AddConfigPath("conf")
+	// 2. 上级目录下的 conf 文件夹（适配从 cmd 目录下运行的情况）
+	v.AddConfigPath("../conf")
+	// 3. backend 目录下的 conf 文件夹（适配从项目根目录运行的情况）
+	v.AddConfigPath("backend/conf")
+	// 4. 项目根目录
+	v.AddConfigPath(".")
 
 	// 支持环境变量覆盖
 	v.AutomaticEnv()
