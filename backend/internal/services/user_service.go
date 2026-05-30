@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 )
 
 type UserService interface {
@@ -28,15 +29,16 @@ type UserService interface {
 }
 
 type userService struct {
+	db               *gorm.DB
 	userRepo         repositories.UserRepository
 	fileRepo         repositories.FileRepository
 	storageQuotaRepo repositories.StorageQuotaRepository
 	minio            *minio.MinioService
 }
 
-func NewUserService(userRepo repositories.UserRepository, fileRepo repositories.FileRepository,
+func NewUserService(db *gorm.DB, userRepo repositories.UserRepository, fileRepo repositories.FileRepository,
 	quotaRepo repositories.StorageQuotaRepository, minio *minio.MinioService) UserService {
-	return &userService{userRepo: userRepo, fileRepo: fileRepo, storageQuotaRepo: quotaRepo, minio: minio}
+	return &userService{db: db, userRepo: userRepo, fileRepo: fileRepo, storageQuotaRepo: quotaRepo, minio: minio}
 }
 
 func (s *userService) AuthenticateUser(account, password string) (*models.User, error) {
@@ -79,43 +81,46 @@ func (s *userService) RegisterUser(email, pwd, pwdConfirm string) error {
 		Avatar:       "https://cube.elemecdn.com/3/7c/3ea6beec64369c2642b92c6726f1epng.png",
 		RegisterTime: time.Now(),
 	}
-	// 4.密码加密：（暂时使用明文密码）
 
-	if err := s.userRepo.Insert(&user); err != nil {
-		return errors.New("注册失败")
-	}
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		if err := s.userRepo.Insert(&user); err != nil {
+			return errors.New("注册失败")
+		}
 
-	// 5.给用户创建独立根目录
-	rootId := utils.NewUUID()
-	rootFolder := &models.File{
-		Id:        rootId,
-		UserId:    user.Id,
-		Name:      "/", // 根目录名
-		IsDir:     true,
-		ParentId:  sql.NullString{}, // 表示根
-		IsDeleted: false,
-		CreatedAt: time.Now(),
-	}
-	if err := s.fileRepo.InitFolder(rootFolder); err != nil {
-		return errors.New("初始化根目录失败")
-	}
+		// 给用户创建独立根目录
+		rootId := utils.NewUUID()
+		rootFolder := &models.File{
+			Id:        rootId,
+			UserId:    user.Id,
+			Name:      "/",
+			IsDir:     true,
+			ParentId:  sql.NullString{},
+			IsDeleted: false,
+			CreatedAt: time.Now(),
+		}
+		if err := s.fileRepo.InitFolder(rootFolder); err != nil {
+			return errors.New("初始化根目录失败")
+		}
 
-	// 回写 user 表中的root—_folder_id
-	user.RootFolderId = rootId
-	if err := s.userRepo.Update(&user); err != nil {
-		return errors.New("回写root_folder_id失败")
-	}
+		// 回写 user 表中的 root_folder_id
+		user.RootFolderId = rootId
+		if err := s.userRepo.Update(&user); err != nil {
+			return errors.New("回写root_folder_id失败")
+		}
 
-	// 6.给用户分配 10GB 的物理空间
-	storage := &models.StorageQuota{
-		UserID:    user.Id,
-		Total:     10 * 1024 * 1024 * 1024,
-		Used:      0,
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
-	}
-	s.storageQuotaRepo.Create(storage)
-	return nil
+		// 给用户分配 10GB 的物理空间
+		storage := &models.StorageQuota{
+			UserID:    user.Id,
+			Total:     10 * 1024 * 1024 * 1024,
+			Used:      0,
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		}
+		if err := s.storageQuotaRepo.Create(storage); err != nil {
+			return err
+		}
+		return nil
+	})
 }
 
 func (s *userService) GetProfile(userId int) (*vo.UserProfileResponse, error) {

@@ -35,6 +35,7 @@ func (c *UserController) GetProfile(ctx *gin.Context) {
 	profile, err := c.userService.GetProfile(userId)
 	if err != nil {
 		utils.Fail(ctx, http.StatusNotFound, "用户不存在")
+		return
 	}
 	utils.Success(ctx, profile)
 }

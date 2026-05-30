@@ -1,30 +1,41 @@
 package controller
 
 import (
+	"context"
 	"fmt"
+	"go-cloud-storage/backend/infrastructure/cache"
 	"go-cloud-storage/backend/internal/services"
+	"go-cloud-storage/backend/pkg/config"
 	"go-cloud-storage/backend/pkg/utils"
 	"io"
+	"mime"
 	"net/http"
+	"net/url"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/go-redis/redis/v8"
 )
 
 type FileController struct {
-	fileService services.FileService
+	fileService   services.FileService
+	securityCfg   config.SecurityConfig
 }
 
-func NewFileController(service services.FileService) *FileController {
-	return &FileController{fileService: service}
+func NewFileController(service services.FileService, cfg *config.Config) *FileController {
+	return &FileController{fileService: service, securityCfg: cfg.Security}
 }
 
 // GetFilesRequest Gin 对 JSON 解析时，json:"xxx" 的名字要和 前端传的字段一致，且大小写敏感。
 type GetFilesRequest struct {
-	ParentId string `json:"parentId" form:"parentId"`
-	//Page     int    `json:"page" form:"page"`
-	//PageSize int    `json:"pageSize" form:"pageSize"`
+	ParentId  string `json:"parentId" form:"parentId"`
+	Page      int    `json:"page" form:"page"`
+	PageSize  int    `json:"pageSize" form:"pageSize"`
+	SortBy    string `json:"sortBy" form:"sortBy"`
+	SortOrder string `json:"sortOrder" form:"sortOrder"`
 }
 
 type RenameFileRequest struct {
@@ -47,16 +58,16 @@ func (c *FileController) GetFiles(ctx *gin.Context) {
 	}
 	userId := ctx.GetInt("userId")
 
-	//if req.Page <= 0 {
-	//	req.Page = 1
-	//}
-	//if req.PageSize <= 0 {
-	//	req.PageSize = 20
-	//}
-	//files, total, err := c.fileService.GetFiles(ctx, userId, req.ParentId, req.Page, req.PageSize)
-	files, total, err := c.fileService.GetFiles(ctx, userId, req.ParentId)
+	if req.Page <= 0 {
+		req.Page = 1
+	}
+	if req.PageSize <= 0 || req.PageSize > 100 {
+		req.PageSize = 20
+	}
+	files, total, err := c.fileService.GetFiles(ctx, userId, req.ParentId, req.Page, req.PageSize, req.SortBy, req.SortOrder)
 	if err != nil {
 		utils.Fail(ctx, http.StatusInternalServerError, "查询文件列表失败")
+		return
 	}
 
 	utils.Success(ctx, gin.H{"list": files, "total": total})
@@ -95,6 +106,19 @@ func (c *FileController) UploadFile(ctx *gin.Context) {
 	fileHeader, err := ctx.FormFile("file")
 	if err != nil {
 		utils.Fail(ctx, http.StatusBadRequest, "读取文件失败")
+		return
+	}
+
+	// 验证文件扩展名
+	if !c.isAllowedExtension(fileHeader.Filename) {
+		utils.Fail(ctx, http.StatusBadRequest, "不支持的文件类型")
+		return
+	}
+
+	// 验证文件大小
+	maxSize := int64(c.securityCfg.MaxFileSizeMB) * 1024 * 1024
+	if fileHeader.Size > maxSize {
+		utils.Fail(ctx, http.StatusBadRequest, fmt.Sprintf("文件大小超过限制（最大 %dMB）", c.securityCfg.MaxFileSizeMB))
 		return
 	}
 
@@ -163,14 +187,46 @@ func (c *FileController) PreviewFile(ctx *gin.Context) {
 
 	userId := ctx.GetInt("userId")
 
-	// 获取文件信息和预览数据
 	previewData, err := c.fileService.PreviewFile(userId, fileId)
 	if err != nil {
 		utils.Fail(ctx, http.StatusInternalServerError, err.Error())
 		return
 	}
 
+	// PDF 使用后端代理流式传输，确保 Content-Disposition: inline 生效
+	if previewData.PreviewType == "pdf" {
+		token := ""
+		if auth := ctx.GetHeader("Authorization"); strings.HasPrefix(auth, "Bearer ") {
+			token = auth[7:]
+		}
+		scheme := "http"
+		if ctx.Request.TLS != nil || ctx.GetHeader("X-Forwarded-Proto") == "https" {
+			scheme = "https"
+		}
+		proxyURL := fmt.Sprintf("%s://%s/file/preview-stream/%s?token=%s",
+			scheme, ctx.Request.Host, fileId, url.QueryEscape(token))
+		previewData.FileURL = proxyURL
+	}
+
 	utils.Success(ctx, previewData)
+}
+
+func (c *FileController) PreviewStream(ctx *gin.Context) {
+	fileId := ctx.Param("fileId")
+	userId := ctx.GetInt("userId")
+
+	reader, fileInfo, err := c.fileService.PreviewStream(ctx, userId, fileId)
+	if err != nil {
+		utils.Fail(ctx, http.StatusBadRequest, err.Error())
+		return
+	}
+	defer reader.Close()
+
+	contentType := mimeTypeByExtension(fileInfo.FileExtension)
+	ctx.Header("Content-Type", contentType)
+	ctx.Header("Content-Disposition", "inline; filename=\""+url.QueryEscape(fileInfo.Name)+"\"")
+	ctx.Header("Accept-Ranges", "bytes")
+	io.Copy(ctx.Writer, reader)
 }
 
 func (c *FileController) SearchFiles(ctx *gin.Context) {
@@ -186,7 +242,7 @@ func (c *FileController) SearchFiles(ctx *gin.Context) {
 	if req.Page <= 0 {
 		req.Page = 1
 	}
-	if req.PageSize <= 0 {
+	if req.PageSize <= 0 || req.PageSize > 100 {
 		req.PageSize = 20
 	}
 
@@ -196,6 +252,9 @@ func (c *FileController) SearchFiles(ctx *gin.Context) {
 		utils.Fail(ctx, http.StatusInternalServerError, "搜索文件失败: "+err.Error())
 		return
 	}
+
+	// 保存搜索历史到 Redis（异步，不影响响应）
+	go saveSearchHistory(userId, req.Keyword)
 
 	utils.Success(ctx, gin.H{"list": files, "total": total})
 }
@@ -215,8 +274,20 @@ func (c *FileController) ChunkUploadInit(ctx *gin.Context) {
 
 	userId := ctx.GetInt("userId")
 
+	// 验证文件扩展名
+	if !c.isAllowedExtension(req.FileName) {
+		utils.Fail(ctx, http.StatusBadRequest, "不支持的文件类型")
+		return
+	}
+
+	// 验证文件大小
+	maxSize := int64(c.securityCfg.MaxFileSizeMB) * 1024 * 1024
+	if req.FileSize > maxSize {
+		utils.Fail(ctx, http.StatusBadRequest, fmt.Sprintf("文件大小超过限制（最大 %dMB）", c.securityCfg.MaxFileSizeMB))
+		return
+	}
+
 	// 调用 Service 层逻辑
-	// Service 层应该处理：查询是否秒传 -> 查询 Redis 是否有 UploadID -> 调用 MinIO InitiateMultipartUpload
 	resp, err := c.fileService.InitChunkUpload(ctx, userId, req.FileName, req.FileHash, req.ParentId, req.FileSize)
 	if err != nil {
 		utils.Fail(ctx, http.StatusInternalServerError, err.Error())
@@ -461,4 +532,104 @@ func (c *FileController) Download(ctx *gin.Context) {
 	ctx.Header("Content-Length", fmt.Sprintf("%d", objSize))
 	ctx.Header("Accept-Ranges", "bytes")
 	io.Copy(ctx.Writer, reader)
+}
+
+// CopyFile 复制文件/文件夹
+func (c *FileController) CopyFile(ctx *gin.Context) {
+	var req struct {
+		FileId         string `json:"fileId" binding:"required"`
+		TargetFolderId string `json:"targetFolderId"`
+	}
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		utils.Fail(ctx, http.StatusBadRequest, "参数错误")
+		return
+	}
+	userId := ctx.GetInt("userId")
+	if err := c.fileService.CopyFile(ctx, userId, req.FileId, req.TargetFolderId); err != nil {
+		utils.Fail(ctx, http.StatusInternalServerError, "复制失败: "+err.Error())
+		return
+	}
+	utils.Success(ctx, gin.H{"message": "复制成功"})
+}
+
+func (c *FileController) isAllowedExtension(fileName string) bool {
+	if len(c.securityCfg.AllowedExtensions) == 0 {
+		return true // 未配置白名单则全部允许
+	}
+	ext := strings.ToLower(filepath.Ext(fileName))
+	if ext == "" {
+		return false
+	}
+	for _, allowed := range c.securityCfg.AllowedExtensions {
+		if strings.EqualFold(ext, allowed) {
+			return true
+		}
+	}
+	return false
+}
+
+func mimeTypeByExtension(ext string) string {
+	if t := mime.TypeByExtension("." + strings.TrimPrefix(strings.ToLower(ext), ".")); t != "" {
+		return t
+	}
+	return "application/octet-stream"
+}
+
+func saveSearchHistory(userId int, keyword string) {
+	client := cache.GetClient()
+	if client == nil {
+		return
+	}
+	key := fmt.Sprintf("search_history:%d", userId)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	client.ZAdd(ctx, key, &redis.Z{Score: float64(time.Now().Unix()), Member: keyword})
+	// 只保留最近50条
+	client.ZRemRangeByRank(ctx, key, 0, -51)
+	// 设置过期时间30天
+	client.Expire(ctx, key, 30*24*time.Hour)
+}
+
+// GetSearchHistory 获取搜索历史
+func (c *FileController) GetSearchHistory(ctx *gin.Context) {
+	userId := ctx.GetInt("userId")
+	client := cache.GetClient()
+	if client == nil {
+		utils.Success(ctx, gin.H{"list": []string{}})
+		return
+	}
+
+	key := fmt.Sprintf("search_history:%d", userId)
+	ctxBg, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	results, err := client.ZRevRange(ctxBg, key, 0, 9).Result()
+	if err != nil {
+		utils.Success(ctx, gin.H{"list": []string{}})
+		return
+	}
+	utils.Success(ctx, gin.H{"list": results})
+}
+
+// DeleteSearchHistory 删除搜索历史
+func (c *FileController) DeleteSearchHistory(ctx *gin.Context) {
+	userId := ctx.GetInt("userId")
+	client := cache.GetClient()
+	if client == nil {
+		utils.Success(ctx, nil)
+		return
+	}
+
+	keyword := ctx.Query("keyword")
+	key := fmt.Sprintf("search_history:%d", userId)
+	ctxBg, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	if keyword != "" {
+		client.ZRem(ctxBg, key, keyword)
+	} else {
+		client.Del(ctxBg, key)
+	}
+	utils.Success(ctx, nil)
 }

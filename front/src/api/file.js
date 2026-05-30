@@ -80,6 +80,23 @@ export const searchFiles = (data) => {
     })
 }
 
+// 获取搜索历史
+export const getSearchHistory = () => {
+    return request({
+        url: '/file/search/history',
+        method: 'get'
+    })
+}
+
+// 删除搜索历史
+export const deleteSearchHistory = (keyword) => {
+    return request({
+        url: '/file/search/history',
+        method: 'delete',
+        params: { keyword }
+    })
+}
+
 // 获取文件夹树结构
 export const getFolderTree = () => {
     return request({

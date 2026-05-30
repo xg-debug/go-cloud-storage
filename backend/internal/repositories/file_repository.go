@@ -14,7 +14,7 @@ import (
 type FileRepository interface {
 	InitFolder(folder *models.File) error
 
-	GetFiles(ctx context.Context, userId int, parentId string) ([]models.File, int64, error)
+	GetFiles(ctx context.Context, userId int, parentId string, page, pageSize int, sortBy, sortOrder string) ([]models.File, int64, error)
 	GetFilesByCategory(ctx context.Context, userId int, fileType string, sortBy string, sortOrder string, page int, pageSize int) ([]models.File, int64, error)
 
 	GetRecentFiles(userId int, since time.Time) ([]models.File, error)
@@ -28,6 +28,7 @@ type FileRepository interface {
 	UpdateFile(file *models.File, updateFields map[string]interface{}) error
 	UpdateFileNameById(fileId, newName string) error
 	GetObjectKeysByIds(fileIds []string) ([]string, error)
+	GetObjectKeysByIdsExcludeRefs(fileIds []string, keys []string) ([]string, error)
 	GetObjectKeysByUserId(userId int) ([]string, error)
 
 	SoftDeleteFile(db *gorm.DB, userId int, fileId string) error
@@ -39,6 +40,7 @@ type FileRepository interface {
 	MarkAsNotDeleted(db *gorm.DB, fileIds []string, userId *int) error
 
 	CheckDuplicateName(userId int, parentId, name string) (bool, error)
+	GetFileByParentAndName(ctx context.Context, userId int, parentId, name string) (*models.File, error)
 	RestoreFolder(folderId string) error
 
 	CreateFolder(userId int, folderName string, parentId string) (*models.File, error)
@@ -68,7 +70,7 @@ func (r *fileRepo) InitFolder(folder *models.File) error {
 // 基础文件操作方法
 
 // GetFiles 获取用户文件列表
-func (r *fileRepo) GetFiles(ctx context.Context, userId int, parentId string) ([]models.File, int64, error) {
+func (r *fileRepo) GetFiles(ctx context.Context, userId int, parentId string, page, pageSize int, sortBy, sortOrder string) ([]models.File, int64, error) {
 	var files []models.File
 	var total int64
 
@@ -83,12 +85,25 @@ func (r *fileRepo) GetFiles(ctx context.Context, userId int, parentId string) ([
 	if err := query.Model(&models.File{}).Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
-	//offset := (page - 1) * pageSize
-	if err := query.Order("is_dir desc, created_at desc").Find(&files).Error; err != nil {
+	offset := (page - 1) * pageSize
+
+	orderClause := buildSortClause(sortBy, sortOrder)
+	if err := query.Order(orderClause).Offset(offset).Limit(pageSize).Find(&files).Error; err != nil {
 		return nil, 0, err
 	}
 
 	return files, total, nil
+}
+
+func buildSortClause(sortBy, sortOrder string) string {
+	allowed := map[string]bool{"name": true, "size": true, "created_at": true, "updated_at": true}
+	if !allowed[sortBy] {
+		sortBy = "created_at"
+	}
+	if sortOrder != "asc" {
+		sortOrder = "desc"
+	}
+	return "is_dir desc, " + sortBy + " " + sortOrder
 }
 
 // GetFilesByCategory 根据文件类型获取文件列表
@@ -184,6 +199,35 @@ func (r *fileRepo) GetObjectKeysByIds(fileIds []string) ([]string, error) {
 	return objectKeys, err
 }
 
+// GetObjectKeysByIdsExcludeRefs 返回 objectKeys 中去掉被其他未删除文件引用的 key
+// excludeFileIds 是即将被永久删除的文件 ID，不计入引用检查
+func (r *fileRepo) GetObjectKeysByIdsExcludeRefs(fileIds []string, keys []string) ([]string, error) {
+	if len(keys) == 0 {
+		return nil, nil
+	}
+	// 查询这些 key 中仍被其他非删除文件引用的
+	var stillReferenced []string
+	err := r.db.Model(&models.File{}).
+		Select("oss_object_key").
+		Where("oss_object_key IN ? AND is_deleted = 0 AND id NOT IN ?", keys, fileIds).
+		Group("oss_object_key").
+		Pluck("oss_object_key", &stillReferenced).Error
+	if err != nil {
+		return nil, err
+	}
+	refSet := make(map[string]bool, len(stillReferenced))
+	for _, k := range stillReferenced {
+		refSet[k] = true
+	}
+	var result []string
+	for _, k := range keys {
+		if !refSet[k] {
+			result = append(result, k)
+		}
+	}
+	return result, nil
+}
+
 func (r *fileRepo) GetObjectKeysByUserId(userId int) ([]string, error) {
 	var objectKeys []string
 	err := r.db.Model(&models.File{}).Select("oss_object_key").Where("user_id = ? AND is_deleted = ?", userId, true).Find(&objectKeys).Error
@@ -206,9 +250,9 @@ func (r *fileRepo) SoftDeleteFolder(db *gorm.DB, userId int, folderId string) ([
 	var ids []string
 	err := db.Raw(`
 		WITH RECURSIVE descendants AS (
-			SELECT id FROM files WHERE id = ? AND user_id = ? AND is_deleted = 0
+			SELECT id FROM file WHERE id = ? AND user_id = ? AND is_deleted = 0
 			UNION ALL
-			SELECT f.id FROM files f
+			SELECT f.id FROM file f
 			INNER JOIN descendants d ON f.parent_id = d.id
 			WHERE f.is_deleted = 0
 		)
@@ -260,6 +304,21 @@ func (r *fileRepo) CheckDuplicateName(userId int, parentId, name string) (bool, 
 	return count > 0, err
 }
 
+// GetFileByParentAndName 根据 parentId + name 查找文件（用于复制时防重名）
+func (r *fileRepo) GetFileByParentAndName(ctx context.Context, userId int, parentId, name string) (*models.File, error) {
+	var file models.File
+	err := r.db.WithContext(ctx).
+		Where("user_id = ? AND parent_id = ? AND name = ? AND is_deleted = ?", userId, parentId, name, false).
+		First(&file).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &file, nil
+}
+
 func (r *fileRepo) RestoreFolder(folderId string) error {
 	// 递归恢复文件夹及其所有内容
 	return r.db.Transaction(func(tx *gorm.DB) error {
@@ -274,12 +333,12 @@ func (r *fileRepo) RestoreFolder(folderId string) error {
 		// 使用闭包实现递归CTE
 		recursiveQuery := `
             WITH RECURSIVE children AS (
-                SELECT id FROM files WHERE parent_id = ?
+                SELECT id FROM file WHERE parent_id = ?
                 UNION ALL
-                SELECT f.id FROM files f
+                SELECT f.id FROM file f
                 INNER JOIN children c ON f.parent_id = c.id
             )
-            UPDATE files SET is_deleted = false
+            UPDATE file SET is_deleted = false
             WHERE id IN (SELECT id FROM children)
         `
 
@@ -353,10 +412,10 @@ func (r *fileRepo) GetAllUserFiles(userId int) ([]models.File, error) {
 	return files, err
 }
 
-// GetFileByMD5 根据MD5查找用户文件（用于秒传）
+// GetFileByMD5 根据文件哈希查找文件（用于跨用户秒传）
 func (r *fileRepo) GetFileByMD5(userId int, fileMD5 string) (*models.File, error) {
 	var file models.File
-	err := r.db.Where("user_id = ? AND file_hash = ? AND is_deleted = ?", userId, fileMD5, false).First(&file).Error
+	err := r.db.Where("file_hash = ? AND is_deleted = ?", fileMD5, false).First(&file).Error
 	return &file, err
 }
 
@@ -375,41 +434,23 @@ func (r *fileRepo) IsSubFolder(ctx context.Context, userId int, sourceId, target
 	if sourceId == targetId {
 		return true, nil
 	}
-	folders, _ := r.GetAllFolders(ctx, userId)
 
-	// 构建 parentId -> children 列表
-	childrenMap := make(map[string][]string)
+	var count int64
+	err := r.db.WithContext(ctx).Raw(`
+		WITH RECURSIVE descendants AS (
+			SELECT id FROM file WHERE id = ? AND user_id = ? AND is_deleted = 0
+			UNION ALL
+			SELECT f.id FROM file f
+			INNER JOIN descendants d ON f.parent_id = d.id
+			WHERE f.is_deleted = 0
+		)
+		SELECT COUNT(*) FROM descendants WHERE id = ?
+	`, sourceId, userId, targetId).Scan(&count).Error
 
-	for _, f := range folders {
-		parent := ""
-		if f.ParentId.Valid {
-			parent = f.ParentId.String
-		}
-		childrenMap[parent] = append(childrenMap[parent], f.Id)
+	if err != nil {
+		return false, err
 	}
-
-	// DFS 深度遍历 sourceId 的所有子孙节点
-	stack := []string{sourceId}
-	visited := make(map[string]bool)
-
-	for len(stack) > 0 {
-		curr := stack[len(stack)-1]
-		stack = stack[:len(stack)-1]
-
-		if visited[curr] {
-			continue
-		}
-		visited[curr] = true
-
-		for _, child := range childrenMap[curr] {
-			if child == targetId {
-				return true, nil
-			}
-			stack = append(stack, child)
-		}
-	}
-
-	return false, nil
+	return count > 0, nil
 }
 
 // GetAncestorNames 用递归 CTE 一次查询所有祖先目录名（从根到直接父目录）
@@ -418,9 +459,9 @@ func (r *fileRepo) GetAncestorNames(ctx context.Context, fileId string) ([]strin
 	var names []string
 	err := r.db.WithContext(ctx).Raw(`
 		WITH RECURSIVE ancestors AS (
-			SELECT id, name, parent_id FROM files WHERE id = ?
+			SELECT id, name, parent_id FROM file WHERE id = ?
 			UNION ALL
-			SELECT f.id, f.name, f.parent_id FROM files f
+			SELECT f.id, f.name, f.parent_id FROM file f
 			INNER JOIN ancestors a ON f.id = a.parent_id
 		)
 		SELECT name FROM ancestors WHERE name != '/'

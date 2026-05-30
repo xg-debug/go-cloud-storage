@@ -62,8 +62,12 @@ func (c *LoginController) Login(ctx *gin.Context) {
 	}
 
 	// 生成JWT Token
-	accessToken, err := utils.GenerateAccessToken(user.Id, 2*time.Hour)          // 访问令牌
-	refreshToken, err := utils.GenerateRefreshToken(user.Id, refreshTokenExpire) // 刷新令牌
+	accessToken, err := utils.GenerateAccessToken(user.Id, 2*time.Hour)
+	if err != nil {
+		utils.Fail(ctx, http.StatusInternalServerError, "生成访问令牌失败")
+		return
+	}
+	refreshToken, err := utils.GenerateRefreshToken(user.Id, refreshTokenExpire)
 
 	// 存入redis
 	rdb := cache.GetClient()

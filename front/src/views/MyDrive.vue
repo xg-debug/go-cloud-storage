@@ -11,16 +11,20 @@
           </el-breadcrumb-item>
         </el-breadcrumb>
         <span v-if="!isSearching" class="drive-count">{{ total }} 项</span>
+        <!-- Sort -->
+        <span v-if="!isSearching && fileList.length > 0" class="drive-sort-inline">
+          <el-radio-group v-model="sortBy" size="small" @change="loadFiles">
+            <el-radio-button value="created_at">时间</el-radio-button>
+            <el-radio-button value="name">名称</el-radio-button>
+            <el-radio-button value="size">大小</el-radio-button>
+          </el-radio-group>
+          <el-button size="small" link :icon="sortOrder === 'asc' ? SortUp : SortDown" @click="toggleSortOrder" />
+        </span>
       </div>
       <div class="drive-bar-right">
-        <el-button-group size="small">
-          <el-button :type="viewMode === 'grid' ? 'primary' : ''" @click="viewMode = 'grid'">
-            <el-icon><Grid /></el-icon>
-          </el-button>
-          <el-button :type="viewMode === 'list' ? 'primary' : ''" @click="viewMode = 'list'">
-            <el-icon><List /></el-icon>
-          </el-button>
-        </el-button-group>
+        <el-button class="view-toggle-btn" size="small" @click="viewMode = viewMode === 'grid' ? 'list' : 'grid'" :title="viewMode === 'grid' ? '切换列表视图' : '切换网格视图'">
+          <el-icon :size="16"><component :is="viewMode === 'grid' ? List : Grid" /></el-icon>
+        </el-button>
       </div>
     </div>
 
@@ -68,16 +72,22 @@
       <!-- Recent files section label -->
       <div class="drive-section" v-if="!isInFolder">
         <div class="section-head-row">
-          <h2 class="section-head">全部文件</h2>
+          <div class="section-head-left">
+            <h2 class="section-head">全部文件</h2>
+            <!-- Sort inline -->
+            <span v-if="fileList.length > 0" class="drive-sort-inline">
+              <el-radio-group v-model="sortBy" size="small" @change="loadFiles">
+                <el-radio-button value="created_at">时间</el-radio-button>
+                <el-radio-button value="name">名称</el-radio-button>
+                <el-radio-button value="size">大小</el-radio-button>
+              </el-radio-group>
+              <el-button size="small" link :icon="sortOrder === 'asc' ? SortUp : SortDown" @click="toggleSortOrder" />
+            </span>
+          </div>
           <div class="section-actions">
-            <el-button-group size="small">
-              <el-button :type="viewMode === 'grid' ? 'primary' : ''" @click="viewMode = 'grid'">
-                <el-icon><Grid /></el-icon>
-              </el-button>
-              <el-button :type="viewMode === 'list' ? 'primary' : ''" @click="viewMode = 'list'">
-                <el-icon><List /></el-icon>
-              </el-button>
-            </el-button-group>
+            <el-button class="view-toggle-btn" size="small" @click="viewMode = viewMode === 'grid' ? 'list' : 'grid'" :title="viewMode === 'grid' ? '切换列表视图' : '切换网格视图'">
+              <el-icon :size="16"><component :is="viewMode === 'grid' ? List : Grid" /></el-icon>
+            </el-button>
           </div>
         </div>
       </div>
@@ -90,10 +100,15 @@
         <article
           v-for="item in fileList" :key="item.id"
           class="file-card"
-          :class="{ selected: selectedIds.includes(item.id) }"
+          :class="{ selected: selectedIds.includes(item.id), 'drag-over': dragOverId === item.id && item.is_dir, 'dragging': dragId === item.id }"
+          :draggable="!item.is_dir"
           @dblclick="handleOpen(item)"
           @click.exact="onCardClick($event, item)"
           @contextmenu.prevent="showCtxMenu($event, item)"
+          @dragstart="onDragStart($event, item)"
+          @dragover.prevent="item.is_dir && onDragOver($event, item)"
+          @dragleave="onDragLeave(item)"
+          @drop="item.is_dir && onDrop(item)"
         >
           <!-- Checkbox -->
           <div class="fc-check" :class="{ show: selectedIds.includes(item.id) || hoveredId === item.id }">
@@ -271,15 +286,20 @@
 
     <CreateShareDialog v-model="shareDialogVisible" :file-info="shareFileInfo" />
 
-    <el-dialog v-model="previewVisible" :title="previewData?.name || '预览'" width="900px" top="5vh" destroy-on-close>
+    <el-dialog v-model="previewVisible" :title="previewTitle" width="900px" top="5vh" destroy-on-close>
       <div v-loading="previewLoading" class="preview-body">
         <template v-if="previewData">
-          <img v-if="previewData.preview_type === 'image'" :src="previewData.file_url" class="preview-img" />
+          <div v-if="previewData.preview_type === 'image'" class="preview-img-wrap">
+            <button v-if="imageNav.hasPrev" class="preview-nav preview-nav-prev" @click="navImage(-1)"><el-icon :size="28"><ArrowLeft /></el-icon></button>
+            <img :src="previewData.file_url" class="preview-img" />
+            <button v-if="imageNav.hasNext" class="preview-nav preview-nav-next" @click="navImage(1)"><el-icon :size="28"><ArrowRight /></el-icon></button>
+          </div>
           <video v-else-if="previewData.preview_type === 'video'" :src="previewData.file_url" controls class="preview-video" />
           <audio v-else-if="previewData.preview_type === 'audio'" :src="previewData.file_url" controls class="preview-audio" />
           <iframe v-else-if="previewData.preview_type === 'pdf'" :src="previewData.file_url" class="preview-frame" />
           <iframe v-else-if="previewData.preview_type === 'office'" :src="previewData.office_preview_url" class="preview-frame" />
           <iframe v-else-if="previewData.preview_type === 'text'" :src="previewData.file_url" class="preview-frame" />
+          <div v-else-if="previewData.preview_type === 'markdown'" class="preview-markdown" v-html="markdownHtml"></div>
           <div v-else class="preview-unsupported">此文件类型暂不支持在线预览</div>
         </template>
       </div>
@@ -297,20 +317,21 @@ import { useRoute } from 'vue-router'
 import { useStore } from 'vuex'
 import { ElMessage } from 'element-plus'
 import {
-  ArrowDown, ArrowLeft, Close, Delete, Download, Edit, Folder, FolderAdd, FolderOpened,
-  Grid, HomeFilled, List, MoreFilled, Search, Share, Star, Upload, View, Warning
+  ArrowDown, ArrowLeft, ArrowRight, Close, Delete, Download, Edit, Folder, FolderAdd, FolderOpened,
+  Grid, HomeFilled, List, MoreFilled, Search, Share, SortDown, SortUp, Star, Upload, View, Warning
 } from '@element-plus/icons-vue'
 import { listFiles, createFolder, deleteFile, renameFile, previewFile, downloadFile, searchFiles, getFolderTree, moveFile } from '@/api/file'
 import { addFavorite } from '@/api/favorite'
 import { getFileIcon, getFileIconColor } from '@/utils/fileIcon'
 import CreateShareDialog from '@/components/CreateShareDialog.vue'
 import FileUploadDialog from '@/components/FileUploadDialog.vue'
+import { marked } from 'marked'
 
 const route = useRoute()
 const store = useStore()
 
 // ── State ──
-const viewMode = ref('grid')
+const viewMode = ref(localStorage.getItem('driveViewMode') || 'grid')
 const fileList = ref([])
 const total = ref(0)
 const loading = ref(false)
@@ -321,6 +342,10 @@ const searchKeyword = ref('')
 const isSearching = ref(false)
 const hoveredId = ref(null)
 const selectedIds = ref([])
+const sortBy = ref('created_at')
+const sortOrder = ref('desc')
+const dragId = ref(null)
+const dragOverId = ref(null)
 let searchTimer = null
 
 // ── Computed ──
@@ -368,8 +393,64 @@ function runCtxAction(cmd) {
   hideCtxMenu()
 }
 function onDocumentClick() { hideCtxMenu() }
+
+function onDragStart(e, item) {
+  if (item.is_dir) return
+  dragId.value = item.id
+  e.dataTransfer.effectAllowed = 'move'
+  e.dataTransfer.setData('text/plain', item.id)
+}
+
+function onDragOver(e, item) {
+  if (!item.is_dir) return
+  e.dataTransfer.dropEffect = 'move'
+  dragOverId.value = item.id
+}
+
+function onDragLeave(item) {
+  if (dragOverId.value === item.id) dragOverId.value = null
+}
+
+async function onDrop(folder) {
+  dragOverId.value = null
+  const fileId = dragId.value
+  dragId.value = null
+  if (!fileId || fileId === folder.id) return
+  try {
+    await moveFile({ fileId, targetFolderId: folder.id })
+    ElMessage.success(`已移动到 ${folder.name}`)
+    loadFiles()
+  } catch { ElMessage.error('移动失败') }
+}
+
+function onKeydown(e) {
+  // 忽略在 input/textarea 中的按键
+  if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return
+  if (e.key === 'Delete' && selectedIds.value.length > 0) {
+    e.preventDefault()
+    handleBatchAction('delete')
+  } else if (e.key === 'F2' && selectedIds.value.length === 1) {
+    e.preventDefault()
+    const item = fileList.value.find(f => f.id === selectedIds.value[0])
+    if (item) handleRename(item)
+  } else if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
+    e.preventDefault()
+    selectedIds.value = fileList.value.map(f => f.id)
+  } else if (e.key === 'Escape') {
+    selectedIds.value = []
+    hideCtxMenu()
+  } else if (e.key === 'Enter' && selectedIds.value.length === 1) {
+    const item = fileList.value.find(f => f.id === selectedIds.value[0])
+    if (item) handleOpen(item)
+  } else if (e.key === '?' && !e.ctrlKey && !e.metaKey) {
+    ElMessage({ message: '快捷键: Delete 删除 | F2 重命名 | Ctrl+A 全选 | Esc 取消选择 | Enter 打开 | ? 帮助', duration: 4000 })
+  }
+}
+
 onMounted(() => document.addEventListener('click', onDocumentClick))
+onMounted(() => document.addEventListener('keydown', onKeydown))
 onUnmounted(() => document.removeEventListener('click', onDocumentClick))
+onUnmounted(() => document.removeEventListener('keydown', onKeydown))
 
 // ── Navigation ──
 function navigateTo(f) { handleOpen(f) }
@@ -394,12 +475,31 @@ const uploadDialogVisible = ref(false)
 const previewVisible = ref(false)
 const previewLoading = ref(false)
 const previewData = ref(null)
+const previewIndex = ref(-1)
+const markdownHtml = ref('')
+const imageNav = computed(() => {
+  const images = fileList.value.filter(f => !f.is_dir && isImage(f.name || f.extension || ''))
+  const idx = previewIndex.value
+  return {
+    images,
+    total: images.length,
+    hasPrev: idx > 0,
+    hasNext: idx < images.length - 1,
+    current: idx + 1
+  }
+})
+const previewTitle = computed(() => {
+  if (!previewData.value) return '预览'
+  const idx = imageNav.value.current
+  const total = imageNav.value.total
+  return total > 1 ? `${previewData.value.name} (${idx}/${total})` : previewData.value.name
+})
 
 // ── Load files ──
 async function loadFiles() {
   loading.value = true
   try {
-    const res = await listFiles({ parentId: currentParentId.value })
+    const res = await listFiles({ parentId: currentParentId.value, sortBy: sortBy.value, sortOrder: sortOrder.value })
     fileList.value = res.list || []
     total.value = res.total || 0
   } catch { ElMessage.error('加载文件列表失败') }
@@ -414,6 +514,11 @@ function handleOpen(item) {
     pathIdStack.value = [...pathIdStack.value, item.id]
     loadFiles()
   } else { handlePreview(item) }
+}
+
+function toggleSortOrder() {
+  sortOrder.value = sortOrder.value === 'asc' ? 'desc' : 'asc'
+  loadFiles()
 }
 
 function goRoot() {
@@ -474,12 +579,38 @@ async function confirmRename() {
   catch { ElMessage.error('重命名失败') }
 }
 
-async function handlePreview(item) {
+function isImage(name) {
+  return /\.(jpg|jpeg|png|gif|bmp|webp|svg)$/i.test(name)
+}
+
+async function handlePreview(item, idx) {
   if (!item || item.is_dir) return
-  previewLoading.value = true; previewVisible.value = true; previewData.value = null
-  try { const d = await previewFile(item.id); previewData.value = d; if (!d.can_preview) ElMessage.warning('不支持在线预览') }
-  catch { previewVisible.value = false; ElMessage.error('预览失败') }
+  loading.value = true
+
+  previewLoading.value = true; previewVisible.value = true; previewData.value = null; markdownHtml.value = ''
+
+  // Track image index for carousel
+  const images = fileList.value.filter(f => !f.is_dir && isImage(f.name || f.extension || ''))
+  previewIndex.value = idx !== undefined ? idx : images.findIndex(f => f.id === item.id)
+
+  try {
+    const d = await previewFile(item.id); previewData.value = d
+    if (!d.can_preview) ElMessage.warning('不支持在线预览')
+    if (d.preview_type === 'markdown' && d.file_url) {
+      const res = await fetch(d.file_url)
+      const text = await res.text()
+      markdownHtml.value = marked(text)
+    }
+  } catch { previewVisible.value = false; ElMessage.error('预览失败') }
   finally { previewLoading.value = false }
+}
+
+async function navImage(dir) {
+  const images = imageNav.value.images
+  const newIdx = previewIndex.value + dir
+  if (newIdx < 0 || newIdx >= images.length) return
+  const item = images[newIdx]
+  await handlePreview(item, newIdx)
 }
 
 async function handleDownload(item) {
@@ -544,7 +675,7 @@ async function performSearch(kw) {
   catch { ElMessage.error('搜索失败') }
 }
 function clearSearch() { searchKeyword.value = ''; isSearching.value = false }
-function handleUploadSuccess() { loadFiles() }
+function handleUploadSuccess() { loadFiles(); store.commit('file/setNeedRefreshStorage', true) }
 
 // ── Helpers ──
 function getType(ext) {
@@ -580,6 +711,18 @@ onMounted(() => {
   loadFiles()
 })
 
+// 监听路由搜索参数变化（Header 搜索时已在本页面不会重新 mounted）
+watch(() => route.query.search, (kw) => {
+  if (kw) { searchKeyword.value = kw; performSearch(kw) }
+  else { clearSearch(); loadFiles() }
+})
+
+// 视图模式持久化
+watch(viewMode, val => { localStorage.setItem('driveViewMode', val) })
+
+// 同步当前文件夹到 store，Header 上传按钮使用
+watch(currentParentId, val => { store.commit('file/setCurrentParentId', val) })
+
 watch(() => store.state.file.needRefresh, val => {
   if (val) { loadFiles(); store.commit('file/setNeedRefresh', false) }
 })
@@ -608,6 +751,18 @@ watch(() => store.state.file.needRefresh, val => {
   background: var(--cb-bg-alt); padding: 2px 8px; border-radius: 99px;
 }
 .drive-bar-right { flex-shrink: 0; }
+.drive-sort-inline {
+  display: inline-flex; align-items: center; gap: 4px;
+  margin-left: 12px;
+}
+.drive-sort-inline .el-radio-group { --el-radio-button-bg-color: var(--cb-bg-alt); }
+.view-toggle-btn {
+  width: 32px; height: 32px;
+  border: 1px solid var(--cb-border);
+  border-radius: 8px;
+  background: var(--cb-surface);
+  display: flex; align-items: center; justify-content: center;
+}
 
 /* ── Search banner ── */
 .drive-search-banner {
@@ -660,6 +815,7 @@ watch(() => store.state.file.needRefresh, val => {
   margin-bottom: 14px;
 }
 .section-head-row .section-head { margin-bottom: 0; }
+.section-head-left { display: flex; align-items: center; gap: 12px; }
 
 /* ── Quick Access ── */
 .quick-scroll {
@@ -726,6 +882,13 @@ watch(() => store.state.file.needRefresh, val => {
   border-color: var(--cb-primary);
   background: var(--cb-primary-light);
   box-shadow: 0 0 0 2px rgba(47,107,255,.12);
+}
+.file-card.dragging { opacity: 0.4; }
+.file-card.drag-over {
+  border-color: var(--cb-primary);
+  background: var(--cb-primary-light);
+  box-shadow: inset 0 0 0 2px var(--cb-primary);
+  transform: scale(1.03);
 }
 
 /* Check & menu overlays */
@@ -828,9 +991,72 @@ watch(() => store.state.file.needRefresh, val => {
 
 /* ── Previews ── */
 .preview-body { min-height: 280px; }
+.preview-img-wrap { position: relative; display: flex; align-items: center; justify-content: center; }
 .preview-img { width: 100%; max-height: 520px; object-fit: contain; display: block; }
+.preview-nav {
+  position: absolute; top: 50%; transform: translateY(-50%);
+  width: 44px; height: 44px;
+  border: 0; border-radius: 50%;
+  background: var(--cb-surface);
+  color: var(--cb-text-secondary);
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: var(--cb-shadow-md);
+  transition: all var(--cb-transition-fast);
+  z-index: 2;
+}
+.preview-nav:hover { background: var(--cb-bg-alt); color: var(--cb-text); box-shadow: var(--cb-shadow-lg); }
+.preview-nav-prev { left: 8px; }
+.preview-nav-next { right: 8px; }
 .preview-video { width: 100%; max-height: 520px; background: #000; }
 .preview-audio { width: 100%; margin: 16px 0; }
 .preview-frame { width: 100%; height: 520px; border: 0; }
 .preview-unsupported { text-align: center; padding: 60px 0; color: var(--cb-text-mute); }
+.preview-markdown {
+  max-height: 520px;
+  overflow-y: auto;
+  padding: 24px 32px;
+  background: var(--cb-surface);
+  border: 1px solid var(--cb-border-light);
+  border-radius: var(--cb-radius);
+  font-size: 14px;
+  line-height: 1.8;
+  color: var(--cb-text);
+}
+.preview-markdown :deep(h1) { font-size: 1.8em; font-weight: 700; margin: 0.8em 0 0.5em; border-bottom: 1px solid var(--cb-border-light); padding-bottom: 0.3em; }
+.preview-markdown :deep(h2) { font-size: 1.5em; font-weight: 700; margin: 0.8em 0 0.4em; }
+.preview-markdown :deep(h3) { font-size: 1.25em; font-weight: 600; margin: 0.7em 0 0.3em; }
+.preview-markdown :deep(p) { margin: 0.5em 0; }
+.preview-markdown :deep(code) {
+  background: var(--cb-bg-alt);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.9em;
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+}
+.preview-markdown :deep(pre) {
+  background: var(--cb-bg);
+  border: 1px solid var(--cb-border-light);
+  border-radius: 8px;
+  padding: 16px;
+  overflow-x: auto;
+  margin: 0.8em 0;
+}
+.preview-markdown :deep(pre code) { background: transparent; padding: 0; }
+.preview-markdown :deep(blockquote) {
+  border-left: 4px solid var(--cb-primary);
+  margin: 0.8em 0;
+  padding: 4px 16px;
+  color: var(--cb-text-secondary);
+  background: var(--cb-bg-alt);
+  border-radius: 0 8px 8px 0;
+}
+.preview-markdown :deep(table) { border-collapse: collapse; width: 100%; margin: 0.8em 0; }
+.preview-markdown :deep(th), .preview-markdown :deep(td) { border: 1px solid var(--cb-border); padding: 8px 12px; text-align: left; }
+.preview-markdown :deep(th) { background: var(--cb-bg-alt); font-weight: 600; }
+.preview-markdown :deep(ul), .preview-markdown :deep(ol) { padding-left: 1.5em; margin: 0.5em 0; }
+.preview-markdown :deep(li) { margin: 0.2em 0; }
+.preview-markdown :deep(img) { max-width: 100%; border-radius: var(--cb-radius); }
+.preview-markdown :deep(a) { color: var(--cb-primary); }
+.preview-markdown :deep(hr) { border: 0; border-top: 1px solid var(--cb-border-light); margin: 1em 0; }
 </style>

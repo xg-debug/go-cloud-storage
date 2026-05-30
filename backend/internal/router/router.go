@@ -9,7 +9,7 @@ import (
 	"go-cloud-storage/backend/infrastructure/minio"
 	"go-cloud-storage/backend/infrastructure/mq"
 	"go-cloud-storage/backend/internal/repositories"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/gin-contrib/cors"
@@ -20,9 +20,16 @@ import (
 	"gorm.io/gorm"
 )
 
-func SetUpRouter(db *gorm.DB, minioService *minio.MinioService, rabbitClient *mq.RabbitMQClient, mqCfg *config.RabbitMQConfig) *gin.Engine {
+func SetUpRouter(db *gorm.DB, minioService *minio.MinioService, rabbitClient *mq.RabbitMQClient, cfg *config.Config) *gin.Engine {
+	mqCfg := &cfg.RabbitMQ
 	// 创建一个服务
 	ginServer := gin.Default()
+
+	// 注入 requestId
+	ginServer.Use(middleware.RequestIDMiddleware())
+
+	// 初始化限流器
+	middleware.InitRateLimiter(cfg.Security.RateLimitRPS, cfg.Security.RateLimitRPS*2)
 
 	// 配置 CORS 中间件
 	ginServer.Use(cors.New(cors.Config{
@@ -44,26 +51,28 @@ func SetUpRouter(db *gorm.DB, minioService *minio.MinioService, rabbitClient *mq
 	notificationRepo := repositories.NewNotificationRepository(db)
 
 	// 初始化服务
-	userService := services.NewUserService(userRepo, fileRepo, storageQuotaRepo, minioService)
+	userService := services.NewUserService(db, userRepo, fileRepo, storageQuotaRepo, minioService)
 	fileService := services.NewFileService(db, cache.GetClient(), fileRepo, storageQuotaRepo, minioService)
 	recyclePurgeService := services.NewRecyclePurgeService(db, minioService, recycleRepo, fileRepo, shareRepo, favoriteRepo)
 	recycleService := services.NewRecycleService(db, recycleRepo, fileRepo, recyclePurgeService, rabbitClient)
-	favoriteService := services.NewFavoriteService(favoriteRepo, fileService)
+	favoriteService := services.NewFavoriteService(favoriteRepo, fileRepo, fileService)
 	categoryService := services.NewCategoryService(db, fileRepo)
 	shareService := services.NewShareService(shareRepo, fileRepo)
 	statsService := services.NewStatsService(fileRepo, storageQuotaRepo, shareRepo)
 	storageQuotaService := services.NewStorageQuotaService(storageQuotaRepo)
-	notificationService := services.NewNotificationService(notificationRepo)
+	sseBroker := services.NewSSEBroker()
+	notificationService := services.NewNotificationService(notificationRepo, sseBroker)
 
 	loginCtrl := controller.NewLoginController(userService)
-	fileCtrl := controller.NewFileController(fileService)
+	fileCtrl := controller.NewFileController(fileService, cfg)
 	userCtrl := controller.NewUserController(userService)
 	recycleCtrl := controller.NewRecycleController(recycleService)
 	favoriteCtrl := controller.NewFavoriteController(favoriteService)
 	categoryCtrl := controller.NewCategoryController(categoryService, fileService)
-	shareCtrl := controller.NewShareController(shareService)
+	shareBruteProtector := middleware.NewShareBruteProtector(5, 15*time.Minute)
+	shareCtrl := controller.NewShareController(shareService, shareBruteProtector)
 	statsCtrl := controller.NewStatsController(statsService, storageQuotaService)
-	notificationCtrl := controller.NewNotificationController(notificationService)
+	notificationCtrl := controller.NewNotificationController(notificationService, sseBroker)
 
 	if rabbitClient != nil {
 		startRecycleCleanupWorkers(recycleService, rabbitClient, mqCfg)
@@ -75,6 +84,7 @@ func SetUpRouter(db *gorm.DB, minioService *minio.MinioService, rabbitClient *mq
 
 	authGroup := ginServer.Group("")
 	authGroup.Use(middleware.JWTAuthMiddleware())
+	authGroup.Use(middleware.RateLimitMiddleware())
 	authGroup.GET("/me", userCtrl.GetProfile)
 	authGroup.POST("/logout", loginCtrl.Logout)
 
@@ -107,9 +117,13 @@ func SetUpRouter(db *gorm.DB, minioService *minio.MinioService, rabbitClient *mq
 		file.POST("/rename", fileCtrl.Rename)
 		file.GET("/folders/tree", fileCtrl.GetFolderTree)
 		file.POST("/move", fileCtrl.MoveFile)
+		file.POST("/copy", fileCtrl.CopyFile)
 		file.GET("/preview/:fileId", fileCtrl.PreviewFile)
+		file.GET("/preview-stream/:fileId", fileCtrl.PreviewStream)
 		file.GET("/recent", fileCtrl.GetRecentFiles)
 		file.POST("/search", fileCtrl.SearchFiles)
+		file.GET("/search/history", fileCtrl.GetSearchHistory)
+		file.DELETE("/search/history", fileCtrl.DeleteSearchHistory)
 		file.GET("/download/:fileId", fileCtrl.Download)
 		file.GET("/download-info/:fileId", fileCtrl.GetDownloadInfo)
 	}
@@ -157,6 +171,7 @@ func SetUpRouter(db *gorm.DB, minioService *minio.MinioService, rabbitClient *mq
 	notification := ginServer.Group("notification")
 	notification.Use(middleware.JWTAuthMiddleware())
 	{
+		notification.GET("/stream", notificationCtrl.NotificationSSE)
 		notification.GET("", notificationCtrl.GetNotifications)
 		notification.GET("/unread-count", notificationCtrl.GetUnreadCount)
 		notification.PUT("/:id/read", notificationCtrl.MarkAsRead)
@@ -184,7 +199,7 @@ func startRecycleCleanupWorkers(recycleService services.RecycleService, rabbitCl
 		if err := rabbitClient.ConsumeExpiredFilePurge(ctx, func(ctx context.Context, fileID string) error {
 			return recycleService.DeleteSelected(ctx, []string{fileID})
 		}); err != nil {
-			log.Printf("recycle cleanup consumer exited: %v", err)
+			slog.Error("recycle cleanup consumer exited", "error", err)
 		}
 	}()
 
@@ -194,17 +209,17 @@ func startRecycleCleanupWorkers(recycleService services.RecycleService, rabbitCl
 
 		_, err := recycleService.DispatchExpiredPurgeJobs(ctx, 200)
 		if err != nil {
-			log.Printf("dispatch recycle cleanup job failed: %v", err)
+			slog.Error("dispatch recycle cleanup job failed", "error", err)
 		}
 
 		for range ticker.C {
 			n, dispatchErr := recycleService.DispatchExpiredPurgeJobs(ctx, 200)
 			if dispatchErr != nil {
-				log.Printf("dispatch recycle cleanup job failed: %v", dispatchErr)
+				slog.Error("dispatch recycle cleanup job failed", "error", dispatchErr)
 				continue
 			}
 			if n > 0 {
-				log.Printf("dispatched %d recycle cleanup jobs", n)
+				slog.Info("dispatched recycle cleanup jobs", "count", n)
 			}
 		}
 	}()

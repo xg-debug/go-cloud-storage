@@ -15,11 +15,28 @@
         class="tb-search-input"
         placeholder="搜索文件、文件夹与分享内容..."
         @keyup.enter="doSearch"
+        @focus="showHistory = true"
+        @blur="hideHistoryDelay"
       />
       <button v-if="query" class="tb-search-clear" @click="query = ''">
         <el-icon :size="14"><Close /></el-icon>
       </button>
       <kbd class="tb-search-kbd">⌘K</kbd>
+      <!-- Search history dropdown -->
+      <div v-if="showHistory && searchHistory.length > 0" class="tb-search-dropdown">
+        <div class="tb-sd-head">
+          <span>最近搜索</span>
+          <button @click="clearHistory">清除</button>
+        </div>
+        <div
+          v-for="(h, idx) in searchHistory" :key="idx"
+          class="tb-sd-item"
+          @mousedown.prevent="selectHistory(h)"
+        >
+          <el-icon :size="14"><Clock /></el-icon>
+          <span>{{ h }}</span>
+        </div>
+      </div>
     </div>
 
     <!-- Right: actions -->
@@ -29,6 +46,11 @@
         <el-icon :size="20"><Upload /></el-icon>
       </button>
       <FileUploadDialog v-model="uploadDialogVisible" :parent-id="currentDirId" @success="onUploadDone" />
+
+      <!-- Dark mode toggle -->
+      <button class="tb-icon-btn" @click="toggleTheme" :title="isDark ? '切换亮色模式' : '切换深色模式'">
+        <el-icon :size="20"><component :is="isDark ? Sunny : Moon" /></el-icon>
+      </button>
 
       <!-- Notifications -->
       <el-dropdown trigger="click" placement="bottom-end" popper-class="hd-notif-popper">
@@ -92,14 +114,16 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useStore } from 'vuex'
+import { ElMessage } from 'element-plus'
 import {
-  Bell, Close, Menu, Search, SwitchButton, Upload, User
+  Bell, Clock, Close, Menu, Moon, Search, Sunny, SwitchButton, Upload, User
 } from '@element-plus/icons-vue'
 import { logout } from '@/api/auth'
 import { getNotifications, markAsRead, markAllAsRead } from '@/api/notification'
+import { getSearchHistory, deleteSearchHistory } from '@/api/file'
 import FileUploadDialog from '@/components/FileUploadDialog.vue'
 
 defineEmits(['toggle-sidebar'])
@@ -107,12 +131,28 @@ defineEmits(['toggle-sidebar'])
 const router = useRouter()
 const store = useStore()
 const user = computed(() => store.state.userInfo)
-const currentDirId = computed(() => store.state.userInfo?.rootFolderId || '')
+const currentDirId = computed(() => store.state.file.currentParentId || store.state.userInfo?.rootFolderId || '')
 
 const query = ref('')
 const uploadDialogVisible = ref(false)
 const notifications = ref([])
 const unreadCount = ref(0)
+const isDark = ref(localStorage.getItem('theme') === 'dark')
+const searchHistory = ref([])
+const showHistory = ref(false)
+let hideTimer = null
+
+function toggleTheme() {
+  isDark.value = !isDark.value
+  const theme = isDark.value ? 'dark' : 'light'
+  localStorage.setItem('theme', theme)
+  document.documentElement.setAttribute('data-theme', isDark.value ? 'dark' : 'light')
+}
+
+// 初始化主题
+if (isDark.value) {
+  document.documentElement.setAttribute('data-theme', 'dark')
+}
 
 function doSearch() {
   if (query.value.trim()) {
@@ -120,7 +160,31 @@ function doSearch() {
   }
 }
 
-function onUploadDone() { store.commit('file/setNeedRefresh', true) }
+async function loadSearchHistory() {
+  try {
+    const res = await getSearchHistory()
+    searchHistory.value = res?.list || []
+  } catch {}
+}
+
+function hideHistoryDelay() {
+  hideTimer = setTimeout(() => { showHistory.value = false }, 200)
+}
+
+function selectHistory(keyword) {
+  query.value = keyword
+  showHistory.value = false
+  doSearch()
+}
+
+async function clearHistory() {
+  try { await deleteSearchHistory(); searchHistory.value = [] } catch {}
+}
+
+function onUploadDone() {
+  store.commit('file/setNeedRefresh', true)
+  store.commit('file/setNeedRefreshStorage', true)
+}
 
 async function loadNotifications() {
   try {
@@ -149,7 +213,36 @@ async function doLogout() {
   router.push('/login')
 }
 
-onMounted(loadNotifications)
+let sseSource = null
+
+function startSSE() {
+  const token = store.state.token
+  if (!token) return
+  const url = new URL('/notification/stream', window.location.origin)
+  url.searchParams.set('token', token)
+  sseSource = new EventSource(url.toString())
+  sseSource.addEventListener('notification', e => {
+    try {
+      const data = JSON.parse(e.data)
+      if (data && data.title) {
+        ElMessage({ message: data.title + ': ' + data.message, type: data.type || 'info' })
+      }
+      loadNotifications()
+    } catch {}
+  })
+  sseSource.onerror = () => {
+    sseSource?.close()
+    setTimeout(startSSE, 30000) // 30秒后重连
+  }
+}
+
+function stopSSE() {
+  sseSource?.close()
+  sseSource = null
+}
+
+onMounted(() => { loadNotifications(); loadSearchHistory(); startSSE() })
+onUnmounted(() => { stopSSE(); clearTimeout(hideTimer) })
 </script>
 
 <style scoped>
@@ -274,6 +367,39 @@ onMounted(loadNotifications)
   .tb-search { max-width: 240px; }
   .tb-search-kbd { display: none; }
 }
+
+.tb-search-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin-top: 4px;
+  background: var(--cb-surface);
+  border: 1px solid var(--cb-border);
+  border-radius: var(--cb-radius);
+  box-shadow: var(--cb-shadow-md);
+  z-index: 100;
+  overflow: hidden;
+}
+.tb-sd-head {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--cb-border-light);
+  font-size: 12px; color: var(--cb-text-muted); font-weight: 600;
+}
+.tb-sd-head button {
+  border: 0; background: transparent;
+  color: var(--cb-primary); cursor: pointer; font-size: 12px;
+}
+.tb-sd-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px;
+  cursor: pointer;
+  font-size: 13px; color: var(--cb-text-secondary);
+  transition: background var(--cb-transition-fast);
+}
+.tb-sd-item:hover { background: var(--cb-bg-alt); }
+.tb-sd-item .el-icon { color: var(--cb-text-muted); flex-shrink: 0; }
 </style>
 
 <style>

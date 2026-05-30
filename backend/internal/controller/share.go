@@ -1,7 +1,9 @@
 package controller
 
 import (
+	"go-cloud-storage/backend/internal/middleware"
 	"go-cloud-storage/backend/pkg/utils"
+	"log/slog"
 	"strconv"
 
 	"go-cloud-storage/backend/internal/services"
@@ -10,12 +12,14 @@ import (
 )
 
 type ShareController struct {
-	shareService services.ShareService
+	shareService  services.ShareService
+	bruteProtector *middleware.ShareBruteProtector
 }
 
-func NewShareController(shareService services.ShareService) *ShareController {
+func NewShareController(shareService services.ShareService, protector *middleware.ShareBruteProtector) *ShareController {
 	return &ShareController{
-		shareService: shareService,
+		shareService:  shareService,
+		bruteProtector: protector,
 	}
 }
 
@@ -122,12 +126,31 @@ func (c *ShareController) UpdateShare(ctx *gin.Context) {
 func (c *ShareController) AccessShare(ctx *gin.Context) {
 	shareToken := ctx.Param("token")
 	extractionCode := ctx.Query("code")
+	clientIP := ctx.ClientIP()
+
+	// 暴力破解防护：检查是否被锁定
+	if c.bruteProtector.IsLocked(shareToken, clientIP) {
+		slog.Warn("share access locked due to brute force", "token", shareToken, "ip", clientIP)
+		utils.Fail(ctx, 429, "尝试次数过多，请15分钟后再试")
+		return
+	}
 
 	shareInfo, err := c.shareService.AccessShare(shareToken, extractionCode)
 	if err != nil {
+		// 提取码错误时记录失败尝试
+		if err.Error() == "提取码错误" {
+			if locked := c.bruteProtector.RecordFailed(shareToken, clientIP); locked {
+				slog.Warn("share brute force lock triggered", "token", shareToken, "ip", clientIP)
+			}
+		}
+		slog.Info("share access failed", "token", shareToken, "ip", clientIP, "error", err.Error())
 		utils.Fail(ctx, 400, err.Error())
 		return
 	}
+
+	// 成功时重置失败计数
+	c.bruteProtector.Reset(shareToken, clientIP)
+	slog.Info("share accessed", "token", shareToken, "ip", clientIP, "file", shareInfo.FileName)
 	utils.Success(ctx, shareInfo)
 }
 

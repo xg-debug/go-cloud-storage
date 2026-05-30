@@ -1,21 +1,27 @@
 package controller
 
 import (
+	"fmt"
 	"go-cloud-storage/backend/internal/models"
 	"go-cloud-storage/backend/internal/services"
+	"log/slog"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 type NotificationController struct {
 	notificationService *services.NotificationService
+	sseBroker           *services.SSEBroker
 }
 
-func NewNotificationController(notificationService *services.NotificationService) *NotificationController {
+func NewNotificationController(notificationService *services.NotificationService, broker *services.SSEBroker) *NotificationController {
 	return &NotificationController{
 		notificationService: notificationService,
+		sseBroker:           broker,
 	}
 }
 
@@ -200,4 +206,39 @@ func (c *NotificationController) CreateNotification(ctx *gin.Context) {
 		"code":    200,
 		"message": "创建成功",
 	})
+}
+
+// NotificationSSE Stream 实时通知 SSE 端点
+func (c *NotificationController) NotificationSSE(ctx *gin.Context) {
+	userId := ctx.GetInt("userId")
+	clientId := uuid.New().String()[:8]
+
+	ctx.Writer.Header().Set("Content-Type", "text/event-stream")
+	ctx.Writer.Header().Set("Cache-Control", "no-cache")
+	ctx.Writer.Header().Set("Connection", "keep-alive")
+	ctx.Writer.Header().Set("X-Accel-Buffering", "no")
+
+	client := c.sseBroker.Subscribe(userId, clientId)
+	defer c.sseBroker.Unsubscribe(userId, clientId)
+
+	// Send initial heartbeat
+	fmt.Fprintf(ctx.Writer, ": connected\n\n")
+	ctx.Writer.Flush()
+
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case msg := <-client.Messages:
+			ctx.Writer.Write(msg)
+			ctx.Writer.Flush()
+		case <-ticker.C:
+			fmt.Fprintf(ctx.Writer, ": heartbeat\n\n")
+			ctx.Writer.Flush()
+		case <-ctx.Request.Context().Done():
+			slog.Info("SSE stream closed by client", "userId", userId)
+			return
+		}
+	}
 }

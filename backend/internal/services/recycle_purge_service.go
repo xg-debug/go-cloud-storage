@@ -56,6 +56,12 @@ func (s *recyclePurgeService) PurgeFiles(ctx context.Context, fileIDs []string) 
 		return err
 	}
 
+	// 跨用户秒传场景：同一个 MinIO 对象可能被多个用户引用，只删除无人引用的对象
+	keysToDelete, err := s.fileRepo.GetObjectKeysByIdsExcludeRefs(fileIDs, objectKeys)
+	if err != nil {
+		return err
+	}
+
 	err = s.db.Transaction(func(tx *gorm.DB) error {
 		if err := s.recycleRepo.DeleteBatch(tx, fileIDs); err != nil {
 			return err
@@ -75,10 +81,10 @@ func (s *recyclePurgeService) PurgeFiles(ctx context.Context, fileIDs []string) 
 		return err
 	}
 
-	if len(objectKeys) == 0 {
+	if len(keysToDelete) == 0 {
 		return nil
 	}
-	if err := s.minio.DeleteFiles(ctx, objectKeys); err != nil {
+	if err := s.minio.DeleteFiles(ctx, keysToDelete); err != nil {
 		return fmt.Errorf("delete minio objects failed: %w", err)
 	}
 

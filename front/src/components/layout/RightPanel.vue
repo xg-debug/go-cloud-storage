@@ -69,14 +69,14 @@
           <span v-if="percent <= 80">需要更多空间？</span>
           <span v-else>存储空间即将用尽</span>
         </div>
-        <el-button type="primary" size="small" round>升级</el-button>
+        <el-button type="primary" size="small" round @click="$router.push('/user')">查看详情</el-button>
       </div>
     </section>
   </aside>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { useStore } from 'vuex'
 import { Document, Present, WarningFilled } from '@element-plus/icons-vue'
 import { getUserStats } from '@/api/user'
@@ -103,7 +103,7 @@ function timeAgo(dateStr) {
   return `${Math.floor(days / 30)} 月前`
 }
 
-onMounted(async () => {
+async function loadStorage() {
   try {
     const stats = await getUserStats()
     if (stats) {
@@ -121,6 +121,10 @@ onMounted(async () => {
       }
     }
   } catch {}
+}
+
+onMounted(async () => {
+  loadStorage()
 
   try {
     const shares = await getUserShares()
@@ -133,6 +137,10 @@ onMounted(async () => {
       }))
     }
   } catch {}
+})
+
+watch(() => store.state.file.needRefreshStorage, val => {
+  if (val) { loadStorage(); store.commit('file/setNeedRefreshStorage', false) }
 })
 </script>
 

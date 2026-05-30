@@ -94,11 +94,31 @@ func (s *shareService) GetUserShares(userId int) ([]*ShareItem, error) {
 		return nil, err
 	}
 
+	if len(shares) == 0 {
+		return []*ShareItem{}, nil
+	}
+
+	// 批量查询：收集所有 fileId，一次查询获取所有文件
+	fileIds := make([]string, len(shares))
+	for i, share := range shares {
+		fileIds[i] = share.FileId
+	}
+
+	files, err := s.fileRepo.GetFileByIds(fileIds)
+	if err != nil {
+		return nil, err
+	}
+
+	fileMap := make(map[string]models.File, len(files))
+	for _, f := range files {
+		fileMap[f.Id] = f
+	}
+
 	var result []*ShareItem
 	for _, share := range shares {
-		file, err := s.fileRepo.GetFileById(share.FileId)
-		if err != nil {
-			continue // Skip if file deleted
+		file, ok := fileMap[share.FileId]
+		if !ok {
+			continue
 		}
 
 		status := "active"

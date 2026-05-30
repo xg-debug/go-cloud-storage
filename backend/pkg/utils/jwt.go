@@ -1,11 +1,23 @@
 package utils
 
 import (
+	"os"
+
 	"github.com/golang-jwt/jwt/v5"
 	"time"
 )
 
-var JWTSecret = []byte("cdq123") // JWT 密钥
+var JWTSecret []byte
+
+func InitJWTSecret(cfgSecret string) {
+	if cfgSecret != "" {
+		JWTSecret = []byte(cfgSecret)
+	} else if envSecret := os.Getenv("JWT_SECRET"); envSecret != "" {
+		JWTSecret = []byte(envSecret)
+	} else {
+		JWTSecret = []byte("cdq123") // fallback for development
+	}
+}
 
 type Claims struct {
 	UserId int    `json:"userId"`

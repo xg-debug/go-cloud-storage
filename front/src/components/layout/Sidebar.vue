@@ -60,7 +60,7 @@
       </div>
       <button class="sn-upgrade-btn" @click="$router.push('/user')">
         <el-icon :size="14"><Pointer /></el-icon>
-        <span>升级存储空间</span>
+        <span>查看存储空间</span>
       </button>
     </div>
 
@@ -72,18 +72,20 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
+import { useStore } from 'vuex'
 import { Clock, DArrowLeft, DArrowRight, Delete, Folder, Pointer, Share, Star } from '@element-plus/icons-vue'
 import { getUserStats } from '@/api/user'
 
 defineProps({ collapsed: Boolean })
 defineEmits(['toggle'])
 
+const store = useStore()
 const percent = ref(0)
 const usedGB = ref('0')
 const totalGB = ref('200')
 
-onMounted(async () => {
+async function loadStorage() {
   try {
     const stats = await getUserStats()
     if (stats?.storage_quota) {
@@ -93,6 +95,12 @@ onMounted(async () => {
       percent.value = Math.min(q.used_percent || 0, 100)
     }
   } catch {}
+}
+
+onMounted(loadStorage)
+
+watch(() => store.state.file.needRefreshStorage, val => {
+  if (val) { loadStorage(); store.commit('file/setNeedRefreshStorage', false) }
 })
 </script>
 

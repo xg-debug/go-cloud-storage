@@ -318,6 +318,17 @@ func (s *MinioService) GenerateObjectKey(userId int, parentId, fileName string) 
 	return fmt.Sprintf("%s/%s%s", ossPath, fileId, ext)
 }
 
+// PresignedGetPreviewURL 生成带 inline 处置的预签名预览 URL
+func (s *MinioService) PresignedGetPreviewURL(ctx context.Context, objectKey string, expiry time.Duration) (string, error) {
+	reqParams := make(url.Values)
+	reqParams.Set("response-content-disposition", "inline")
+	u, err := s.client.PresignedGetObject(ctx, s.bucket, objectKey, expiry, reqParams)
+	if err != nil {
+		return "", err
+	}
+	return u.String(), nil
+}
+
 func (s *MinioService) GenerateObjectURL(objectKey string) string {
 	protocol := "http"
 	if s.useSSL {
@@ -345,7 +356,9 @@ func (s *MinioService) generateThumbnailFromObject(ctx context.Context, objectKe
 			return "", err
 		}
 		defer obj.Close()
-		data, err := io.ReadAll(obj)
+		// 限制最多读取 32MB 用于缩略图生成
+		lr := io.LimitReader(obj, 32*1024*1024)
+		data, err := io.ReadAll(lr)
 		if err != nil {
 			return "", err
 		}

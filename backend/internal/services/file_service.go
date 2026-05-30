@@ -17,6 +17,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
 
@@ -76,7 +78,7 @@ type FolderNode struct {
 
 type FileService interface {
 	GetFileById(fileId string) (*models.File, error)
-	GetFiles(ctx context.Context, userId int, parentId string) ([]FileItem, int64, error)
+	GetFiles(ctx context.Context, userId int, parentId string, page, pageSize int, sortBy, sortOrder string) ([]FileItem, int64, error)
 	CreateFolder(userId int, folderName string, parentId string) (*models.File, error)
 	Rename(userId int, fileId, newName string) error
 	Delete(fileId string, userId int) error
@@ -84,6 +86,7 @@ type FileService interface {
 	GetRecentFiles(userId int, timeRange string) ([]*RecentFile, error)
 	GetFilePath(file *models.File) (string, error)
 	PreviewFile(userId int, fileId string) (*FilePreview, error)
+	PreviewStream(ctx context.Context, userId int, fileId string) (io.ReadCloser, *models.File, error)
 	SearchFiles(userId int, keyword, parentId string, page, pageSize int) ([]FileItem, int64, error)
 
 	UploadFile(ctx context.Context, r io.Reader, userId int, fileName string, fileSize int64, fileHash string, parentId string) (*models.File, error)
@@ -95,6 +98,7 @@ type FileService interface {
 
 	GetFolderTree(ctx context.Context, userId int) ([]FolderNode, error)
 	MoveFile(ctx context.Context, userId int, fileId, targetFolderId string) error
+	CopyFile(ctx context.Context, userId int, fileId, targetFolderId string) error
 
 	Download(ctx context.Context, userId int, fileId string) (io.ReadCloser, *models.File, error)
 	DownloadRange(ctx context.Context, userId int, fileId string, start, end int64) (io.ReadCloser, *models.File, int64, error)
@@ -119,8 +123,8 @@ func (s *fileService) GetFileById(fileId string) (*models.File, error) {
 	return s.fileRepo.GetFileById(fileId)
 }
 
-func (s *fileService) GetFiles(ctx context.Context, userId int, parentId string) ([]FileItem, int64, error) {
-	files, total, err := s.fileRepo.GetFiles(ctx, userId, parentId)
+func (s *fileService) GetFiles(ctx context.Context, userId int, parentId string, page, pageSize int, sortBy, sortOrder string) ([]FileItem, int64, error) {
+	files, total, err := s.fileRepo.GetFiles(ctx, userId, parentId, page, pageSize, sortBy, sortOrder)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -176,27 +180,32 @@ func (s *fileService) Rename(userId int, fileId, newName string) error {
 }
 
 func (s *fileService) Delete(fileId string, userId int) error {
-	// 先获取文件信息，以便后续更新存储配额
 	file, err := s.fileRepo.GetFileById(fileId)
 	if err != nil {
 		return err
 	}
 
-	// 如果不是文件夹，需要更新存储配额
-	var fileSize int64 = 0
-	if !file.IsDir {
-		fileSize = file.Size
-	}
-
 	return s.db.Transaction(func(tx *gorm.DB) error {
 		if file.IsDir {
-			// 文件夹：递归软删除文件夹及其所有子孙节点
 			deletedIds, err := s.fileRepo.SoftDeleteFolder(tx, userId, fileId)
 			if err != nil {
 				return err
 			}
 
-			// 为每个被删除的节点创建回收站记录
+			// 累加所有被删除文件的大小（不含文件夹本身，文件夹 size=0）
+			var totalSize int64
+			if len(deletedIds) > 0 {
+				deletedFiles, err := s.fileRepo.GetFileByIds(deletedIds)
+				if err != nil {
+					return err
+				}
+				for _, f := range deletedFiles {
+					if !f.IsDir {
+						totalSize += f.Size
+					}
+				}
+			}
+
 			for _, id := range deletedIds {
 				if err := s.fileRepo.AddToRecycle(tx, &models.RecycleBin{
 					FileId:    id,
@@ -207,8 +216,13 @@ func (s *fileService) Delete(fileId string, userId int) error {
 					return err
 				}
 			}
+
+			if totalSize > 0 {
+				if err := s.storageQuotaRepo.UpdateUsedSpace(tx, userId, -totalSize); err != nil {
+					return err
+				}
+			}
 		} else {
-			// 单文件：直接软删除
 			if err := s.fileRepo.SoftDeleteFile(tx, userId, fileId); err != nil {
 				return err
 			}
@@ -222,9 +236,8 @@ func (s *fileService) Delete(fileId string, userId int) error {
 				return err
 			}
 
-			// 更新存储配额
-			if fileSize > 0 {
-				if err := s.storageQuotaRepo.UpdateUsedSpace(tx, userId, -fileSize); err != nil {
+			if file.Size > 0 {
+				if err := s.storageQuotaRepo.UpdateUsedSpace(tx, userId, -file.Size); err != nil {
 					return err
 				}
 			}
@@ -340,8 +353,13 @@ func getPreviewType(extension string) (bool, string) {
 		}
 	}
 
+	// Markdown
+	if ext == "md" {
+		return true, "markdown"
+	}
+
 	// 文本类型
-	textExts := []string{"txt", "md", "json", "xml", "csv", "log", "js", "css", "html", "go", "java", "py", "c", "cpp"}
+	textExts := []string{"txt", "json", "xml", "csv", "log", "js", "css", "html", "go", "java", "py", "c", "cpp"}
 	for _, txtExt := range textExts {
 		if ext == txtExt {
 			return true, "text"
@@ -353,11 +371,11 @@ func getPreviewType(extension string) (bool, string) {
 		return true, "pdf"
 	}
 
-	// Office类型
+	// Office 类型：暂不支持在线预览（需 MinIO 公网可访问，微软 Office Online 才能抓取文件）
 	officeExts := []string{"doc", "docx", "xls", "xlsx", "ppt", "pptx"}
 	for _, offExt := range officeExts {
 		if ext == offExt {
-			return true, "office"
+			return false, "office"
 		}
 	}
 
@@ -394,9 +412,20 @@ func (s *fileService) PreviewFile(userId int, fileId string) (*FilePreview, erro
 
 	// 判断文件类型和是否可预览
 	canPreview, previewType := getPreviewType(file.FileExtension)
+
+	// 为可预览类型生成 inline 预签名 URL（防止浏览器弹出下载）
+	previewFileURL := file.FileURL
+	if canPreview {
+		if u, err := s.minio.PresignedGetPreviewURL(context.Background(), file.OssObjectKey, 30*time.Minute); err == nil {
+			previewFileURL = u
+		}
+	}
+
+	// Office 文档：用预签名 URL 构建 Office Online 查看链接
+	// 注意：需要 MinIO 能被公网访问，否则微软服务器无法获取文件
 	officePreviewURL := ""
 	if previewType == "office" {
-		officePreviewURL = buildOfficePreviewURL(file.FileURL)
+		officePreviewURL = buildOfficePreviewURL(previewFileURL)
 	}
 
 	return &FilePreview{
@@ -405,7 +434,7 @@ func (s *fileService) PreviewFile(userId int, fileId string) (*FilePreview, erro
 		Size:             file.Size,
 		SizeStr:          file.SizeStr,
 		Extension:        file.FileExtension,
-		FileURL:          file.FileURL,
+		FileURL:          previewFileURL,
 		ThumbnailURL:     file.ThumbnailURL,
 		CanPreview:       canPreview,
 		PreviewType:      previewType,
@@ -424,11 +453,39 @@ func buildOfficePreviewURL(fileURL string) string {
 
 // UploadFile 小文件上传
 func (s *fileService) UploadFile(ctx context.Context, r io.Reader, userId int, fileName string, fileSize int64, fileHash string, parentId string) (*models.File, error) {
-	// 秒传检查：检查数据库中是否已经有该 Hash 的文件
+	// 秒传检查：基于文件内容哈希跨用户匹配
 	existingFile, err := s.fileRepo.GetFileByMD5(userId, fileHash)
 	if err == nil && existingFile != nil && !existingFile.IsDeleted {
-		// 秒传成功：直接返回文件信息返回
-		return existingFile, nil
+		// 秒传成功：为当前用户创建新文件记录，复用已有的 MinIO 对象
+		ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(fileName), "."))
+		pid := sql.NullString{String: parentId, Valid: parentId != ""}
+		newFile := &models.File{
+			Id:            utils.NewUUID(),
+			UserId:        userId,
+			Name:          fileName,
+			Size:          existingFile.Size,
+			SizeStr:       existingFile.SizeStr,
+			IsDir:         false,
+			FileExtension: ext,
+			OssObjectKey:  existingFile.OssObjectKey,
+			FileHash:      fileHash,
+			ParentId:      pid,
+			IsDeleted:     false,
+			CreatedAt:     time.Now(),
+			UpdatedAt:     time.Now(),
+			FileURL:       existingFile.FileURL,
+			ThumbnailURL:  existingFile.ThumbnailURL,
+		}
+		err = s.db.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Create(newFile).Error; err != nil {
+				return fmt.Errorf("保存文件记录失败: %w", err)
+			}
+			return s.storageQuotaRepo.UpdateUsedSpace(tx, userId, newFile.Size)
+		})
+		if err != nil {
+			return nil, err
+		}
+		return newFile, nil
 	}
 
 	// 检查文件大小是否超过用户配额
@@ -448,15 +505,10 @@ func (s *fileService) UploadFile(ctx context.Context, r io.Reader, userId int, f
 
 	// 事务处理：入库 + 扣减配额
 	err = s.db.Transaction(func(tx *gorm.DB) error {
-		// 保存文件记录
 		if err := tx.Create(uploadFile).Error; err != nil {
 			return fmt.Errorf("保存文件记录失败: %w", err)
 		}
-		// 更新已使用空间
-		if err := s.storageQuotaRepo.UpdateUsedSpace(tx, userId, fileSize); err != nil {
-			return fmt.Errorf("更新存储空间失败: %w", err)
-		}
-		return nil
+		return s.storageQuotaRepo.UpdateUsedSpace(tx, userId, fileSize)
 	})
 
 	if err != nil {
@@ -469,14 +521,41 @@ func (s *fileService) UploadFile(ctx context.Context, r io.Reader, userId int, f
 // InitChunkUpload 初始化分片上传
 // 逻辑：秒传检查 -> 断点续传检查 -> 新建上传任务
 func (s *fileService) InitChunkUpload(ctx context.Context, userId int, fileName, fileHash string, parentId string, fileSize int64) (gin.H, error) {
-	// 1.秒传检查：检查数据库中是否已经有该 Hash 的文件
+	// 1.秒传检查：基于文件内容哈希跨用户匹配
 	existingFile, err := s.fileRepo.GetFileByMD5(userId, fileHash)
 	if err == nil && existingFile != nil && !existingFile.IsDeleted {
-		// 秒传成功：直接复制旧文件信息返回
+		ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(fileName), "."))
+		pid := sql.NullString{String: parentId, Valid: parentId != ""}
+		newFile := &models.File{
+			Id:            utils.NewUUID(),
+			UserId:        userId,
+			Name:          fileName,
+			Size:          existingFile.Size,
+			SizeStr:       existingFile.SizeStr,
+			IsDir:         false,
+			FileExtension: ext,
+			OssObjectKey:  existingFile.OssObjectKey,
+			FileHash:      fileHash,
+			ParentId:      pid,
+			IsDeleted:     false,
+			CreatedAt:     time.Now(),
+			UpdatedAt:     time.Now(),
+			FileURL:       existingFile.FileURL,
+			ThumbnailURL:  existingFile.ThumbnailURL,
+		}
+		err = s.db.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Create(newFile).Error; err != nil {
+				return fmt.Errorf("保存文件记录失败: %w", err)
+			}
+			return s.storageQuotaRepo.UpdateUsedSpace(tx, userId, newFile.Size)
+		})
+		if err != nil {
+			return nil, err
+		}
 		return gin.H{
 			"finished": true,
-			"file":     existingFile,
-			"url":      existingFile.FileURL,
+			"file":     newFile,
+			"url":      newFile.FileURL,
 		}, nil
 	}
 	// 2.存储配额检查：如果文件大小超出配额，直接返回错误。
@@ -697,9 +776,16 @@ func (s *fileService) SearchFiles(userId int, keyword, parentId string, page, pa
 		query = query.Where("parent_id = ?", parentId)
 	}
 
-	// 添加关键词搜索条件（模糊匹配文件名）
+	// ngram FULLTEXT 搜索（索引需 WITH PARSER ngram）
 	if keyword != "" {
-		query = query.Where("name LIKE ?", "%"+keyword+"%")
+		// 清除 FULLTEXT 布尔操作符，防止用户输入被误解析
+		safe := strings.NewReplacer(
+			"+", "", "-", "", ">", "", "<", "", "(", "", ")", "",
+			"~", "", "*", "", "\"", "", "@", "",
+		).Replace(keyword)
+		if safe != "" {
+			query = query.Where("MATCH(name) AGAINST(? IN BOOLEAN MODE)", safe)
+		}
 	}
 
 	// 获取总数
@@ -806,6 +892,111 @@ func (s *fileService) MoveFile(ctx context.Context, userId int, fileId, targetFo
 	}
 	// 更新 parentId
 	return s.fileRepo.UpdateParent(ctx, fileId, targetFolderId)
+}
+
+func (s *fileService) CopyFile(ctx context.Context, userId int, fileId, targetFolderId string) error {
+	if fileId == targetFolderId {
+		return errors.New("不能复制到自身")
+	}
+
+	file, err := s.fileRepo.GetFileById(fileId)
+	if err != nil {
+		return fmt.Errorf("找不到源文件: %w", err)
+	}
+
+	// 检查配额
+	if !file.IsDir {
+		quota, _ := s.storageQuotaRepo.GetByUserID(userId)
+		if quota != nil && quota.Used+file.Size > quota.Total {
+			return errors.New("存储空间不足")
+		}
+	}
+
+	// 生成新文件名（避免冲突）
+	baseName := file.Name
+	ext := filepath.Ext(baseName)
+	nameWithoutExt := strings.TrimSuffix(baseName, ext)
+	newName := baseName
+	counter := 1
+	for {
+		exist, _ := s.fileRepo.GetFileByParentAndName(ctx, userId, targetFolderId, newName)
+		if exist == nil {
+			break
+		}
+		if ext != "" {
+			newName = fmt.Sprintf("%s_副本%d%s", nameWithoutExt, counter, ext)
+		} else {
+			newName = fmt.Sprintf("%s_副本%d", nameWithoutExt, counter)
+		}
+		counter++
+	}
+
+	if file.IsDir {
+		return s.copyFolder(ctx, userId, file, targetFolderId, newName)
+	}
+	return s.copySingleFile(ctx, userId, file, targetFolderId, newName)
+}
+
+func (s *fileService) copySingleFile(ctx context.Context, userId int, src *models.File, targetParentId, newName string) error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		return s.copyFileRecord(ctx, tx, userId, src, targetParentId, newName)
+	})
+}
+
+func (s *fileService) copyFolder(ctx context.Context, userId int, src *models.File, targetParentId, newName string) error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		newId := uuid.New().String()
+		if err := tx.Model(&models.File{}).Create(&models.File{
+			Id: newId, UserId: userId, Name: newName, IsDir: true, ParentId: sql.NullString{String: targetParentId, Valid: true}, Size: 0, SizeStr: "-",
+		}).Error; err != nil {
+			return fmt.Errorf("创建文件夹记录失败: %w", err)
+		}
+		return s.copyChildren(ctx, tx, userId, src.Id, newId)
+	})
+}
+
+func (s *fileService) copyChildren(ctx context.Context, tx *gorm.DB, userId int, srcId, targetParentId string) error {
+	children, _, err := s.fileRepo.GetFiles(ctx, userId, srcId, 1, 10000, "created_at", "desc")
+	if err != nil {
+		return err
+	}
+	for _, child := range children {
+		childFile, _ := s.fileRepo.GetFileById(child.Id)
+		if childFile == nil {
+			continue
+		}
+		if childFile.IsDir {
+			newId := uuid.New().String()
+			if err := tx.Model(&models.File{}).Create(&models.File{
+				Id: newId, UserId: userId, Name: childFile.Name, IsDir: true, ParentId: sql.NullString{String: targetParentId, Valid: true}, Size: 0, SizeStr: "-",
+			}).Error; err != nil {
+				return err
+			}
+			if err := s.copyChildren(ctx, tx, userId, childFile.Id, newId); err != nil {
+				return err
+			}
+		} else {
+			if err := s.copyFileRecord(ctx, tx, userId, childFile, targetParentId, childFile.Name); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (s *fileService) copyFileRecord(ctx context.Context, tx *gorm.DB, userId int, src *models.File, targetParentId, newName string) error {
+	if err := tx.Model(&models.File{}).Create(&models.File{
+		Id: uuid.New().String(), UserId: userId, Name: newName, Size: src.Size, SizeStr: src.SizeStr,
+		IsDir: false, FileExtension: src.FileExtension, FileHash: src.FileHash, FileURL: src.FileURL,
+		ThumbnailURL: src.ThumbnailURL, OssObjectKey: src.OssObjectKey, ParentId: sql.NullString{String: targetParentId, Valid: true},
+	}).Error; err != nil {
+		return err
+	}
+	return s.storageQuotaRepo.UpdateUsedSpace(tx, userId, src.Size)
+}
+
+func (s *fileService) PreviewStream(ctx context.Context, userId int, fileId string) (io.ReadCloser, *models.File, error) {
+	return s.Download(ctx, userId, fileId)
 }
 
 func (s *fileService) Download(ctx context.Context, userId int, fileId string) (io.ReadCloser, *models.File, error) {

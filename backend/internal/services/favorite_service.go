@@ -15,32 +15,52 @@ type FavoriteService interface {
 
 type favoriteService struct {
 	favoriteRepo repositories.FavoriteRepository
+	fileRepo     repositories.FileRepository
 	fileService  FileService
 }
 
-func NewFavoriteService(favRepo repositories.FavoriteRepository, fs FileService) FavoriteService {
-	return &favoriteService{favoriteRepo: favRepo, fileService: fs}
+func NewFavoriteService(favRepo repositories.FavoriteRepository, fileRepo repositories.FileRepository, fs FileService) FavoriteService {
+	return &favoriteService{favoriteRepo: favRepo, fileRepo: fileRepo, fileService: fs}
 }
 
 func (s favoriteService) GetFavorites(userId, page, pageSize int) ([]dto.FavoriteDTO, int64, error) {
-	// 调用 repo 层获取收藏列表和总数
 	favs, total, err := s.favoriteRepo.ListFavorite(userId, page, pageSize)
 	if err != nil {
 		return nil, 0, err
 	}
 
+	if len(favs) == 0 {
+		return []dto.FavoriteDTO{}, total, nil
+	}
+
+	// 批量查询：收集所有 fileId，一次查询获取所有文件
+	fileIds := make([]string, len(favs))
+	for i, f := range favs {
+		fileIds[i] = f.FileId
+	}
+
+	files, err := s.fileRepo.GetFileByIds(fileIds)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	fileMap := make(map[string]*models.File, len(files))
+	for i := range files {
+		fileMap[files[i].Id] = &files[i]
+	}
+
 	var result []dto.FavoriteDTO
-
 	for _, f := range favs {
-		// 查询 file 表获取完整路径
-		file, err := s.fileService.GetFileById(f.FileId)
-		if err != nil {
-			return nil, 0, err
+		file, ok := fileMap[f.FileId]
+		if !ok {
+			continue
 		}
-		// 计算完整路径，例如 /parent1/parent2/fileName
 		fullPath, err := s.fileService.GetFilePath(file)
+		if err != nil {
+			fullPath = "/" + file.Name
+		}
 
-		dto := dto.FavoriteDTO{
+		result = append(result, dto.FavoriteDTO{
 			FileId:    f.FileId,
 			Name:      file.Name,
 			IsDir:     file.IsDir,
@@ -48,8 +68,7 @@ func (s favoriteService) GetFavorites(userId, page, pageSize int) ([]dto.Favorit
 			SizeStr:   file.SizeStr,
 			FileURL:   file.FileURL,
 			CreatedAt: f.CreatedAt.Format("2006-01-02 15:04:05"),
-		}
-		result = append(result, dto)
+		})
 	}
 
 	return result, total, nil

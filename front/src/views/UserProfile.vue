@@ -129,7 +129,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useStore } from 'vuex'
 import { ElMessage } from 'element-plus'
 import { Camera, Check, Clock, Key, Lock, Message, Phone, PieChart, User } from '@element-plus/icons-vue'
@@ -221,6 +221,10 @@ async function changePassword() {
 }
 
 onMounted(() => { initForm(); loadStats() })
+
+watch(() => store.state.file.needRefreshStorage, val => {
+  if (val) { loadStats(); store.commit('file/setNeedRefreshStorage', false) }
+})
 </script>
 
 <style scoped>

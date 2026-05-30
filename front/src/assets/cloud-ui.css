@@ -385,3 +385,38 @@ a { color: inherit; text-decoration: none; }
   color: var(--cb-text-muted);
   margin: 0;
 }
+
+/* ===== Dark mode ===== */
+[data-theme="dark"] {
+  --cb-primary: #4D8DFF;
+  --cb-primary-hover: #6AA1FF;
+  --cb-primary-light: rgba(77,141,255,.12);
+  --cb-primary-soft: rgba(77,141,255,.18);
+  --cb-bg: #0F1117;
+  --cb-bg-alt: #1A1D24;
+  --cb-surface: #1A1D24;
+  --cb-surface-hover: #22252D;
+  --cb-surface-muted: #181B22;
+  --cb-overlay: rgba(0,0,0,.6);
+  --cb-border: #2A2D36;
+  --cb-border-light: #22252D;
+  --cb-border-strong: #363940;
+  --cb-border-focus: #4D8DFF;
+  --cb-text: #EDEEF0;
+  --cb-text-secondary: #9EA3AE;
+  --cb-text-muted: #6B7080;
+  --cb-text-placeholder: #535966;
+  --cb-text-inverse: #111827;
+  --cb-success-light: rgba(16,185,129,.12);
+  --cb-warning-light: rgba(245,158,11,.12);
+  --cb-danger-light: rgba(239,68,68,.12);
+  --cb-info-light: rgba(59,130,246,.12);
+}
+[data-theme="dark"] .el-table {
+  --el-table-header-bg-color: #1F2229;
+  --el-table-row-hover-bg-color: #22252D;
+}
+[data-theme="dark"] .el-dialog__footer { background: #14171D; }
+[data-theme="dark"] ::-webkit-scrollbar-thumb { background: #363940; }
+[data-theme="dark"] ::-webkit-scrollbar-thumb:hover { background: #4B505B; }
+[data-theme="dark"] .el-progress-bar__outer { background: #2A2D36; }

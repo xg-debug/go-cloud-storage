@@ -14,8 +14,21 @@ type Config struct {
 	RabbitMQ    RabbitMQConfig  `yaml:"rabbitmq" mapstructure:"rabbitmq"`
 	QQ          QQConfig        `yaml:"qq"`
 	AliyunOss   AliyunOssConfig `yaml:"aliyun"`
-	StorageType string          `yaml:"minio"`
+	StorageType string          `yaml:"storageType"`
+	JWT         JWTConfig       `yaml:"jwt"`
 	Minio       MinioConfig     `yaml:"minio"`
+	Security    SecurityConfig  `yaml:"security"`
+}
+
+type SecurityConfig struct {
+	AllowedExtensions []string `yaml:"allowedExtensions"` // 允许上传的文件扩展名，空表示全部允许
+	MaxFileSizeMB     int      `yaml:"maxFileSizeMB"`     // 单文件最大大小(MB)，0表示不限制
+	RateLimitRPS      int      `yaml:"rateLimitRPS"`      // 每用户每秒最大请求数，0表示不限制
+	DefaultQuotaGB    int      `yaml:"defaultQuotaGB"`    // 新用户默认配额(GB)，默认10
+}
+
+type JWTConfig struct {
+	Secret string `yaml:"secret"`
 }
 
 type ServerConfig struct {
@@ -98,8 +111,14 @@ func LoadConfig() (*Config, error) {
 	// 4. 项目根目录
 	v.AddConfigPath(".")
 
-	// 支持环境变量覆盖
+	// 支持环境变量覆盖（敏感信息优先从环境变量读取）
 	v.AutomaticEnv()
+	v.SetEnvPrefix("GCS") // GCS_DATABASE_PASSWORD 等
+	v.BindEnv("database.password", "GCS_DB_PASSWORD")
+	v.BindEnv("redis.password", "GCS_REDIS_PASSWORD")
+	v.BindEnv("minio.accessKeyID", "GCS_MINIO_ACCESS_KEY")
+	v.BindEnv("minio.secretAccessKey", "GCS_MINIO_SECRET_KEY")
+	v.BindEnv("jwt.secret", "GCS_JWT_SECRET")
 
 	// 读取配置文件
 	if err := v.ReadInConfig(); err != nil {
@@ -129,6 +148,29 @@ func validateConfig(cfg *Config) error {
 	}
 	if cfg.Server.StoragePath == "" {
 		return errors.New("server storage path is required")
+	}
+	// 安全配置默认值
+	if cfg.Security.DefaultQuotaGB <= 0 {
+		cfg.Security.DefaultQuotaGB = 10
+	}
+	if cfg.Security.MaxFileSizeMB <= 0 {
+		cfg.Security.MaxFileSizeMB = 500 // 默认500MB
+	}
+	if cfg.Security.RateLimitRPS <= 0 {
+		cfg.Security.RateLimitRPS = 50 // 默认每秒50次
+	}
+	if cfg.Security.AllowedExtensions == nil {
+		// 默认允许常见文件类型
+		cfg.Security.AllowedExtensions = []string{
+			".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".svg",
+			".mp4", ".avi", ".mov", ".wmv", ".flv", ".mkv",
+			".mp3", ".wav", ".flac", ".aac", ".ogg",
+			".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+			".txt", ".md", ".csv", ".json", ".xml", ".yaml", ".yml",
+			".zip", ".rar", ".7z", ".tar", ".gz",
+			".html", ".htm", ".css", ".js", ".ts", ".py", ".go", ".java",
+			".ncm",
+		}
 	}
 	return nil
 }

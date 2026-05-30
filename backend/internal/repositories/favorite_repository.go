@@ -46,7 +46,7 @@ func (r *favoriteRepo) ListFavorite(userId, page, pageSize int) ([]*models.Favor
 	var dtos []*models.Favorite
 	err = r.db.Raw(`
 		SELECT file_id, created_at
-		FROM favorite
+		FROM favorites
 		WHERE user_id = ?
 		ORDER BY created_at DESC 
 		LIMIT ? OFFSET ?`, userId, pageSize, (page-1)*pageSize).Scan(&dtos).Error
@@ -55,14 +55,12 @@ func (r *favoriteRepo) ListFavorite(userId, page, pageSize int) ([]*models.Favor
 
 // IsFavorited 检查是否已收藏
 func (r *favoriteRepo) IsFavorited(userId int, fileId string) (bool, *models.Favorite) {
-	var count int64
 	var favorite models.Favorite
-	r.db.Model(&models.Favorite{}).Where("user_id = ? AND file_id = ?", userId, fileId).First(&favorite).Count(&count)
-	if count > 0 {
+	err := r.db.Where("user_id = ? AND file_id = ?", userId, fileId).First(&favorite).Error
+	if err == nil {
 		return true, &favorite
-	} else {
-		return false, nil
 	}
+	return false, nil
 }
 
 // CountFavorites 统计收藏数量

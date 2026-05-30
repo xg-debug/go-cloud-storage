@@ -7,11 +7,13 @@ import (
 
 type NotificationService struct {
 	notificationRepo *repositories.NotificationRepository
+	sseBroker        *SSEBroker
 }
 
-func NewNotificationService(notificationRepo *repositories.NotificationRepository) *NotificationService {
+func NewNotificationService(notificationRepo *repositories.NotificationRepository, broker *SSEBroker) *NotificationService {
 	return &NotificationService{
 		notificationRepo: notificationRepo,
+		sseBroker:        broker,
 	}
 }
 
@@ -31,7 +33,21 @@ func (s *NotificationService) CreateNotification(req *models.NotificationCreateR
 		notification.Type = "info"
 	}
 
-	return s.notificationRepo.Create(notification)
+	if err := s.notificationRepo.Create(notification); err != nil {
+		return err
+	}
+
+	// 通过 SSE 广播给目标用户
+	if s.sseBroker != nil {
+		s.sseBroker.SendToUser(int(notification.UserID), "notification", map[string]interface{}{
+			"id":      notification.ID,
+			"title":   notification.Title,
+			"message": notification.Message,
+			"type":    notification.Type,
+			"link":    notification.Link,
+		})
+	}
+	return nil
 }
 
 // GetUserNotifications 获取用户通知列表
