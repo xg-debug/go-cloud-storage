@@ -1,8 +1,8 @@
 import { createApp } from 'vue'
 import App from './App.vue'
-import router from './router'
+import router from './router/index.js'
 import axios from 'axios'
-import store from './store'
+import store from './store/index.js'
 import { getProfile } from '@/api/user'
 
 // 引入全局css
