@@ -7,6 +7,7 @@ import (
 	"go-cloud-storage/backend/internal/services"
 	"go-cloud-storage/backend/pkg/config"
 	"go-cloud-storage/backend/pkg/utils"
+	"log/slog"
 	"io"
 	"mime"
 	"net/http"
@@ -80,7 +81,7 @@ func (c *FileController) CreateFolder(ctx *gin.Context) {
 	}
 	userId := ctx.GetInt("userId")
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.Fail(ctx, http.StatusBadRequest, "参数错误: "+err.Error())
+		utils.Fail(ctx, http.StatusBadRequest, "参数错误")
 		return
 	}
 	req.Name = strings.TrimSpace(req.Name)
@@ -135,6 +136,7 @@ func (c *FileController) UploadFile(ctx *gin.Context) {
 
 	file, err := c.fileService.UploadFile(ctx, srcFile, userId, fileHeader.Filename, fileHeader.Size, fileHash, parentId)
 	if err != nil {
+		slog.Error("上传文件失败", "error", err)
 		utils.Fail(ctx, http.StatusInternalServerError, "上传文件失败")
 		return
 	}
@@ -150,7 +152,8 @@ func (c *FileController) Rename(ctx *gin.Context) {
 	userId := ctx.GetInt("userId")
 	err := c.fileService.Rename(userId, req.FileId, req.NewName)
 	if err != nil {
-		utils.Fail(ctx, http.StatusBadRequest, err.Error())
+		slog.Error("重命名失败", "error", err)
+		utils.Fail(ctx, http.StatusBadRequest, "重命名失败")
 		return
 	}
 	utils.Success(ctx, gin.H{"message": "重命名成功"})
@@ -161,7 +164,8 @@ func (c *FileController) Delete(ctx *gin.Context) {
 	userId := ctx.GetInt("userId")
 	err := c.fileService.Delete(fileId, userId)
 	if err != nil {
-		utils.Fail(ctx, http.StatusInternalServerError, err.Error())
+		slog.Error("删除失败", "error", err)
+		utils.Fail(ctx, http.StatusInternalServerError, "删除失败")
 		return
 	}
 	utils.Success(ctx, gin.H{"message": "删除成功"})
@@ -172,7 +176,8 @@ func (c *FileController) GetRecentFiles(ctx *gin.Context) {
 	userId := ctx.GetInt("userId")
 	resultMap, err := c.fileService.GetRecentFiles(userId, timeRange)
 	if err != nil {
-		utils.Fail(ctx, http.StatusInternalServerError, err.Error())
+		slog.Error("获取最近文件失败", "error", err)
+		utils.Fail(ctx, http.StatusInternalServerError, "获取最近文件失败")
 		return
 	}
 	utils.Success(ctx, resultMap)
@@ -189,7 +194,8 @@ func (c *FileController) PreviewFile(ctx *gin.Context) {
 
 	previewData, err := c.fileService.PreviewFile(userId, fileId)
 	if err != nil {
-		utils.Fail(ctx, http.StatusInternalServerError, err.Error())
+		slog.Error("获取预览信息失败", "error", err)
+		utils.Fail(ctx, http.StatusInternalServerError, "获取预览信息失败")
 		return
 	}
 
@@ -217,7 +223,8 @@ func (c *FileController) PreviewStream(ctx *gin.Context) {
 
 	reader, fileInfo, err := c.fileService.PreviewStream(ctx, userId, fileId)
 	if err != nil {
-		utils.Fail(ctx, http.StatusBadRequest, err.Error())
+		slog.Error("获取文件流失败", "error", err)
+		utils.Fail(ctx, http.StatusBadRequest, "获取文件流失败")
 		return
 	}
 	defer reader.Close()
@@ -232,7 +239,7 @@ func (c *FileController) PreviewStream(ctx *gin.Context) {
 func (c *FileController) SearchFiles(ctx *gin.Context) {
 	var req SearchFilesRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.Fail(ctx, http.StatusBadRequest, "参数错误: "+err.Error())
+		utils.Fail(ctx, http.StatusBadRequest, "参数错误")
 		return
 	}
 
@@ -249,7 +256,8 @@ func (c *FileController) SearchFiles(ctx *gin.Context) {
 	// 调用服务层搜索文件
 	files, total, err := c.fileService.SearchFiles(userId, req.Keyword, req.ParentId, req.Page, req.PageSize)
 	if err != nil {
-		utils.Fail(ctx, http.StatusInternalServerError, "搜索文件失败: "+err.Error())
+		slog.Error("搜索文件失败", "error", err)
+		utils.Fail(ctx, http.StatusInternalServerError, "搜索文件失败")
 		return
 	}
 
@@ -268,7 +276,7 @@ func (c *FileController) ChunkUploadInit(ctx *gin.Context) {
 		ParentId string `json:"parentId"`
 	}
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.Fail(ctx, http.StatusBadRequest, "参数错误："+err.Error())
+		utils.Fail(ctx, http.StatusBadRequest, "参数错误")
 		return
 	}
 
@@ -290,7 +298,8 @@ func (c *FileController) ChunkUploadInit(ctx *gin.Context) {
 	// 调用 Service 层逻辑
 	resp, err := c.fileService.InitChunkUpload(ctx, userId, req.FileName, req.FileHash, req.ParentId, req.FileSize)
 	if err != nil {
-		utils.Fail(ctx, http.StatusInternalServerError, err.Error())
+		slog.Error("初始化上传失败", "error", err)
+		utils.Fail(ctx, http.StatusInternalServerError, "初始化上传失败")
 		return
 	}
 
@@ -330,7 +339,8 @@ func (c *FileController) ChunkUploadPart(ctx *gin.Context) {
 	// chunkHash 非空时，服务端会边上传边校验 hash
 	err = c.fileService.UploadChunk(ctx, userId, fileHash, chunkIndex, srcfile, fileHeader.Size, chunkHash)
 	if err != nil {
-		utils.Fail(ctx, http.StatusInternalServerError, "分片上传失败: "+err.Error())
+			slog.Error("分片上传失败", "error", err)
+		utils.Fail(ctx, http.StatusInternalServerError, "分片上传失败")
 		return
 	}
 
@@ -346,7 +356,7 @@ func (c *FileController) ChunkUploadMerge(ctx *gin.Context) {
 		ParentId string `json:"parentId"`
 	}
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.Fail(ctx, http.StatusBadRequest, "参数错误: "+err.Error())
+		utils.Fail(ctx, http.StatusBadRequest, "参数错误")
 		return
 	}
 	userId := ctx.GetInt("userId")
@@ -355,7 +365,8 @@ func (c *FileController) ChunkUploadMerge(ctx *gin.Context) {
 	// Service 层逻辑：从 Redis 取出所有 Parts (ETags) -> 调用 MinIO CompleteMultipartUpload -> 写入数据库 -> 清理 Redis
 	file, err := c.fileService.MergeChunks(ctx, userId, req.FileHash, req.FileName, req.ParentId, req.FileSize)
 	if err != nil {
-		utils.Fail(ctx, http.StatusInternalServerError, "合并文件失败: "+err.Error())
+			slog.Error("合并文件失败", "error", err)
+		utils.Fail(ctx, http.StatusInternalServerError, "合并文件失败")
 		return
 	}
 	// 返回完整的文件对象/仅返回 URL
@@ -373,7 +384,8 @@ func (c *FileController) GetChunkUploadProgress(ctx *gin.Context) {
 
 	progress, err := c.fileService.GetChunkUploadProgress(ctx, userId, fileHash)
 	if err != nil {
-		utils.Fail(ctx, http.StatusInternalServerError, "查询进度失败: "+err.Error())
+			slog.Error("查询进度失败", "error", err)
+		utils.Fail(ctx, http.StatusInternalServerError, "查询进度失败")
 		return
 	}
 	utils.Success(ctx, progress)
@@ -393,7 +405,8 @@ func (c *FileController) ChunkUploadCancel(ctx *gin.Context) {
 	// Service 层逻辑：获取 UploadID -> 调用 MinIO AbortMultipartUpload -> 清理 Redis
 	err := c.fileService.CancelChunkUpload(ctx, userId, req.FileHash)
 	if err != nil {
-		utils.Fail(ctx, http.StatusInternalServerError, "取消失败: "+err.Error())
+			slog.Error("取消上传失败", "error", err)
+		utils.Fail(ctx, http.StatusInternalServerError, "取消上传失败")
 		return
 	}
 	utils.Success(ctx, gin.H{"message": "上传已取消"})
@@ -405,7 +418,8 @@ func (c *FileController) GetFolderTree(ctx *gin.Context) {
 
 	tree, err := c.fileService.GetFolderTree(ctx, userId)
 	if err != nil {
-		utils.Fail(ctx, http.StatusInternalServerError, "获取文件夹树失败: ")
+			slog.Error("获取文件夹树失败", "error", err)
+		utils.Fail(ctx, http.StatusInternalServerError, "获取文件夹树失败")
 		return
 	}
 
@@ -427,7 +441,8 @@ func (c *FileController) MoveFile(ctx *gin.Context) {
 	userId := ctx.GetInt("userId")
 
 	if err := c.fileService.MoveFile(ctx, userId, req.FileId, req.TargetFolderId); err != nil {
-		utils.Fail(ctx, http.StatusInternalServerError, "移动失败: ")
+			slog.Error("移动文件失败", "error", err)
+		utils.Fail(ctx, http.StatusInternalServerError, "移动文件失败")
 		return
 	}
 
@@ -441,7 +456,8 @@ func (c *FileController) GetDownloadInfo(ctx *gin.Context) {
 
 	info, err := c.fileService.GetDownloadInfo(ctx, userId, fileId)
 	if err != nil {
-		utils.Fail(ctx, http.StatusBadRequest, err.Error())
+		slog.Error("获取下载信息失败", "error", err)
+		utils.Fail(ctx, http.StatusBadRequest, "获取下载信息失败")
 		return
 	}
 	utils.Success(ctx, info)
@@ -546,10 +562,43 @@ func (c *FileController) CopyFile(ctx *gin.Context) {
 	}
 	userId := ctx.GetInt("userId")
 	if err := c.fileService.CopyFile(ctx, userId, req.FileId, req.TargetFolderId); err != nil {
-		utils.Fail(ctx, http.StatusInternalServerError, "复制失败: "+err.Error())
+			slog.Error("复制文件失败", "error", err)
+		utils.Fail(ctx, http.StatusInternalServerError, "复制文件失败")
 		return
 	}
 	utils.Success(ctx, gin.H{"message": "复制成功"})
+}
+
+// DownloadBatch streams multiple files as a ZIP archive
+func (c *FileController) DownloadBatch(ctx *gin.Context) {
+	var req struct {
+		FileIds []string `json:"fileIds" binding:"required"`
+	}
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		utils.Fail(ctx, http.StatusBadRequest, "参数错误")
+		return
+	}
+	if len(req.FileIds) == 0 {
+		utils.Fail(ctx, http.StatusBadRequest, "请选择要下载的文件")
+		return
+	}
+
+	userId := ctx.GetInt("userId")
+
+	reader, zipName, err := c.fileService.DownloadBatchZip(ctx, userId, req.FileIds)
+	if err != nil {
+		slog.Error("批量下载失败", "error", err)
+		utils.Fail(ctx, http.StatusInternalServerError, "批量下载失败")
+		return
+	}
+	defer reader.Close()
+
+	ctx.Header("Content-Type", "application/zip")
+	ctx.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, url.QueryEscape(zipName)))
+	ctx.Header("Accept-Ranges", "bytes")
+	ctx.Status(http.StatusOK)
+
+	io.Copy(ctx.Writer, reader)
 }
 
 func (c *FileController) isAllowedExtension(fileName string) bool {
@@ -584,9 +633,13 @@ func saveSearchHistory(userId int, keyword string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	client.ZAdd(ctx, key, &redis.Z{Score: float64(time.Now().Unix()), Member: keyword})
+	if err := client.ZAdd(ctx, key, &redis.Z{Score: float64(time.Now().Unix()), Member: keyword}).Err(); err != nil {
+		slog.Error("保存搜索历史失败", "error", err)
+	}
 	// 只保留最近50条
-	client.ZRemRangeByRank(ctx, key, 0, -51)
+	if err := client.ZRemRangeByRank(ctx, key, 0, -51).Err(); err != nil {
+		slog.Error("清理搜索历史失败", "error", err)
+	}
 	// 设置过期时间30天
 	client.Expire(ctx, key, 30*24*time.Hour)
 }
@@ -606,6 +659,7 @@ func (c *FileController) GetSearchHistory(ctx *gin.Context) {
 
 	results, err := client.ZRevRange(ctxBg, key, 0, 9).Result()
 	if err != nil {
+		slog.Error("获取搜索历史失败", "error", err)
 		utils.Success(ctx, gin.H{"list": []string{}})
 		return
 	}
@@ -613,6 +667,17 @@ func (c *FileController) GetSearchHistory(ctx *gin.Context) {
 }
 
 // DeleteSearchHistory 删除搜索历史
+// GetDuplicateFiles returns duplicate file groups for the user
+func (c *FileController) GetDuplicateFiles(ctx *gin.Context) {
+	userId := ctx.GetInt("userId")
+	groups, totalWasted, err := c.fileService.GetDuplicateFiles(ctx, userId)
+	if err != nil {
+		utils.Fail(ctx, http.StatusInternalServerError, "扫描重复文件失败")
+		return
+	}
+	utils.Success(ctx, gin.H{"groups": groups, "totalWasted": totalWasted})
+}
+
 func (c *FileController) DeleteSearchHistory(ctx *gin.Context) {
 	userId := ctx.GetInt("userId")
 	client := cache.GetClient()
@@ -627,9 +692,13 @@ func (c *FileController) DeleteSearchHistory(ctx *gin.Context) {
 	defer cancel()
 
 	if keyword != "" {
-		client.ZRem(ctxBg, key, keyword)
+		if err := client.ZRem(ctxBg, key, keyword).Err(); err != nil {
+			slog.Error("删除搜索历史失败", "error", err)
+		}
 	} else {
-		client.Del(ctxBg, key)
+		if err := client.Del(ctxBg, key).Err(); err != nil {
+			slog.Error("清空搜索历史失败", "error", err)
+		}
 	}
 	utils.Success(ctx, nil)
 }

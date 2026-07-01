@@ -68,6 +68,11 @@ func ParseToken(tokenString string) (*Claims, error) {
 	return nil, jwt.ErrTokenInvalidClaims
 }
 
+// GenerateResetToken 生成密码重置令牌
+func GenerateResetToken(userId int, expireTime time.Duration) (string, error) {
+	return generateToken(userId, "reset", expireTime)
+}
+
 // ParseTokenWithType 解析并验证特定类型的Token
 func ParseTokenWithType(tokenString string, tokenType string) (*Claims, error) {
 	claims, err := ParseToken(tokenString)

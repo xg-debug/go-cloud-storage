@@ -9,7 +9,10 @@
     <div class="app-main">
       <!-- Top header -->
       <header class="app-header">
-        <LayoutHeader @toggle-sidebar="sidebarCollapsed = !sidebarCollapsed" />
+        <LayoutHeader
+          @toggle-sidebar="sidebarCollapsed = !sidebarCollapsed"
+          @toggle-upload-queue="uploadQueuePanel?.toggle()"
+        />
       </header>
 
       <!-- Content + right panel -->
@@ -25,6 +28,9 @@
       </div>
     </div>
 
+    <!-- Upload queue panel -->
+    <UploadQueuePanel ref="uploadQueuePanel" />
+
     <!-- Drop zone overlay -->
     <div class="drop-overlay" :class="{ active: isDragging }">
       <div class="drop-overlay-inner">
@@ -39,16 +45,20 @@
 </template>
 
 <script setup>
-import { ref, computed, provide, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
+import { useStore } from 'vuex'
 import LayoutHeader from '@/components/layout/Header.vue'
 import LayoutSidebar from '@/components/layout/Sidebar.vue'
 import RightPanel from '@/components/layout/RightPanel.vue'
+import UploadQueuePanel from '@/components/UploadQueuePanel.vue'
 import { Upload } from '@element-plus/icons-vue'
 
 const route = useRoute()
+const store = useStore()
 const sidebarCollapsed = ref(false)
 const isDragging = ref(false)
+const uploadQueuePanel = ref(null)
 
 // Only show right panel on main file pages
 const showRightPanel = computed(() => {
@@ -73,6 +83,16 @@ function onDrop(e) {
   e.preventDefault()
   dragCounter = 0
   isDragging.value = false
+
+  // Add dropped files to upload queue
+  const files = Array.from(e.dataTransfer.files || [])
+  if (files.length > 0) {
+    // 仅在 MyDrive 页面使用当前文件夹，其他页面使用根目录
+    const isDrive = route.name === 'MyDrive'
+    const parentId = isDrive ? (store.state.file.currentParentId || store.state.userInfo?.rootFolderId || '') : (store.state.userInfo?.rootFolderId || '')
+    store.dispatch('upload/addToQueue', { files, parentId })
+    uploadQueuePanel.value?.show()
+  }
 }
 
 onMounted(() => {
@@ -144,6 +164,44 @@ onUnmounted(() => {
   border-left: 1px solid var(--cb-border);
   background: var(--cb-surface);
   overflow-y: auto;
+}
+
+/* Global drop overlay */
+.drop-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: rgba(15,23,42,0.65);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .25s ease;
+}
+.drop-overlay.active {
+  opacity: 1;
+  pointer-events: auto;
+}
+.drop-overlay-inner {
+  text-align: center;
+  color: #fff;
+}
+.drop-icon {
+  width: 80px; height: 80px;
+  border-radius: 20px;
+  background: rgba(255,255,255,0.12);
+  display: flex; align-items: center; justify-content: center;
+  margin: 0 auto 16px;
+  color: #fff;
+}
+.drop-overlay-inner h2 {
+  font-size: 22px; font-weight: 700; margin: 0 0 6px;
+}
+.drop-overlay-inner p {
+  font-size: 14px; opacity: 0.7; margin: 0;
 }
 
 @media (max-width: 1200px) {

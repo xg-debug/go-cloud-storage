@@ -7,11 +7,16 @@ import (
 
 type UserRepository interface {
 	GetUserInfoByAccount(account string) (*models.User, error)
+	GetUserInfoByEmail(email string) (*models.User, error)
 	Insert(user *models.User) error
 	Update(user *models.User) error
 	EmailExists(email string) (bool, error)
 	GetUserInfoById(userId int) (*models.User, error)
 	UpdateAvatarURL(userId int, avatarURL string) error
+	UpdatePassword(userId int, hashedPassword string) error
+	CreatePasswordResetToken(token *models.PasswordResetToken) error
+	GetPasswordResetToken(token string) (*models.PasswordResetToken, error)
+	MarkResetTokenUsed(tokenId int) error
 }
 
 type userRepo struct {
@@ -52,4 +57,28 @@ func (r *userRepo) GetUserInfoById(userId int) (*models.User, error) {
 
 func (r *userRepo) UpdateAvatarURL(userId int, avatarURL string) error {
 	return r.db.Model(&models.User{}).Where("id = ?", userId).Update("avatar", avatarURL).Error
+}
+
+func (r *userRepo) GetUserInfoByEmail(email string) (*models.User, error) {
+	var user models.User
+	err := r.db.Where("email = ?", email).First(&user).Error
+	return &user, err
+}
+
+func (r *userRepo) UpdatePassword(userId int, hashedPassword string) error {
+	return r.db.Model(&models.User{}).Where("id = ?", userId).Update("password", hashedPassword).Error
+}
+
+func (r *userRepo) CreatePasswordResetToken(token *models.PasswordResetToken) error {
+	return r.db.Create(token).Error
+}
+
+func (r *userRepo) GetPasswordResetToken(token string) (*models.PasswordResetToken, error) {
+	var t models.PasswordResetToken
+	err := r.db.Where("token = ? AND used = ?", token, false).First(&t).Error
+	return &t, err
+}
+
+func (r *userRepo) MarkResetTokenUsed(tokenId int) error {
+	return r.db.Model(&models.PasswordResetToken{}).Where("id = ?", tokenId).Update("used", true).Error
 }

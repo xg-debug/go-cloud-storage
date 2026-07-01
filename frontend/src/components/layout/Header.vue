@@ -13,7 +13,7 @@
       <input
         v-model="query"
         class="tb-search-input"
-        placeholder="搜索文件、文件夹与分享内容..."
+        placeholder="搜索云盘内文件"
         @keyup.enter="doSearch"
         @focus="showHistory = true"
         @blur="hideHistoryDelay"
@@ -44,6 +44,17 @@
       <!-- Upload -->
       <button class="tb-icon-btn" @click="uploadDialogVisible = true" title="上传文件">
         <el-icon :size="20"><Upload /></el-icon>
+      </button>
+
+      <!-- Upload Queue -->
+      <button
+        class="tb-icon-btn"
+        :class="{ 'has-badge': activeUploadCount > 0 }"
+        @click="$emit('toggle-upload-queue')"
+        title="上传队列"
+      >
+        <el-icon :size="20"><List /></el-icon>
+        <span v-if="activeUploadCount > 0" class="tb-badge">{{ activeUploadCount }}</span>
       </button>
       <FileUploadDialog v-model="uploadDialogVisible" :parent-id="currentDirId" @success="onUploadDone" />
 
@@ -83,7 +94,7 @@
       </el-dropdown>
 
       <!-- User -->
-      <el-dropdown trigger="click" placement="bottom-end" popper-class="hd-user-popper">
+      <el-dropdown ref="userDropdownRef" trigger="click" placement="bottom-end" popper-class="hd-user-popper">
         <button class="tb-user-btn">
           <el-avatar :size="32" :src="user?.avatar">
             <el-icon :size="16"><User /></el-icon>
@@ -99,10 +110,10 @@
               </div>
             </div>
             <div class="hd-user-links">
-              <button @click="$router.push('/user')">
+              <button @click="goProfile">
                 <el-icon :size="16"><User /></el-icon>个人中心
               </button>
-              <button class="danger" @click="doLogout">
+              <button class="danger" @click="handleLogout">
                 <el-icon :size="16"><SwitchButton /></el-icon>退出登录
               </button>
             </div>
@@ -119,14 +130,20 @@ import { useRouter } from 'vue-router'
 import { useStore } from 'vuex'
 import { ElMessage } from 'element-plus'
 import {
-  Bell, Clock, Close, Menu, Moon, Search, Sunny, SwitchButton, Upload, User
+  Bell, Clock, Close, List, Menu, Moon, Search, Sunny, SwitchButton, Upload, User
 } from '@element-plus/icons-vue'
 import { logout } from '@/api/auth'
 import { getNotifications, markAsRead, markAllAsRead } from '@/api/notification'
 import { getSearchHistory, deleteSearchHistory } from '@/api/file'
 import FileUploadDialog from '@/components/FileUploadDialog.vue'
 
-defineEmits(['toggle-sidebar'])
+const emit = defineEmits(['toggle-sidebar', 'toggle-upload-queue'])
+
+const activeUploadCount = computed(() => {
+  return (store.state.upload?.tasks || []).filter(t =>
+    t.status === 'uploading' || t.status === 'pending' || t.status === 'paused'
+  ).length
+})
 
 const router = useRouter()
 const store = useStore()
@@ -134,6 +151,7 @@ const user = computed(() => store.state.userInfo)
 const currentDirId = computed(() => store.state.file.currentParentId || store.state.userInfo?.rootFolderId || '')
 
 const query = ref('')
+const userDropdownRef = ref(null)
 const uploadDialogVisible = ref(false)
 const notifications = ref([])
 const unreadCount = ref(0)
@@ -164,7 +182,7 @@ async function loadSearchHistory() {
   try {
     const res = await getSearchHistory()
     searchHistory.value = res?.list || []
-  } catch {}
+  } catch (e) { console.error('Failed to load search history', e) }
 }
 
 function hideHistoryDelay() {
@@ -178,7 +196,7 @@ function selectHistory(keyword) {
 }
 
 async function clearHistory() {
-  try { await deleteSearchHistory(); searchHistory.value = [] } catch {}
+  try { await deleteSearchHistory(); searchHistory.value = [] } catch (e) { console.error('Failed to clear history', e) }
 }
 
 function onUploadDone() {
@@ -191,11 +209,11 @@ async function loadNotifications() {
     const res = await getNotifications()
     notifications.value = res?.notifications || []
     unreadCount.value = res?.unread_count || notifications.value.filter(n => !n.is_read).length
-  } catch {}
+  } catch (e) { console.error('Failed to load notifications', e) }
 }
 
 async function markAllRead() {
-  try { await markAllAsRead(); notifications.value = []; unreadCount.value = 0 } catch {}
+  try { await markAllAsRead(); notifications.value = []; unreadCount.value = 0 } catch (e) { console.error('Failed to mark all read', e) }
 }
 
 async function readOne(n) {
@@ -203,12 +221,18 @@ async function readOne(n) {
     await markAsRead(n.id)
     notifications.value = notifications.value.filter(x => x.id !== n.id)
     unreadCount.value = Math.max(0, unreadCount.value - 1)
-  } catch {}
+  } catch (e) { console.error('Failed to mark as read', e) }
   if (n.link) router.push(n.link)
 }
 
-async function doLogout() {
-  try { await logout() } catch {}
+function goProfile() {
+  userDropdownRef.value?.handleClose()
+  router.push('/user')
+}
+
+async function handleLogout() {
+  userDropdownRef.value?.handleClose()
+  try { await logout() } catch (e) { console.error('Logout failed', e) }
   store.commit('clearAuth')
   router.push('/login')
 }
@@ -218,7 +242,7 @@ let sseSource = null
 function startSSE() {
   const token = store.state.token
   if (!token) return
-  const url = new URL('/notification/stream', window.location.origin)
+  const url = new URL('/notification/stream', 'http://localhost:8081')
   url.searchParams.set('token', token)
   sseSource = new EventSource(url.toString())
   sseSource.addEventListener('notification', e => {
@@ -228,7 +252,7 @@ function startSSE() {
         ElMessage({ message: data.title + ': ' + data.message, type: data.type || 'info' })
       }
       loadNotifications()
-    } catch {}
+    } catch (e) { console.warn('SSE parse error', e) }
   })
   sseSource.onerror = () => {
     sseSource?.close()
@@ -287,7 +311,6 @@ onUnmounted(() => { stopSSE(); clearTimeout(hideTimer) })
 .tb-search-input:focus {
   border-color: var(--cb-border-focus);
   background: var(--cb-surface);
-  box-shadow: var(--cb-focus-ring);
 }
 .tb-search-clear {
   position: absolute;

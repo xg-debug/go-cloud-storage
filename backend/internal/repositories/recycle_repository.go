@@ -17,7 +17,7 @@ type TrashItem struct {
 
 // RecycleRepository 1.接口定义：在go中，接口本身就是引用类型，返回接口值已经包含了指向具体实现的指针
 type RecycleRepository interface {
-	GetFiles(userId int) ([]TrashItem, error)
+	GetFiles(userId int, page, pageSize int) ([]TrashItem, int64, error)
 	GetAllFileIds(tx *gorm.DB, userId int) ([]string, error)
 	GetExpiredFileIds(limit int) ([]string, error)
 	DeleteOne(db *gorm.DB, fileId string) error
@@ -26,6 +26,8 @@ type RecycleRepository interface {
 	RestoreOne(fileId string) error
 	RestoreBatch(fileIds []string) error
 	RestoreAll(userId int) error
+	// CountByUserAndFileIds 验证指定文件是否属于该用户（用于权限校验）
+	CountByUserAndFileIds(tx *gorm.DB, userId int, fileIds []string) (int64, error)
 
 	CleanExpiredRecords() (int64, error)
 }
@@ -44,13 +46,27 @@ func NewRecycleRepository(db *gorm.DB) RecycleRepository {
 	return &recycleRepo{db: db}
 }
 
-func (r *recycleRepo) GetFiles(userId int) ([]TrashItem, error) {
+func (r *recycleRepo) GetFiles(userId int, page, pageSize int) ([]TrashItem, int64, error) {
+	var total int64
 	var res []TrashItem
-	err := r.db.Table("recycle_bin AS rb").
-		Select(`f.id AS file_id, f.name, f.is_dir, f.size_str, rb.deleted_at, rb.expire_at`).
+
+	baseQuery := r.db.Table("recycle_bin AS rb").
 		Joins(`LEFT JOIN file AS f ON rb.file_id = f.id`).
-		Where(`rb.user_id = ?`, userId).Order("rb.deleted_at DESC").Scan(&res).Error
-	return res, err
+		Where(`rb.user_id = ?`, userId)
+
+	if err := baseQuery.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	query := baseQuery.Select(`f.id AS file_id, f.name, f.is_dir, f.size_str, rb.deleted_at, rb.expire_at`).
+		Order("rb.deleted_at DESC")
+
+	if page > 0 && pageSize > 0 {
+		query = query.Offset((page - 1) * pageSize).Limit(pageSize)
+	}
+
+	err := query.Scan(&res).Error
+	return res, total, err
 }
 
 func (r *recycleRepo) GetAllFileIds(tx *gorm.DB, userId int) ([]string, error) {
@@ -129,6 +145,18 @@ func (r *recycleRepo) RestoreAll(userId int) error {
 		}
 		return nil
 	})
+}
+
+func (r *recycleRepo) CountByUserAndFileIds(tx *gorm.DB, userId int, fileIds []string) (int64, error) {
+	db := r.db
+	if tx != nil {
+		db = tx
+	}
+	var count int64
+	err := db.Model(&models.RecycleBin{}).
+		Where("user_id = ? AND file_id IN ?", userId, fileIds).
+		Count(&count).Error
+	return count, err
 }
 
 func (r *recycleRepo) CleanExpiredRecords() (int64, error) {

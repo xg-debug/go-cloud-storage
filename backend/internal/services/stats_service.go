@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"go-cloud-storage/backend/internal/models"
 	"go-cloud-storage/backend/internal/repositories"
+	"go-cloud-storage/backend/pkg/filetypes"
 	"math"
 )
 
@@ -86,7 +87,7 @@ func (s *statsService) GetUserDashboardStats(userId int) (*models.UserDashboardS
 		} else {
 			totalFiles++
 			// 判断文件类型
-			fileType := getFileType(file.FileExtension)
+			fileType := filetypes.Category(file.FileExtension)
 			if stat, exists := fileTypeMap[fileType]; exists {
 				stat.Count++
 				stat.Size += file.Size
@@ -104,7 +105,8 @@ func (s *statsService) GetUserDashboardStats(userId int) (*models.UserDashboardS
 		if totalFiles > 0 {
 			stat.Percentage = math.Round(float64(stat.Count)/float64(totalFiles)*100*100) / 100
 		}
-		//stat.SizeGB = math.Round(float64(stat.Size)/(1024*1024*1024)*100) / 100
+		stat.SizeGB = math.Round(float64(stat.Size)/(1024*1024*1024)*100) / 100
+		stat.SizeStr = formatSize(stat.Size)
 		fileTypeStats = append(fileTypeStats, *stat)
 	}
 
@@ -120,52 +122,6 @@ func (s *statsService) GetUserDashboardStats(userId int) (*models.UserDashboardS
 		FileStats:     fileStatsInfo,
 		FileTypeStats: fileTypeStats,
 	}, nil
-}
-
-// getFileType 根据文件扩展名判断文件类型
-func getFileType(extension string) string {
-	// 去掉扩展名前面的点
-	if len(extension) > 0 && extension[0] == '.' {
-		extension = extension[1:]
-	}
-
-	// 转换为小写
-	ext := extension
-
-	// 图片类型
-	imageExts := []string{"jpg", "jpeg", "png", "gif", "bmp", "webp", "svg"}
-	for _, imgExt := range imageExts {
-		if ext == imgExt {
-			return "image"
-		}
-	}
-
-	// 视频类型
-	videoExts := []string{"mp4", "avi", "mov", "wmv", "flv", "webm", "mkv"}
-	for _, vidExt := range videoExts {
-		if ext == vidExt {
-			return "video"
-		}
-	}
-
-	// 音频类型
-	audioExts := []string{"mp3", "wav", "flac", "aac", "ogg", "m4a"}
-	for _, audExt := range audioExts {
-		if ext == audExt {
-			return "audio"
-		}
-	}
-
-	// 文档类型
-	docExts := []string{"txt", "md", "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "csv", "json", "xml"}
-	for _, docExt := range docExts {
-		if ext == docExt {
-			return "document"
-		}
-	}
-
-	// 其他类型
-	return "other"
 }
 
 

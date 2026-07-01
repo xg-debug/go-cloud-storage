@@ -56,10 +56,7 @@
             </el-table-column>
           </el-table>
         </div>
-        <div v-if="!loading && files.length === 0" class="cb-empty-state">
-          <div class="empty-icon"><el-icon :size="36"><component :is="catIcon(selectedCategory)" /></el-icon></div>
-          <h3>暂无文件</h3><p>该分类下还没有文件</p>
-        </div>
+        <EmptyState v-if="!loading && files.length === 0" :icon="catIcon(selectedCategory)" title="暂无文件" description="该分类下还没有文件" />
       </template>
     </div>
 
@@ -80,6 +77,7 @@ import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Delete, Download, Grid, List, Loading, Warning } from '@element-plus/icons-vue'
 import { getFilesByCategory, deleteFile, downloadFile } from '@/api/file'
+import EmptyState from '@/components/EmptyState.vue'
 
 const route = useRoute()
 const viewMode = ref('list')
@@ -106,7 +104,7 @@ const catBg = t => ({ image: '#FDF2F8', video: '#FEF2F2', audio: '#F5F3FF', docu
 async function loadFiles(type) {
   loading.value = true
   try { const r = await getFilesByCategory({ fileType: type, sortBy: 'created_at', sortOrder: 'desc', page: 1, pageSize: 100 }); files.value = r.list || []; total.value = r.total || 0 }
-  catch {} finally { loading.value = false }
+  catch { ElMessage.error('加载文件列表失败') } finally { loading.value = false }
 }
 watch(() => route.params.type, t => { selectedCategory.value = t; if (t) loadFiles(t) }, { immediate: true })
 function previewHandler(f) { if (f.file_url) window.open(f.file_url, '_blank'); else ElMessage.info('暂不支持预览') }

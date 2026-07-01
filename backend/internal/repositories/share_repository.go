@@ -10,7 +10,7 @@ import (
 type ShareRepository interface {
 	CountSharedFiles(userId int) (int64, error)
 	CreateShare(share *models.Share) (*models.Share, error)
-	GetUserShares(userID int) ([]*models.Share, error)
+	GetUserShares(userID int, page, pageSize int) ([]*models.Share, int64, error)
 	GetShareByID(shareID int) (*models.Share, error)
 	GetShareByToken(token string) (*models.Share, error)
 	IncrementAccessCount(shareID int) error
@@ -46,10 +46,22 @@ func (r *shareRepo) CreateShare(share *models.Share) (*models.Share, error) {
 }
 
 // GetUserShares 获取用户的分享列表
-func (r *shareRepo) GetUserShares(userID int) ([]*models.Share, error) {
+func (r *shareRepo) GetUserShares(userID int, page, pageSize int) ([]*models.Share, int64, error) {
+	var total int64
 	var shares []*models.Share
-	err := r.db.Where("user_id = ?", userID).Order("created_at DESC").Find(&shares).Error
-	return shares, err
+
+	baseQuery := r.db.Where("user_id = ?", userID)
+	if err := baseQuery.Model(&models.Share{}).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	query := baseQuery.Order("created_at DESC")
+	if page > 0 && pageSize > 0 {
+		query = query.Offset((page - 1) * pageSize).Limit(pageSize)
+	}
+
+	err := query.Find(&shares).Error
+	return shares, total, err
 }
 
 // GetShareByID 根据ID获取分享

@@ -51,3 +51,10 @@ minio:
   bucket: "go-cloud-storage"
   useSSL: false
   region: "us-east-1"
+
+smtp:
+  host: "smtp.example.com"
+  port: 587
+  username: "noreply@example.com"
+  password: "your-smtp-password"
+  from: "CloudBox <noreply@example.com>"

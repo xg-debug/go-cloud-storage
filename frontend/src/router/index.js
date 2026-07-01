@@ -11,6 +11,18 @@ const routes = [
     meta: { requiresAuth: false, title: '登录' }
   },
   {
+    path: '/forgot-password',
+    name: 'ForgotPassword',
+    component: () => import('@/views/ForgotPassword.vue'),
+    meta: { requiresAuth: false, title: '忘记密码' }
+  },
+  {
+    path: '/reset-password',
+    name: 'ResetPassword',
+    component: () => import('@/views/ResetPassword.vue'),
+    meta: { requiresAuth: false, title: '重置密码' }
+  },
+  {
     path: '/',
     component: Container,
     meta: { requiresAuth: true },
@@ -22,6 +34,7 @@ const routes = [
       { path: 'file/:type', name: 'FileCategoryType', component: () => import('@/views/FileCategory.vue'), meta: { title: '文件分类' } },
       { path: 'shared', name: 'Shared', component: () => import('@/views/SharedFiles.vue'), meta: { title: '我的分享' } },
       { path: 'recycle', name: 'Recycle', component: () => import('@/views/Recycle.vue'), meta: { title: '回收站' } },
+      { path: 'duplicates', name: 'Duplicates', component: () => import('@/views/DuplicateFiles.vue'), meta: { title: '重复文件' } },
       { path: 'user', name: 'UserProfile', component: () => import('@/views/UserProfile.vue'), meta: { title: '个人中心' } }
     ]
   },

@@ -1,13 +1,14 @@
 package controller
 
 import (
-	"go-cloud-storage/backend/internal/models"
-	"go-cloud-storage/backend/pkg/utils"
-	"go-cloud-storage/backend/internal/services"
+	"log/slog"
 	"math"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"go-cloud-storage/backend/internal/models"
+	"go-cloud-storage/backend/pkg/utils"
+	"go-cloud-storage/backend/internal/services"
 )
 
 // StatsController 统计控制器
@@ -26,7 +27,8 @@ func (c *StatsController) GetUserDashboardStats(ctx *gin.Context) {
 	userId := ctx.GetInt("userId")
 	stats, err := c.statsService.GetUserDashboardStats(userId)
 	if err != nil {
-		utils.Fail(ctx, http.StatusInternalServerError, "获取用户统计信息失败: "+err.Error())
+		slog.Error("获取用户统计信息失败", "error", err)
+		utils.Fail(ctx, http.StatusInternalServerError, "获取用户统计信息失败")
 		return
 	}
 	utils.Success(ctx, stats)
@@ -37,7 +39,8 @@ func (c *StatsController) GetUserStorage(ctx *gin.Context) {
 	userId := ctx.GetInt("userId")
 	quota, err := c.storageService.GetUserQuota(userId)
 	if err != nil {
-		utils.Fail(ctx, http.StatusInternalServerError, err.Error())
+		slog.Error("获取存储配额失败", "error", err)
+		utils.Fail(ctx, http.StatusInternalServerError, "获取存储配额失败")
 		return
 	}
 	// 计算存储配额信息

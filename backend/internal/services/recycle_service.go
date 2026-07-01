@@ -2,6 +2,8 @@ package services
 
 import (
 	"context"
+	"fmt"
+
 	"go-cloud-storage/backend/internal/repositories"
 
 	"gorm.io/gorm"
@@ -14,12 +16,12 @@ type RecycleJobPublisher interface {
 }
 
 type RecycleService interface {
-	GetRecycleFiles(userId int) ([]map[string]interface{}, error)
-	DeleteOne(ctx context.Context, userid int, fileId string) error
-	DeleteSelected(ctx context.Context, fileIds []string) error
+	GetRecycleFiles(userId int, page, pageSize int) ([]map[string]interface{}, int64, error)
+	DeleteOne(ctx context.Context, userId int, fileId string) error
+	DeleteSelected(ctx context.Context, userId int, fileIds []string) error
 	ClearRecycles(ctx context.Context, userId int) error
-	RestoreOne(fileId string) error
-	RestoreSelected(fileIds []string) error
+	RestoreOne(userId int, fileId string) error
+	RestoreSelected(userId int, fileIds []string) error
 	DispatchExpiredPurgeJobs(ctx context.Context, limit int) (int, error)
 }
 
@@ -58,10 +60,10 @@ type TrashItem struct {
 }
 
 // GetRecycleFiles 获取用户的回收站项目
-func (s *recycleService) GetRecycleFiles(userId int) ([]map[string]interface{}, error) {
-	items, err := s.recycleRepo.GetFiles(userId)
+func (s *recycleService) GetRecycleFiles(userId int, page, pageSize int) ([]map[string]interface{}, int64, error) {
+	items, total, err := s.recycleRepo.GetFiles(userId, page, pageSize)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	var res []map[string]interface{}
 
@@ -77,15 +79,25 @@ func (s *recycleService) GetRecycleFiles(userId int) ([]map[string]interface{}, 
 		})
 	}
 
-	return res, nil
+	return res, total, nil
 }
 
 func (s *recycleService) DeleteOne(ctx context.Context, userId int, fileId string) error {
-	_ = userId
+	if userId > 0 {
+		if err := s.verifyOwnership(nil, userId, []string{fileId}); err != nil {
+			return err
+		}
+	}
 	return s.purge.PurgeOne(ctx, fileId)
 }
 
-func (s *recycleService) DeleteSelected(ctx context.Context, fileIds []string) error {
+func (s *recycleService) DeleteSelected(ctx context.Context, userId int, fileIds []string) error {
+	// userId <= 0 表示系统级操作（如过期清理），跳过权限校验
+	if userId > 0 {
+		if err := s.verifyOwnership(nil, userId, fileIds); err != nil {
+			return err
+		}
+	}
 	return s.purge.PurgeFiles(ctx, fileIds)
 }
 
@@ -96,31 +108,44 @@ func (s *recycleService) ClearRecycles(ctx context.Context, userId int) error {
 	}
 	return s.purge.PurgeFiles(ctx, fileIDs)
 }
-func (s *recycleService) RestoreOne(fileId string) error {
+func (s *recycleService) RestoreOne(userId int, fileId string) error {
 	return s.db.Transaction(func(tx *gorm.DB) error {
-		// 1.删除回收站的记录
+		if err := s.verifyOwnership(tx, userId, []string{fileId}); err != nil {
+			return err
+		}
 		if err := s.recycleRepo.DeleteOne(tx, fileId); err != nil {
 			return err
 		}
-		// 2.更新file表中软删除的标志
 		if err := s.fileRepo.MarkAsNotDeleted(tx, []string{fileId}, nil); err != nil {
 			return err
 		}
 		return nil
 	})
 }
-func (s *recycleService) RestoreSelected(fileIds []string) error {
+func (s *recycleService) RestoreSelected(userId int, fileIds []string) error {
 	return s.db.Transaction(func(tx *gorm.DB) error {
-		// 1.删除回收站的记录
+		if err := s.verifyOwnership(tx, userId, fileIds); err != nil {
+			return err
+		}
 		if err := s.recycleRepo.DeleteBatch(tx, fileIds); err != nil {
 			return err
 		}
-		// 2.更新file表中软删除的标志
 		if err := s.fileRepo.MarkAsNotDeleted(tx, fileIds, nil); err != nil {
 			return err
 		}
 		return nil
 	})
+}
+
+func (s *recycleService) verifyOwnership(tx *gorm.DB, userId int, fileIds []string) error {
+	count, err := s.recycleRepo.CountByUserAndFileIds(tx, userId, fileIds)
+	if err != nil {
+		return err
+	}
+	if int(count) != len(fileIds) {
+		return fmt.Errorf("无权操作该文件")
+	}
+	return nil
 }
 
 // CleanExpiredItems 清理过期的回收站项目

@@ -2,12 +2,14 @@ package controller
 
 import (
 	"fmt"
+	"log/slog"
+	"net/http"
+	"time"
+
 	"github.com/gin-gonic/gin"
 	"go-cloud-storage/backend/infrastructure/cache"
 	"go-cloud-storage/backend/pkg/utils"
 	"go-cloud-storage/backend/internal/services"
-	"net/http"
-	"time"
 )
 
 type LoginController struct {
@@ -41,7 +43,7 @@ func (c *LoginController) Login(ctx *gin.Context) {
 	var req LoginRequest
 
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.Fail(ctx, http.StatusBadRequest, err.Error())
+		utils.Fail(ctx, http.StatusBadRequest, "参数错误")
 		return
 	}
 
@@ -100,7 +102,7 @@ func (c *LoginController) Login(ctx *gin.Context) {
 func (c *LoginController) RefreshToken(ctx *gin.Context) {
 	refreshToken, err := ctx.Cookie("refresh_token")
 	if err != nil {
-		ctx.JSON(http.StatusBadRequest, "未找到RefreshToken")
+		utils.Fail(ctx, http.StatusBadRequest, "未找到RefreshToken")
 		return
 	}
 	// 解析并验证刷新令牌
@@ -128,13 +130,13 @@ func (c *LoginController) RefreshToken(ctx *gin.Context) {
 func (c *LoginController) Register(ctx *gin.Context) {
 	var req RegisterRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		utils.Fail(ctx, http.StatusBadRequest, "参数错误")
 		return
 	}
 	// 调用注册服务
 	err := c.userService.RegisterUser(req.Email, req.Password, req.PasswordConfirm)
 	if err != nil {
-		utils.Fail(ctx, http.StatusBadRequest, err.Error())
+		utils.Fail(ctx, http.StatusBadRequest, "注册失败")
 		return
 	}
 	// 注册成功
@@ -145,7 +147,9 @@ func (c *LoginController) Logout(ctx *gin.Context) {
 	userId := ctx.GetInt("userId")
 	// 删除刷新令牌
 	refreshKey := fmt.Sprintf("user:%d:refresh_token", userId)
-	cache.GetClient().Del(ctx.Request.Context(), refreshKey)
+	if err := cache.GetClient().Del(ctx.Request.Context(), refreshKey).Err(); err != nil {
+		slog.Error("删除refresh token缓存失败", "error", err)
+	}
 	ctx.SetCookie("refresh_token", "", -1, "/", "", true, true) // 删除浏览器 Cookie
 	utils.Success(ctx, gin.H{"message": "退出成功"})
 }

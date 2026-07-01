@@ -63,7 +63,7 @@
             </div>
             <div class="qc-info">
               <strong>{{ f.name }}</strong>
-              <span>{{ f.fileCount || 0 }} 个文件</span>
+              <span>{{ f.file_count || 0 }} 个文件</span>
             </div>
           </div>
         </div>
@@ -208,12 +208,17 @@
         </el-table>
       </div>
 
-      <!-- Empty -->
-      <div v-if="!loading && fileList.length === 0 && !isSearching" class="cb-empty-state">
-        <div class="empty-icon"><el-icon :size="36"><Folder /></el-icon></div>
-        <h3>此文件夹为空</h3>
-        <p>拖拽文件到此处或点击上传按钮</p>
+      <!-- Pagination -->
+      <div v-if="total > pageSize && !isSearching" class="drive-pagination">
+        <el-pagination
+          background layout="prev, pager, next, total"
+          :total="total" :page-size="pageSize" v-model:current-page="currentPage"
+          @current-change="loadFiles"
+        />
       </div>
+
+      <!-- Empty -->
+      <EmptyState v-if="!loading && fileList.length === 0 && !isSearching" :icon="Folder" title="此文件夹为空" description="拖拽文件到此处或点击上传按钮" />
     </div>
 
     <!-- Batch actions bar -->
@@ -255,7 +260,7 @@
         <div style="width:56px;height:56px;border-radius:50%;background:#FEF2F2;display:inline-flex;align-items:center;justify-content:center;margin-bottom:16px;">
           <el-icon :size="28" color="#EF4444"><Warning /></el-icon>
         </div>
-        <p style="font-size:15px;font-weight:600;color:var(--cb-text);">确定删除 <strong>{{ deleteTarget.name }}</strong>？</p>
+        <p style="font-size:15px;font-weight:600;color:var(--cb-text);">确定删除 <strong>{{ deleteTarget.name || deleteTarget.ids?.length + ' 个文件' }}</strong>？</p>
         <p style="font-size:13px;color:var(--cb-text-muted);margin-top:6px;">删除后可在回收站保留 7 天</p>
       </div>
       <template #footer>
@@ -265,7 +270,7 @@
     </el-dialog>
 
     <el-dialog v-model="moveDialogVisible" title="移动到" width="480px">
-      <p style="margin-bottom:14px;color:var(--cb-text-secondary);">将 <strong>{{ moveTarget.name }}</strong> 移动到：</p>
+      <p style="margin-bottom:14px;color:var(--cb-text-secondary);">将 <strong>{{ moveTarget.ids ? moveTarget.ids.length + ' 个文件' : moveTarget.name }}</strong> 移动到：</p>
       <div style="border:1px solid var(--cb-border);border-radius:8px;max-height:260px;overflow:auto;padding:8px;">
         <el-tree :data="folderTree" node-key="id" :props="{ label: 'name', children: 'children' }"
           highlight-current :expand-on-click-node="false" @node-click="onFolderSelect" />
@@ -285,6 +290,25 @@
     </el-dialog>
 
     <CreateShareDialog v-model="shareDialogVisible" :file-info="shareFileInfo" />
+
+    <!-- Shortcuts help -->
+    <el-dialog v-model="shortcutsHelpVisible" title="键盘快捷键" width="440px">
+      <div class="shortcuts-grid">
+        <div class="sc-item"><kbd>?</kbd><span>显示快捷键帮助</span></div>
+        <div class="sc-item"><kbd>Ctrl</kbd>+<kbd>U</kbd><span>上传文件</span></div>
+        <div class="sc-item"><kbd>Ctrl</kbd>+<kbd>F</kbd><span>聚焦搜索框</span></div>
+        <div class="sc-item"><kbd>Ctrl</kbd>+<kbd>A</kbd><span>全选文件</span></div>
+        <div class="sc-item"><kbd>Delete</kbd><span>删除选中文件</span></div>
+        <div class="sc-item"><kbd>F2</kbd><span>重命名选中文件</span></div>
+        <div class="sc-item"><kbd>Enter</kbd><span>打开文件/文件夹</span></div>
+        <div class="sc-item"><kbd>Esc</kbd><span>取消选择</span></div>
+        <div class="sc-item"><kbd>←</kbd><span>返回上级目录</span></div>
+      </div>
+      <p style="font-size:12px;color:var(--cb-text-muted);margin-top:12px;">macOS 上使用 Cmd 代替 Ctrl</p>
+      <template #footer>
+        <el-button @click="shortcutsHelpVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
 
     <el-dialog v-model="previewVisible" :title="previewTitle" width="900px" top="5vh" destroy-on-close>
       <div v-loading="previewLoading" class="preview-body">
@@ -320,12 +344,16 @@ import {
   ArrowDown, ArrowLeft, ArrowRight, Close, Delete, Download, Edit, Folder, FolderAdd, FolderOpened,
   Grid, HomeFilled, List, MoreFilled, Search, Share, SortDown, SortUp, Star, Upload, View, Warning
 } from '@element-plus/icons-vue'
-import { listFiles, createFolder, deleteFile, renameFile, previewFile, downloadFile, searchFiles, getFolderTree, moveFile } from '@/api/file'
+import { listFiles, createFolder, deleteFile, renameFile, previewFile, searchFiles, getFolderTree, moveFile, downloadBatch } from '@/api/file'
 import { addFavorite } from '@/api/favorite'
 import { getFileIcon, getFileIconColor } from '@/utils/fileIcon'
 import CreateShareDialog from '@/components/CreateShareDialog.vue'
 import FileUploadDialog from '@/components/FileUploadDialog.vue'
+import EmptyState from '@/components/EmptyState.vue'
+import { useFileActions } from '@/composables/useFileActions'
 import { marked } from 'marked'
+
+const { download: doDownload, getFileType, isImage, formatTime } = useFileActions()
 
 const route = useRoute()
 const store = useStore()
@@ -344,6 +372,8 @@ const hoveredId = ref(null)
 const selectedIds = ref([])
 const sortBy = ref('created_at')
 const sortOrder = ref('desc')
+const currentPage = ref(1)
+const pageSize = ref(60)
 const dragId = ref(null)
 const dragOverId = ref(null)
 let searchTimer = null
@@ -354,8 +384,7 @@ const quickFolders = computed(() => {
   if (isInFolder.value || isSearching.value) return []
   return fileList.value.filter(f => f.is_dir).slice(0, 6).map((f, i) => ({
     ...f,
-    color: ['#F59E0B','#8B5CF6','#EC4899','#10B981','#2F6BFF','#F97316'][i % 6],
-    fileCount: Math.floor(Math.random() * 50) + 1
+    color: ['#F59E0B','#8B5CF6','#EC4899','#10B981','#2F6BFF','#F97316'][i % 6]
   }))
 })
 
@@ -436,6 +465,12 @@ function onKeydown(e) {
   } else if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
     e.preventDefault()
     selectedIds.value = fileList.value.map(f => f.id)
+  } else if ((e.ctrlKey || e.metaKey) && e.key === 'u') {
+    e.preventDefault()
+    uploadDialogVisible.value = true
+  } else if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+    e.preventDefault()
+    document.querySelector('.tb-search-input')?.focus()
   } else if (e.key === 'Escape') {
     selectedIds.value = []
     hideCtxMenu()
@@ -443,7 +478,8 @@ function onKeydown(e) {
     const item = fileList.value.find(f => f.id === selectedIds.value[0])
     if (item) handleOpen(item)
   } else if (e.key === '?' && !e.ctrlKey && !e.metaKey) {
-    ElMessage({ message: '快捷键: Delete 删除 | F2 重命名 | Ctrl+A 全选 | Esc 取消选择 | Enter 打开 | ? 帮助', duration: 4000 })
+    e.preventDefault()
+    shortcutsHelpVisible.value = true
   }
 }
 
@@ -472,6 +508,7 @@ const creatingFolder = ref(false)
 const shareDialogVisible = ref(false)
 const shareFileInfo = ref({})
 const uploadDialogVisible = ref(false)
+const shortcutsHelpVisible = ref(false)
 const previewVisible = ref(false)
 const previewLoading = ref(false)
 const previewData = ref(null)
@@ -499,7 +536,7 @@ const previewTitle = computed(() => {
 async function loadFiles() {
   loading.value = true
   try {
-    const res = await listFiles({ parentId: currentParentId.value, sortBy: sortBy.value, sortOrder: sortOrder.value })
+    const res = await listFiles({ parentId: currentParentId.value, sortBy: sortBy.value, sortOrder: sortOrder.value, page: currentPage.value, pageSize: pageSize.value })
     fileList.value = res.list || []
     total.value = res.total || 0
   } catch { ElMessage.error('加载文件列表失败') }
@@ -512,6 +549,7 @@ function handleOpen(item) {
     currentParentId.value = item.id
     currentPath.value = [...currentPath.value, item.name]
     pathIdStack.value = [...pathIdStack.value, item.id]
+    currentPage.value = 1
     loadFiles()
   } else { handlePreview(item) }
 }
@@ -522,17 +560,17 @@ function toggleSortOrder() {
 }
 
 function goRoot() {
-  clearSearch(); currentParentId.value = store.state.userInfo?.rootFolderId || ''
+  clearSearch(); currentPage.value = 1; currentParentId.value = store.state.userInfo?.rootFolderId || ''
   currentPath.value = []; pathIdStack.value = [currentParentId.value]; loadFiles()
 }
 function goToBreadcrumb(idx) {
-  clearSearch(); currentPath.value = currentPath.value.slice(0, idx + 1)
+  clearSearch(); currentPage.value = 1; currentPath.value = currentPath.value.slice(0, idx + 1)
   pathIdStack.value = pathIdStack.value.slice(0, idx + 2)
   currentParentId.value = pathIdStack.value[pathIdStack.value.length - 1]; loadFiles()
 }
 function goBack() {
   if (pathIdStack.value.length <= 1) return
-  clearSearch(); pathIdStack.value.pop(); currentPath.value.pop()
+  clearSearch(); currentPage.value = 1; pathIdStack.value.pop(); currentPath.value.pop()
   currentParentId.value = pathIdStack.value[pathIdStack.value.length - 1]; loadFiles()
 }
 
@@ -561,7 +599,7 @@ function handleAction(item, cmd) {
     preview: () => handlePreview(item),
     share: () => {
       if (item.is_dir) { ElMessage.warning('暂不支持分享文件夹'); return }
-      shareFileInfo.value = { id: item.id, name: item.name, size: item.size, fileType: getType(item.extension) }
+      shareFileInfo.value = { id: item.id, name: item.name, size: item.size, fileType: getFileType(item.extension) }
       shareDialogVisible.value = true
     },
     star: () => { addFavorite(item.id).then(() => ElMessage.success('已收藏')).catch(() => ElMessage.error('收藏失败')) },
@@ -579,9 +617,6 @@ async function confirmRename() {
   catch { ElMessage.error('重命名失败') }
 }
 
-function isImage(name) {
-  return /\.(jpg|jpeg|png|gif|bmp|webp|svg)$/i.test(name)
-}
 
 async function handlePreview(item, idx) {
   if (!item || item.is_dir) return
@@ -613,18 +648,24 @@ async function navImage(dir) {
   await handlePreview(item, newIdx)
 }
 
-async function handleDownload(item) {
-  try {
-    const blob = await downloadFile(item.id)
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a'); a.href = url; a.download = item.name; a.click()
-    URL.revokeObjectURL(url)
-  } catch { ElMessage.error('下载失败') }
-}
+function handleDownload(item) { doDownload(item) }
 
 async function confirmDelete() {
   deleting.value = true
-  try { await deleteFile(deleteTarget.value.id); ElMessage.success('已移至回收站'); deleteDialogVisible.value = false; loadFiles() }
+  try {
+    if (deleteTarget.value.ids) {
+      // Batch delete
+      for (const fid of deleteTarget.value.ids) {
+        try { await deleteFile(fid) } catch (e) { console.error('Failed to delete file', fid, e) }
+      }
+      ElMessage.success(`已删除 ${deleteTarget.value.ids.length} 个文件`)
+      selectedIds.value = []
+    } else {
+      await deleteFile(deleteTarget.value.id)
+      ElMessage.success('已移至回收站')
+    }
+    deleteDialogVisible.value = false; loadFiles()
+  }
   catch { ElMessage.error('删除失败') }
   finally { deleting.value = false }
 }
@@ -639,7 +680,20 @@ async function handleMove(item) {
 function onFolderSelect(node) { if (!node.disabled) selectedFolder.value = node }
 async function confirmMove() {
   if (!selectedFolder.value) return; moving.value = true
-  try { await moveFile({ fileId: moveTarget.value.id, targetFolderId: selectedFolder.value.id }); ElMessage.success('已移动'); moveDialogVisible.value = false; loadFiles() }
+  try {
+    // Batch move: iterate selected files
+    if (moveTarget.value.ids) {
+      for (const fid of moveTarget.value.ids) {
+        try { await moveFile({ fileId: fid, targetFolderId: selectedFolder.value.id }) } catch (e) { console.error('Failed to move file', fid, e) }
+      }
+      ElMessage.success(`已移动 ${moveTarget.value.ids.length} 个文件`)
+      selectedIds.value = []
+    } else {
+      await moveFile({ fileId: moveTarget.value.id, targetFolderId: selectedFolder.value.id })
+      ElMessage.success('已移动')
+    }
+    moveDialogVisible.value = false; loadFiles()
+  }
   catch { ElMessage.error('移动失败') }
   finally { moving.value = false }
 }
@@ -653,11 +707,56 @@ async function confirmNewFolder() {
   finally { creatingFolder.value = false }
 }
 
-function handleBatchAction(cmd) {
-  if (cmd === 'delete') {
-    deleteTarget.value = { name: `${selectedIds.value.length} 个文件` }
+async function handleBatchAction(cmd) {
+  if (selectedIds.value.length === 0) return
+  if (cmd === 'download') {
+    await batchDownloadHandler()
+  } else if (cmd === 'delete') {
+    deleteTarget.value = { name: `${selectedIds.value.length} 个文件`, ids: selectedIds.value.slice() }
     deleteDialogVisible.value = true
+  } else if (cmd === 'move') {
+    batchMoveHandler()
+  } else if (cmd === 'share') {
+    ElMessage.info('暂不支持批量分享，请逐个文件分享')
   }
+}
+
+async function batchDownloadHandler() {
+  const ids = selectedIds.value.filter(id => {
+    const f = fileList.value.find(x => x.id === id)
+    return f && !f.is_dir
+  })
+  if (ids.length === 0) {
+    ElMessage.warning('请选择文件（不支持下载文件夹）')
+    return
+  }
+  try {
+    const blob = await downloadBatch(ids)
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = ids.length === 1
+      ? (fileList.value.find(f => f.id === ids[0])?.name || 'download')
+      : 'files.zip'
+    a.click()
+    URL.revokeObjectURL(url)
+    ElMessage.success('下载完成')
+  } catch {
+    ElMessage.error('批量下载失败')
+  }
+}
+
+function batchMoveHandler() {
+  if (selectedIds.value.length === 0) return
+  moveTarget.value = { name: `${selectedIds.value.length} 个文件`, id: selectedIds.value[0] }
+  moveDialogVisible.value = true
+  selectedFolder.value = null
+  getFolderTree().then(res => {
+    folderTree.value = (res.list || []).map(n => ({
+      ...n,
+      disabled: selectedIds.value.includes(n.id)
+    }))
+  }).catch(() => ElMessage.error('加载文件夹失败'))
 }
 
 // ── Search ──
@@ -678,25 +777,6 @@ function clearSearch() { searchKeyword.value = ''; isSearching.value = false }
 function handleUploadSuccess() { loadFiles(); store.commit('file/setNeedRefreshStorage', true) }
 
 // ── Helpers ──
-function getType(ext) {
-  if (!ext) return 'other'
-  const e = ext.toLowerCase()
-  if (['jpg','jpeg','png','gif','bmp','webp','svg'].includes(e)) return 'image'
-  if (['mp4','avi','mov','wmv','flv','mkv','webm'].includes(e)) return 'video'
-  if (['mp3','wav','flac','aac','ogg'].includes(e)) return 'audio'
-  if (['pdf','doc','docx','xls','xlsx','ppt','pptx','txt'].includes(e)) return 'document'
-  return 'other'
-}
-function formatTime(d) {
-  if (!d) return ''
-  const now = Date.now(), t = new Date(d).getTime(), diff = now - t
-  const min = Math.floor(diff / 6e4)
-  if (min < 1) return '刚刚'
-  if (min < 60) return min + '分钟前'
-  const hrs = Math.floor(min / 60)
-  if (hrs < 24) return hrs + '小时前'
-  return new Date(d).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })
-}
 
 // ── Init ──
 onMounted(() => {
@@ -856,6 +936,12 @@ watch(() => store.state.file.needRefresh, val => {
 /* ── Files ── */
 .drive-files { flex: 1; overflow: auto; padding: 16px 28px 32px; }
 .drive-files.has-welcome { padding-top: 8px; }
+
+.drive-pagination {
+  display: flex;
+  justify-content: center;
+  padding: 8px 0 4px;
+}
 
 .file-grid {
   display: grid;
@@ -1059,4 +1145,40 @@ watch(() => store.state.file.needRefresh, val => {
 .preview-markdown :deep(img) { max-width: 100%; border-radius: var(--cb-radius); }
 .preview-markdown :deep(a) { color: var(--cb-primary); }
 .preview-markdown :deep(hr) { border: 0; border-top: 1px solid var(--cb-border-light); margin: 1em 0; }
+
+/* ── Shortcuts help ── */
+.shortcuts-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.sc-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--cb-bg-alt);
+  font-size: 13px;
+}
+.sc-item kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 6px;
+  border: 1px solid var(--cb-border);
+  border-radius: 5px;
+  background: var(--cb-surface);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--cb-text-secondary);
+  font-family: 'SFMono-Regular', Consolas, monospace;
+  box-shadow: 0 1px 0 var(--cb-border);
+}
+.sc-item span {
+  color: var(--cb-text);
+  font-weight: 500;
+}
 </style>

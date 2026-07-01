@@ -1,11 +1,12 @@
 import { createStore } from "vuex";
 import file from "@/store/modules/file";
-
+import upload from "@/store/modules/upload";
 
 
 const store =  createStore({
     modules: {
-        file
+        file,
+        upload
     },
     state: {
         userInfo: null,

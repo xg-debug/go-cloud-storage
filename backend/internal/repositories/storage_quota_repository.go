@@ -1,6 +1,8 @@
 package repositories
 
 import (
+	"errors"
+
 	"go-cloud-storage/backend/internal/models"
 	"gorm.io/gorm"
 )
@@ -31,30 +33,29 @@ func (r *storageQuotaRepo) GetByUserID(userID int) (*models.StorageQuota, error)
 	return &quota, nil
 }
 
-// 获取可用的存储空间大小
-func Get() {
-
-}
 
 // Create 创建存储配额记录
 func (r *storageQuotaRepo) Create(quota *models.StorageQuota) error {
 	return r.db.Create(quota).Error
 }
 
-// UpdateUsedSpace 更新已使用空间
-// tx：可选的事务对象。如果为 nil，则使用 r.db
+// UpdateUsedSpace 更新已使用空间（原子操作，防止超配额）
 func (r *storageQuotaRepo) UpdateUsedSpace(tx *gorm.DB, userID int, deltaSize int64) error {
-	db := r.db // 默认使用非事务DB连接
-
+	db := r.db
 	if tx != nil {
-		// 如果传入了事务对象，则使用事务
 		db = tx
 	}
 
-	return db.Model(&models.StorageQuota{}).
-		Where("user_id = ?", userID).
-		Update("used", gorm.Expr("used + ?", deltaSize)).Error
-	// "used + ?" 表示将 used 字段的值增加 deltaSize
+	result := db.Model(&models.StorageQuota{}).
+		Where("user_id = ? AND used + ? <= total", userID, deltaSize).
+		Update("used", gorm.Expr("used + ?", deltaSize))
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return errors.New("存储空间不足")
+	}
+	return nil
 }
 
 // EnsureUserQuota 确保用户有存储配额记录

@@ -10,6 +10,7 @@ import (
 	"go-cloud-storage/backend/infrastructure/minio"
 	"go-cloud-storage/backend/pkg/utils"
 	"go-cloud-storage/backend/internal/repositories"
+	"log/slog"
 	"math/rand"
 	"mime/multipart"
 	"strings"
@@ -26,19 +27,26 @@ type UserService interface {
 	UpdateUserInfo(userId int, username, phone string) error
 	ChangePassword(userId int, oldPassword, newPassword string) error
 	UploadAvatar(ctx context.Context, userId int, file multipart.File, header *multipart.FileHeader) (string, error)
+	ForgotPassword(email string) error
+	ResetPassword(token, newPassword string) error
 }
 
 type userService struct {
-	db               *gorm.DB
-	userRepo         repositories.UserRepository
-	fileRepo         repositories.FileRepository
-	storageQuotaRepo repositories.StorageQuotaRepository
-	minio            *minio.MinioService
+	db           *gorm.DB
+	userRepo     repositories.UserRepository
+	fileRepo     repositories.FileRepository
+	quotaRepo    repositories.StorageQuotaRepository
+	minio        *minio.MinioService
+	emailService EmailSender
+}
+
+type EmailSender interface {
+	SendResetPasswordEmail(to, resetLink string) error
 }
 
 func NewUserService(db *gorm.DB, userRepo repositories.UserRepository, fileRepo repositories.FileRepository,
-	quotaRepo repositories.StorageQuotaRepository, minio *minio.MinioService) UserService {
-	return &userService{db: db, userRepo: userRepo, fileRepo: fileRepo, storageQuotaRepo: quotaRepo, minio: minio}
+	quotaRepo repositories.StorageQuotaRepository, minio *minio.MinioService, emailService EmailSender) UserService {
+	return &userService{db: db, userRepo: userRepo, fileRepo: fileRepo, quotaRepo: quotaRepo, minio: minio, emailService: emailService}
 }
 
 func (s *userService) AuthenticateUser(account, password string) (*models.User, error) {
@@ -116,7 +124,7 @@ func (s *userService) RegisterUser(email, pwd, pwdConfirm string) error {
 			CreatedAt: time.Now(),
 			UpdatedAt: time.Now(),
 		}
-		if err := s.storageQuotaRepo.Create(storage); err != nil {
+		if err := s.quotaRepo.Create(storage); err != nil {
 			return err
 		}
 		return nil
@@ -170,6 +178,61 @@ func (s *userService) ChangePassword(userId int, oldPassword, newPassword string
 	}
 	user.Password = string(hashedPassword)
 	return s.userRepo.Update(user)
+}
+
+func (s *userService) ForgotPassword(email string) error {
+	resetLink := ""
+
+	user, err := s.userRepo.GetUserInfoByEmail(email)
+	if err == nil {
+		token, tokenErr := utils.GenerateResetToken(user.Id, 30*time.Minute)
+		if tokenErr == nil {
+			resetToken := &models.PasswordResetToken{
+				UserId:    user.Id,
+				Token:     token,
+				ExpiresAt: time.Now().Add(30 * time.Minute),
+			}
+			if saveErr := s.userRepo.CreatePasswordResetToken(resetToken); saveErr == nil {
+				resetLink = fmt.Sprintf("http://localhost:8080/reset-password?token=%s", token)
+			}
+		}
+	}
+
+	if resetLink != "" {
+		slog.Info("password reset link", "email", email, "link", resetLink)
+		if sendErr := s.emailService.SendResetPasswordEmail(email, resetLink); sendErr != nil {
+			slog.Warn("failed to send reset email, use link from server log", "error", sendErr)
+		}
+	}
+
+	// 无论邮箱是否存在，都返回成功，防止邮箱枚举攻击
+	return nil
+}
+
+func (s *userService) ResetPassword(token, newPassword string) error {
+	resetToken, err := s.userRepo.GetPasswordResetToken(token)
+	if err != nil {
+		return errors.New("无效的重置链接")
+	}
+
+	if time.Now().After(resetToken.ExpiresAt) {
+		return errors.New("重置链接已过期")
+	}
+
+	if len(newPassword) < 6 {
+		return errors.New("密码至少6个字符")
+	}
+
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return errors.New("密码加密失败")
+	}
+
+	if err := s.userRepo.UpdatePassword(resetToken.UserId, string(hashedPassword)); err != nil {
+		return errors.New("更新密码失败")
+	}
+
+	return s.userRepo.MarkResetTokenUsed(resetToken.Id)
 }
 
 func (s *userService) UploadAvatar(ctx context.Context, userId int, file multipart.File, header *multipart.FileHeader) (string, error) {

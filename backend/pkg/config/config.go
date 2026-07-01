@@ -18,6 +18,7 @@ type Config struct {
 	JWT         JWTConfig       `yaml:"jwt"`
 	Minio       MinioConfig     `yaml:"minio"`
 	Security    SecurityConfig  `yaml:"security"`
+	SMTP        SMTPConfig      `yaml:"smtp"`
 }
 
 type SecurityConfig struct {
@@ -82,6 +83,14 @@ type AliyunOssConfig struct {
 	AccessId     string `yaml:"accessId"`
 	AccessSecret string `yaml:"accessSecret"`
 	Region       string `yaml:"region"`
+}
+
+type SMTPConfig struct {
+	Host     string `yaml:"host"`
+	Port     int    `yaml:"port"`
+	Username string `yaml:"username"`
+	Password string `yaml:"password"`
+	From     string `yaml:"from"`
 }
 
 type MinioConfig struct {

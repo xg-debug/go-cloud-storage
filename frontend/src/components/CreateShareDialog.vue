@@ -63,6 +63,7 @@ import {
   Files
 } from '@element-plus/icons-vue'
 import { createShare } from '@/api/share'
+import { formatSize } from '@/utils/format'
 
 const props = defineProps({
   modelValue: {
@@ -125,15 +126,6 @@ const getFileIconColor = (type) => {
     document: '#06b6d4'
   }
   return colorMap[type] || '#6b7280'
-}
-
-// 格式化文件大小
-const formatSize = (bytes) => {
-  if (bytes === 0) return '0 B'
-  const k = 1024
-  const sizes = ['B', 'KB', 'MB', 'GB']
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
 }
 
 // 创建分享

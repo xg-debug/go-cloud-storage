@@ -120,7 +120,7 @@ async function loadStorage() {
         }))
       }
     }
-  } catch {}
+  } catch { ElMessage.error('加载存储信息失败') }
 }
 
 onMounted(async () => {
@@ -136,7 +136,7 @@ onMounted(async () => {
         timeAgo: timeAgo(s.createdAt)
       }))
     }
-  } catch {}
+  } catch { ElMessage.error('加载分享列表失败') }
 })
 
 watch(() => store.state.file.needRefreshStorage, val => {

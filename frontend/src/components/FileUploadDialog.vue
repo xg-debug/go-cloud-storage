@@ -1,308 +1,170 @@
 <template>
-    <el-dialog
-            v-model="dialogVisible"
-            title="文件上传"
-            width="500px"
-            :close-on-click-modal="false"
-            :before-close="beforeClose"
+  <el-dialog
+    v-model="dialogVisible"
+    title="文件上传"
+    width="520px"
+    :close-on-click-modal="false"
+    destroy-on-close
+  >
+    <!-- Drop zone -->
+    <div
+      class="drop-zone"
+      :class="{ dragging: isDragging }"
+      @dragover.prevent="isDragging = true"
+      @dragleave.prevent="isDragging = false"
+      @drop.prevent="onDrop"
     >
-        <!-- 选择 / 拖拽 -->
-        <div
-                v-if="!pendingFile"
-                class="drop-zone"
-                :class="{ dragging: isDragging }"
-                @dragover.prevent="isDragging = true"
-                @dragleave.prevent="isDragging = false"
-                @drop.prevent="onDrop"
-        >
-            <el-icon :size="48"><Upload/></el-icon>
-            <p>将文件拖拽到此处 或</p>
-            <el-button link @click="triggerSelect">选择本地文件</el-button>
-            <input
-                    type="file"
-                    ref="uploadInputRef"
-                    style="display: none"
-                    @change="onSelectFile"
-            />
+      <el-icon :size="48"><Upload /></el-icon>
+      <p>将文件拖拽到此处 或</p>
+      <el-button type="primary" link @click="triggerSelect">选择本地文件</el-button>
+      <span class="drop-hint">支持多选，大文件自动分片上传</span>
+      <input
+        type="file"
+        ref="uploadInputRef"
+        multiple
+        style="display: none"
+        @change="onSelectFiles"
+      />
+    </div>
+
+    <!-- Queue preview -->
+    <div v-if="pendingFiles.length > 0" class="pending-preview">
+      <div class="pp-head">待添加文件 ({{ pendingFiles.length }})</div>
+      <div class="pp-list">
+        <div v-for="(f, i) in pendingFiles" :key="i" class="pp-item">
+          <el-icon :size="18" color="var(--cb-text-muted)"><Document /></el-icon>
+          <span class="pp-name">{{ f.name }}</span>
+          <span class="pp-size">{{ formatSize(f.size) }}</span>
         </div>
+      </div>
+    </div>
 
-        <!-- 上传进度 -->
-        <div v-else class="upload-progress-info">
-            <h4 style="margin-bottom: 15px;">
-                正在上传：{{ pendingFile.name }}
-            </h4>
-
-            <el-progress :percentage="uploadProgress" />
-        </div>
-
-        <template #footer>
-            <el-button @click="handleClose">关闭</el-button>
-        </template>
-    </el-dialog>
+    <template #footer>
+      <el-button @click="handleClose">关闭</el-button>
+      <el-button type="primary" @click="confirmUpload" :disabled="pendingFiles.length === 0">
+        添加到上传队列 ({{ pendingFiles.length }})
+      </el-button>
+    </template>
+  </el-dialog>
 </template>
 
-
 <script setup>
-import {useStore} from 'vuex'
-import {onMounted, ref, computed, watch} from 'vue'
-import {uploadFile, chunkUploadInit, chunkUploadPart, chunkUploadMerge, chunkUploadCancel} from '@/api/file'
-import {ElMessage} from 'element-plus'
-import {Upload} from "@element-plus/icons-vue";
+import { ref, computed, watch } from 'vue'
+import { useStore } from 'vuex'
+import { ElMessage } from 'element-plus'
+import { Upload, Document } from '@element-plus/icons-vue'
+import { formatSize } from '@/utils/format'
 
 const store = useStore()
 
 const props = defineProps({
-    modelValue: {
-        type: Boolean,
-        required: true
-    },
-    parentId: {
-        type: String,
-        required: true,
-        default: '' // 默认空字符串
-    }
+  modelValue: { type: Boolean, required: true },
+  parentId: { type: String, required: true, default: '' }
 })
 
-// 在子组件内部创建响应式变量，保存当前目录 id
 const currentParentId = ref(props.parentId)
-
-// 父组件(如MyDrive)可能会动态修改 parentId，需要监听 prop
-watch(() => props.parentId, (newVal) => {
-    currentParentId.value = newVal
-    console.log('FileUploadDialog: parentId updated:', newVal)
-})
+watch(() => props.parentId, (v) => { currentParentId.value = v })
 
 const emit = defineEmits(['update:modelValue', 'success'])
 
 const dialogVisible = computed({
-    get: () => props.modelValue,
-    set: val => emit('update:modelValue', val)
+  get: () => props.modelValue,
+  set: val => emit('update:modelValue', val)
 })
 
-
-// 上传相关状态
 const uploadInputRef = ref(null)
-const pendingFile = ref(null)            // 当前上传的文件
-const uploadProgress = ref(0)            // 总进度（大文件/小文件统一）
-const uploading = ref(false)             // 上传中
+const pendingFiles = ref([])
 const isDragging = ref(false)
 
-const CHUNK_SIZE = 10 * 1024 * 1024      // 10MB
-const CHUNK_THRESHOLD = 10 * 1024 * 1024 // 判定大文件
+function triggerSelect() { uploadInputRef.value.click() }
 
-
-const beforeClose = (done) => {
-    if (uploading.value) {
-        ElMessage.warning('文件正在上传，请稍候')
-        return
-    }
-    done()
+function onSelectFiles(e) {
+  const files = Array.from(e.target.files || [])
+  e.target.value = ''
+  addFiles(files)
 }
 
-const handleClose = () => {
-    dialogVisible.value = false
+function onDrop(e) {
+  isDragging.value = false
+  const files = Array.from(e.dataTransfer.files || [])
+  addFiles(files)
 }
 
-/* 打开本地选择文件 */
-const triggerSelect = () => {
-    uploadInputRef.value.click()
+function addFiles(files) {
+  for (const f of files) {
+    if (!f || f.size === 0) continue
+    const exists = pendingFiles.value.find(p => p.name === f.name && p.size === f.size)
+    if (!exists) pendingFiles.value.push(f)
+  }
 }
 
-/* 选择文件 */
-const onSelectFile = (e) => {
-    const file = e.target.files[0]
-    e.target.value = ''
-    if (file) prepareUpload(file)
+function confirmUpload() {
+  if (pendingFiles.value.length === 0) return
+  store.dispatch('upload/addToQueue', {
+    files: pendingFiles.value,
+    parentId: currentParentId.value
+  })
+  ElMessage.success(`已添加 ${pendingFiles.value.length} 个文件到上传队列`)
+  emit('success')
+  dialogVisible.value = false
+  pendingFiles.value = []
 }
 
-/* 拖拽上传 */
-const onDrop = (e) => {
-    const file = e.dataTransfer.files[0]
-    isDragging.value = false
-    if (file) prepareUpload(file)
+function handleClose() {
+  if (pendingFiles.value.length > 0) {
+    pendingFiles.value = []
+  }
+  dialogVisible.value = false
 }
 
-/* 准备上传（区分大小文件） */
-const prepareUpload = (file) => {
-    pendingFile.value = file
-    uploadProgress.value = 0
-
-    if (file.size >= CHUNK_THRESHOLD) {
-        uploadLargeFile(file)
-    } else {
-        uploadSmallFile(file)
-    }
-}
-
-const uploadSmallFile = async (file) => {
-    uploading.value = true
-
-    const fileHash = await calcSHA256(file)
-
-
-    const form = new FormData()
-    form.append('file', file)
-    form.append('parentId', currentParentId.value)
-    form.append("fileHash", fileHash)
-
-    try {
-        await uploadFile(form, (e) => {
-            uploadProgress.value = Math.round((e.loaded * 100) / e.total)
-        })
-
-        finishUpload(true)
-    } catch (err) {
-        finishUpload(false)
-    }
-}
-
-const uploadLargeFile = async (file) => {
-    uploadProgress.value = 0
-
-    try {
-        const fileHash = await calcSHA256(file)
-
-        // 初始化任务
-        const initRes = await chunkUploadInit({
-            fileHash,
-            parentId: currentParentId.value,
-            fileName: file.name,
-            fileSize: file.size,
-        })
-
-        // 秒传成功
-        if (initRes.finished) {
-            uploadProgress.value = 100
-            finishUpload(true)
-            return
-        }
-
-        const uploaded = new Set(initRes.uploadedChunks)
-        const totalChunks = Math.ceil(file.size / CHUNK_SIZE)
-        let finished = uploaded.size
-
-        // 上传每个分片
-        for (let index = 0; index < totalChunks; index++) {
-            if (uploaded.has(index)) {
-                updateProgress(uploaded.size, totalChunks)
-                continue
-            }
-
-            const start = index * CHUNK_SIZE
-            const end = Math.min(file.size, start + CHUNK_SIZE)
-            const chunk = file.slice(start, end)
-
-            const form = new FormData()
-            form.append('fileHash', fileHash)
-            form.append('chunkIndex', index)
-            form.append('chunk', chunk)
-
-            await chunkUploadPart(form, () => {})
-
-            finished++
-            updateProgress(finished, totalChunks)
-        }
-
-        // 合并分片
-        uploadProgress.value = 98
-        await chunkUploadMerge({
-            fileHash,
-            fileName: file.name,
-            fileSize: file.size,
-            parentId: currentParentId.value
-        })
-
-        uploadProgress.value = 100
-        finishUpload(true)
-
-    } catch (err) {
-        console.error(err)
-        finishUpload(false)
-    }
-}
-/* 更新进度条（95% 用于上传部分） */
-const updateProgress = (finished, total) => {
-    uploadProgress.value = Math.round((finished / total) * 95)
-}
-/* -----------------------------------------------------
-   计算 SHA-256（浏览器原生）
------------------------------------------------------- */
-const calcSHA256 = async (file) => {
-    const buffer = await file.arrayBuffer()
-    const hashBuffer = await crypto.subtle.digest('SHA-256', buffer)
-    return Array.from(new Uint8Array(hashBuffer))
-        .map(b => b.toString(16).padStart(2, '0'))
-        .join('')
-}
-
-/* ======================
-   上传结果统一出口
-====================== */
-const finishUpload = (success) => {
-    uploading.value = false
-
-    if (success) {
-        ElMessage.success('上传成功')
-        emit('success')
-        dialogVisible.value = false
-        resetState()
-    } else {
-        ElMessage.error('上传失败,请重新上传')
-        resetState()
-    }
-}
-
-/* -----------------------------------------------------
-   上传对话框关闭时重置
------------------------------------------------------- */
-const resetState = () => {
-    pendingFile.value = null
-    uploadProgress.value = 0
-    isDragging.value = false
-}
 </script>
-
 
 <style scoped>
 .drop-zone {
-    border: 2px dashed var(--cb-line);
-    padding: 48px 24px;
-    text-align: center;
-    cursor: pointer;
-    transition: all var(--cb-transition);
-    border-radius: var(--cb-radius-lg);
-    background: var(--cb-surface-muted);
+  border: 2px dashed var(--cb-line);
+  padding: 48px 24px;
+  text-align: center;
+  cursor: pointer;
+  transition: all var(--cb-transition);
+  border-radius: var(--cb-radius-lg);
+  background: var(--cb-surface-muted);
 }
-
 .drop-zone:hover,
 .drop-zone.dragging {
-    border-color: var(--cb-primary);
-    background: var(--cb-primary-light);
+  border-color: var(--cb-primary);
+  background: var(--cb-primary-light);
 }
+.drop-zone .el-icon { color: var(--cb-primary); }
+.drop-zone p { margin: 16px 0 4px; color: var(--cb-text-soft); font-size: 15px; }
+.drop-hint { font-size: 12px; color: var(--cb-text-muted); display: block; margin-top: 8px; }
 
-.drop-zone .el-icon {
-    color: var(--cb-primary);
+.pending-preview {
+  margin-top: 16px;
+  border: 1px solid var(--cb-border);
+  border-radius: var(--cb-radius);
+  max-height: 200px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
-
-.drop-zone p {
-    margin: 16px 0;
-    color: var(--cb-text-soft);
-    font-size: 15px;
+.pp-head {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--cb-text-secondary);
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--cb-border-light);
+  background: var(--cb-bg-alt);
 }
-
-.upload-progress-info {
-    text-align: center;
-    padding: 20px 0;
+.pp-list { flex: 1; overflow-y: auto; padding: 4px; }
+.pp-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 13px;
 }
-
-.upload-progress-info h4 {
-    color: var(--cb-text);
-    font-weight: 600;
-}
-
-.upload-progress-info p {
-    color: var(--cb-text-soft);
-    margin-top: 12px;
-    font-size: 14px;
-}
+.pp-item:hover { background: var(--cb-bg-alt); }
+.pp-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--cb-text); }
+.pp-size { font-size: 11px; color: var(--cb-text-muted); flex-shrink: 0; }
 </style>

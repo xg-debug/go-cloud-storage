@@ -43,6 +43,11 @@
         <span class="sn-icon"><el-icon :size="20"><Delete /></el-icon></span>
         <span v-show="!collapsed" class="sn-label">回收站</span>
       </router-link>
+
+      <router-link to="/duplicates" class="sn-item" active-class="active" :title="collapsed ? '重复文件' : ''">
+        <span class="sn-icon"><el-icon :size="20"><Files /></el-icon></span>
+        <span v-show="!collapsed" class="sn-label">重复文件</span>
+      </router-link>
     </div>
 
     <!-- Storage card -->
@@ -74,7 +79,7 @@
 <script setup>
 import { ref, onMounted, watch } from 'vue'
 import { useStore } from 'vuex'
-import { Clock, DArrowLeft, DArrowRight, Delete, Folder, Pointer, Share, Star } from '@element-plus/icons-vue'
+import { Clock, DArrowLeft, DArrowRight, Delete, Files, Folder, Pointer, Share, Star } from '@element-plus/icons-vue'
 import { getUserStats } from '@/api/user'
 
 defineProps({ collapsed: Boolean })
@@ -94,7 +99,7 @@ async function loadStorage() {
       totalGB.value = (q.total_gb || 200).toFixed(0)
       percent.value = Math.min(q.used_percent || 0, 100)
     }
-  } catch {}
+  } catch (e) { console.error('Failed to load storage', e) }
 }
 
 onMounted(loadStorage)

@@ -48,6 +48,24 @@ export const refreshToken = () => {
     })
 }
 
+// 忘记密码 - 发送重置邮件
+export const forgotPassword = (data) => {
+    return request({
+        url: '/forgot-password',
+        method: 'post',
+        data
+    })
+}
+
+// 重置密码
+export const resetPassword = (data) => {
+    return request({
+        url: '/reset-password',
+        method: 'post',
+        data
+    })
+}
+
 // 清除所有token
 export const clearToken = () => {
     localStorage.removeItem('token')

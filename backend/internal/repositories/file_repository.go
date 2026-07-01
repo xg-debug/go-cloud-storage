@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"go-cloud-storage/backend/internal/models"
+	"go-cloud-storage/backend/pkg/filetypes"
 	"go-cloud-storage/backend/pkg/utils"
 	"time"
 
@@ -50,6 +51,7 @@ type FileRepository interface {
 	MoveFile(userId int, fileId, newParentId string) error
 
 	GetAllFolders(ctx context.Context, userId int) ([]models.File, error)
+	CountFilesInFolder(ctx context.Context, userId int, folderId string) (int64, error)
 	UpdateParent(ctx context.Context, id, parentId string) error
 	IsSubFolder(ctx context.Context, userId int, sourceId, targetId string) (bool, error)
 	GetAncestorNames(ctx context.Context, fileId string) ([]string, error)
@@ -114,15 +116,8 @@ func (r *fileRepo) GetFilesByCategory(ctx context.Context, userId int, fileType 
 	query := r.db.WithContext(ctx).Where("user_id = ? AND is_dir = ? AND is_deleted = ?", userId, false, false)
 
 	// 根据文件类型筛选
-	switch fileType {
-	case "image":
-		query = query.Where("file_extension IN ('jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'svg')")
-	case "video":
-		query = query.Where("file_extension IN ('mp4', 'avi', 'mov', 'wmv', 'flv', 'webm', 'mkv')")
-	case "audio":
-		query = query.Where("file_extension IN ('mp3', 'wav', 'flac', 'aac', 'ogg', '.m4a')")
-	case "document":
-		query = query.Where("file_extension IN ('txt', 'md', 'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx')")
+	if exts := filetypes.ExtensionsForCategory(fileType); len(exts) > 0 {
+		query = query.Where("file_extension IN ?", exts)
 	}
 
 	// 计算总数
@@ -417,6 +412,15 @@ func (r *fileRepo) GetFileByMD5(userId int, fileMD5 string) (*models.File, error
 	var file models.File
 	err := r.db.Where("file_hash = ? AND is_deleted = ?", fileMD5, false).First(&file).Error
 	return &file, err
+}
+
+// CountFilesInFolder 统计文件夹内的文件数量（不含子文件夹）
+func (r *fileRepo) CountFilesInFolder(ctx context.Context, userId int, folderId string) (int64, error) {
+	var count int64
+	err := r.db.WithContext(ctx).Model(&models.File{}).
+		Where("user_id = ? AND parent_id = ? AND is_deleted = ?", userId, folderId, false).
+		Count(&count).Error
+	return count, err
 }
 
 func (r *fileRepo) GetAllFolders(ctx context.Context, userId int) ([]models.File, error) {

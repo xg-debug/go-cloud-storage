@@ -18,11 +18,7 @@
     </div>
 
     <div class="page-body">
-      <div v-if="!files || files.length === 0" class="cb-empty-state">
-        <div class="empty-icon"><el-icon :size="36"><Clock /></el-icon></div>
-        <h3>暂无最近文件</h3>
-        <p>在所选时间范围内没有访问记录</p>
-      </div>
+      <EmptyState v-if="!files || files.length === 0" :icon="Clock" title="暂无最近文件" description="在所选时间范围内没有访问记录" />
 
       <template v-else>
         <div v-for="(day, idx) in files" :key="idx" class="day-group">
@@ -55,6 +51,7 @@ import { useRouter } from 'vue-router'
 import { ArrowRight, Clock } from '@element-plus/icons-vue'
 import { getRecentFiles } from '@/api/file'
 import { getFileIcon, getFileIconColor } from '@/utils/fileIcon'
+import EmptyState from '@/components/EmptyState.vue'
 
 const router = useRouter()
 const timeRange = ref('week')

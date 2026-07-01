@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"go-cloud-storage/backend/internal/models"
 	"go-cloud-storage/backend/internal/services"
+	"go-cloud-storage/backend/pkg/utils"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -29,7 +30,6 @@ func NewNotificationController(notificationService *services.NotificationService
 func (c *NotificationController) GetNotifications(ctx *gin.Context) {
 	userId := ctx.GetUint("userId")
 
-	// 获取分页参数
 	page, _ := strconv.Atoi(ctx.DefaultQuery("page", "1"))
 	pageSize, _ := strconv.Atoi(ctx.DefaultQuery("page_size", "20"))
 
@@ -42,19 +42,12 @@ func (c *NotificationController) GetNotifications(ctx *gin.Context) {
 
 	result, err := c.notificationService.GetUserNotifications(userId, page, pageSize)
 	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": "获取通知失败",
-			"error":   err.Error(),
-		})
+		slog.Error("获取通知失败", "error", err)
+		utils.Fail(ctx, http.StatusInternalServerError, "获取通知失败")
 		return
 	}
 
-	ctx.JSON(http.StatusOK, gin.H{
-		"code":    200,
-		"message": "获取成功",
-		"data":    result,
-	})
+	utils.Success(ctx, result)
 }
 
 // GetUnreadCount 获取未读通知数量
@@ -63,20 +56,13 @@ func (c *NotificationController) GetUnreadCount(ctx *gin.Context) {
 
 	count, err := c.notificationService.GetUnreadCount(userId)
 	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": "获取未读数量失败",
-			"error":   err.Error(),
-		})
+		slog.Error("获取未读数量失败", "error", err)
+		utils.Fail(ctx, http.StatusInternalServerError, "获取未读数量失败")
 		return
 	}
 
-	ctx.JSON(http.StatusOK, gin.H{
-		"code":    200,
-		"message": "获取成功",
-		"data": gin.H{
-			"unread_count": count,
-		},
+	utils.Success(ctx, gin.H{
+		"unread_count": count,
 	})
 }
 
@@ -87,27 +73,18 @@ func (c *NotificationController) MarkAsRead(ctx *gin.Context) {
 	idStr := ctx.Param("id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
 	if err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{
-			"code":    400,
-			"message": "无效的通知ID",
-		})
+		utils.Fail(ctx, http.StatusBadRequest, "无效的通知ID")
 		return
 	}
 
 	err = c.notificationService.MarkAsRead(uint(id), userId)
 	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": "标记已读失败",
-			"error":   err.Error(),
-		})
+		slog.Error("标记已读失败", "error", err)
+		utils.Fail(ctx, http.StatusInternalServerError, "标记已读失败")
 		return
 	}
 
-	ctx.JSON(http.StatusOK, gin.H{
-		"code":    200,
-		"message": "标记成功",
-	})
+	utils.Success(ctx, nil)
 }
 
 // MarkAllAsRead 标记所有通知为已读
@@ -116,48 +93,33 @@ func (c *NotificationController) MarkAllAsRead(ctx *gin.Context) {
 
 	err := c.notificationService.MarkAllAsRead(userId)
 	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": "标记失败",
-			"error":   err.Error(),
-		})
+		slog.Error("标记失败", "error", err)
+		utils.Fail(ctx, http.StatusInternalServerError, "标记失败")
 		return
 	}
 
-	ctx.JSON(http.StatusOK, gin.H{
-		"code":    200,
-		"message": "全部标记成功",
-	})
+	utils.Success(ctx, nil)
 }
 
 // DeleteNotification 删除通知
 func (c *NotificationController) DeleteNotification(ctx *gin.Context) {
-	userId := ctx.GetUint("user_id")
+	userId := ctx.GetUint("userId")
 
 	idStr := ctx.Param("id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
 	if err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{
-			"code":    400,
-			"message": "无效的通知ID",
-		})
+		utils.Fail(ctx, http.StatusBadRequest, "无效的通知ID")
 		return
 	}
 
 	err = c.notificationService.DeleteNotification(uint(id), userId)
 	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": "删除失败",
-			"error":   err.Error(),
-		})
+		slog.Error("删除通知失败", "error", err)
+		utils.Fail(ctx, http.StatusInternalServerError, "删除失败")
 		return
 	}
 
-	ctx.JSON(http.StatusOK, gin.H{
-		"code":    200,
-		"message": "删除成功",
-	})
+	utils.Success(ctx, nil)
 }
 
 // DeleteAllNotifications 删除所有通知
@@ -166,46 +128,30 @@ func (c *NotificationController) DeleteAllNotifications(ctx *gin.Context) {
 
 	err := c.notificationService.DeleteAllNotifications(userId)
 	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": "删除失败",
-			"error":   err.Error(),
-		})
+		slog.Error("删除所有通知失败", "error", err)
+		utils.Fail(ctx, http.StatusInternalServerError, "删除失败")
 		return
 	}
 
-	ctx.JSON(http.StatusOK, gin.H{
-		"code":    200,
-		"message": "全部删除成功",
-	})
+	utils.Success(ctx, nil)
 }
 
 // CreateNotification 创建通知（管理员接口）
 func (c *NotificationController) CreateNotification(ctx *gin.Context) {
 	var req models.NotificationCreateRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{
-			"code":    400,
-			"message": "参数错误",
-			"error":   err.Error(),
-		})
+		utils.Fail(ctx, http.StatusBadRequest, "参数错误")
 		return
 	}
 
 	err := c.notificationService.CreateNotification(&req)
 	if err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{
-			"code":    500,
-			"message": "创建通知失败",
-			"error":   err.Error(),
-		})
+		slog.Error("创建通知失败", "error", err)
+		utils.Fail(ctx, http.StatusInternalServerError, "创建通知失败")
 		return
 	}
 
-	ctx.JSON(http.StatusOK, gin.H{
-		"code":    200,
-		"message": "创建成功",
-	})
+	utils.Success(ctx, nil)
 }
 
 // NotificationSSE Stream 实时通知 SSE 端点
@@ -221,7 +167,7 @@ func (c *NotificationController) NotificationSSE(ctx *gin.Context) {
 	client := c.sseBroker.Subscribe(userId, clientId)
 	defer c.sseBroker.Unsubscribe(userId, clientId)
 
-	// Send initial heartbeat
+	// Send initial heartbeat (SSE comment line)
 	fmt.Fprintf(ctx.Writer, ": connected\n\n")
 	ctx.Writer.Flush()
 

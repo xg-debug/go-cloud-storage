@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"log/slog"
 	"go-cloud-storage/backend/pkg/utils"
 	"go-cloud-storage/backend/internal/services"
 	"net/http"
@@ -34,7 +35,7 @@ func NewCategoryController(categoryService services.CategoryService, fileService
 func (c *CategoryController) GetFilesByCategory(ctx *gin.Context) {
 	var req GetFilesByCategoryRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.Fail(ctx, http.StatusBadRequest, "参数错误: "+err.Error())
+		utils.Fail(ctx, http.StatusBadRequest, "参数错误")
 		return
 	}
 
@@ -74,7 +75,8 @@ func (c *CategoryController) GetFilesByCategory(ctx *gin.Context) {
 
 	files, total, err := c.categoryService.GetFilesByCategory(userId, req.FileType, req.SortBy, req.SortOrder, req.Page, req.PageSize)
 	if err != nil {
-		utils.Fail(ctx, http.StatusInternalServerError, "获取文件列表失败: "+err.Error())
+		slog.Error("获取文件列表失败", "error", err)
+		utils.Fail(ctx, http.StatusInternalServerError, "获取文件列表失败")
 		return
 	}
 

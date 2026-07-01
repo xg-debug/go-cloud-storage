@@ -1,8 +1,8 @@
 import request from "@/utils/request";
 
 // 加载回收站软删除的文件
-export const loadSoftDeletedFiles = () => {
-    return request.get('/recycle')
+export const loadSoftDeletedFiles = (params) => {
+    return request.get('/recycle', { params })
 }
 
 // 彻底删除回收站中的某个文件

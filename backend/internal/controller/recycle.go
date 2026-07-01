@@ -4,6 +4,7 @@ import (
 	"go-cloud-storage/backend/pkg/utils"
 	"go-cloud-storage/backend/internal/services"
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 )
@@ -19,14 +20,16 @@ func NewRecycleController(service services.RecycleService) *RecycleController {
 // ListRecycleFiles 获取回收站文件列表
 func (rc *RecycleController) ListRecycleFiles(c *gin.Context) {
 	userId := c.GetInt("userId")
-	// 获取回收站记录
-	records, err := rc.recycleService.GetRecycleFiles(userId)
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("pageSize", "20"))
+
+	records, total, err := rc.recycleService.GetRecycleFiles(userId, page, pageSize)
 	if err != nil {
 		utils.Fail(c, http.StatusInternalServerError, "获取回收站删除文件失败")
 		return
 	}
 
-	utils.Success(c, gin.H{"data": records})
+	utils.Success(c, gin.H{"data": records, "total": total})
 }
 
 // DeletePermanent 删除单个文件
@@ -57,7 +60,8 @@ func (rc *RecycleController) DeleteSelected(c *gin.Context) {
 		utils.Fail(c, http.StatusBadRequest, "文件ID列表不能为空")
 		return
 	}
-	if err := rc.recycleService.DeleteSelected(c.Request.Context(), fileIDs); err != nil {
+	userId := c.GetInt("userId")
+	if err := rc.recycleService.DeleteSelected(c.Request.Context(), userId, fileIDs); err != nil {
 		utils.Fail(c, http.StatusInternalServerError, "批量删除失败")
 		return
 	}
@@ -83,7 +87,8 @@ func (rc *RecycleController) RestoreFile(c *gin.Context) {
 		return
 	}
 
-	if err := rc.recycleService.RestoreOne(fileId); err != nil {
+	userId := c.GetInt("userId")
+	if err := rc.recycleService.RestoreOne(userId, fileId); err != nil {
 		utils.Fail(c, http.StatusInternalServerError, "恢复文件失败")
 		return
 	}
@@ -103,7 +108,8 @@ func (rc *RecycleController) RestoreSelected(c *gin.Context) {
 		utils.Fail(c, http.StatusBadRequest, "文件ID列表不能为空")
 		return
 	}
-	if err := rc.recycleService.RestoreSelected(fileIDs); err != nil {
+	userId := c.GetInt("userId")
+	if err := rc.recycleService.RestoreSelected(userId, fileIDs); err != nil {
 		utils.Fail(c, http.StatusInternalServerError, "批量恢复文件失败")
 		return
 	}

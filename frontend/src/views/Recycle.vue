@@ -17,10 +17,7 @@
       <div style="margin-bottom:16px;">
         <el-button type="danger" plain :icon="Delete" size="small" :disabled="!trashItems.length" @click="openClearDialog">清空回收站</el-button>
       </div>
-      <div v-if="!trashItems.length" class="cb-empty-state">
-        <div class="empty-icon"><el-icon :size="36"><Delete /></el-icon></div>
-        <h3>回收站为空</h3><p>删除的文件会显示在这里</p>
-      </div>
+      <EmptyState v-if="!trashItems.length" :icon="Delete" title="回收站为空" description="删除的文件会显示在这里" />
       <div v-else class="cb-table-wrap">
         <el-table :data="trashItems" row-key="fileId" @selection-change="s => selectedItems = s">
           <el-table-column type="selection" width="44" />
@@ -38,6 +35,9 @@
             </template>
           </el-table-column>
         </el-table>
+      <div v-if="totalItems > pageSize" style="display:flex;justify-content:center;margin-top:24px;">
+        <el-pagination background layout="prev, pager, next, total" :total="totalItems" :page-size="pageSize" v-model:current-page="currentPage" @current-change="fetch" />
+      </div>
       </div>
     </div>
 
@@ -65,22 +65,28 @@ import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Delete, Document, Folder, Refresh, Warning } from '@element-plus/icons-vue'
 import { loadSoftDeletedFiles, deletePermanent, deleteSelected, clearRecycleBin, restore, restoreBatch } from '@/api/recycle'
+import EmptyState from '@/components/EmptyState.vue'
 
 const trashItems = ref([])
+const totalItems = ref(0)
+const currentPage = ref(1)
+const pageSize = ref(20)
 const selectedItems = ref([])
 const clearDialogVisible = ref(false)
 const deleteDialogVisible = ref(false)
 const deleteTarget = ref(null)
 const deleting = ref(false)
 
-async function fetch() { try { const r = await loadSoftDeletedFiles(); trashItems.value = r.data || [] } catch {} }
+async function fetch() {
+  try { const r = await loadSoftDeletedFiles({ page: currentPage.value, pageSize: pageSize.value }); trashItems.value = r.data || []; totalItems.value = r.total || 0 } catch { ElMessage.error('加载失败') }
+}
 async function handleRestore() { try { await restoreBatch(selectedItems.value.map(i => i.fileId)); ElMessage.success('已还原'); fetch() } catch { ElMessage.error('失败') } }
-async function handleRestoreOne(r) { try { await restore(r.fileId); ElMessage.success('已还原'); fetch() } catch {} }
-async function handleBatchDelete() { try { await deleteSelected(selectedItems.value.map(i => i.fileId)); ElMessage.success('已删除'); fetch() } catch {} }
+async function handleRestoreOne(r) { try { await restore(r.fileId); ElMessage.success('已还原'); fetch() } catch { ElMessage.error('还原失败') } }
+async function handleBatchDelete() { try { await deleteSelected(selectedItems.value.map(i => i.fileId)); ElMessage.success('已删除'); fetch() } catch { ElMessage.error('删除失败') } }
 function handleDeleteOne(r) { deleteTarget.value = r; deleteDialogVisible.value = true }
-async function confirmDelete() { try { await deletePermanent(deleteTarget.value.fileId); ElMessage.success('已删除'); deleteDialogVisible.value = false; fetch() } catch {} }
+async function confirmDelete() { try { await deletePermanent(deleteTarget.value.fileId); ElMessage.success('已删除'); deleteDialogVisible.value = false; fetch() } catch { ElMessage.error('删除失败') } }
 function openClearDialog() { clearDialogVisible.value = true }
-async function confirmClear() { deleting.value = true; try { await clearRecycleBin(); ElMessage.success('已清空'); clearDialogVisible.value = false; fetch() } catch {} finally { deleting.value = false } }
+async function confirmClear() { deleting.value = true; try { await clearRecycleBin(); ElMessage.success('已清空'); clearDialogVisible.value = false; fetch() } catch { ElMessage.error('清空失败') } finally { deleting.value = false } }
 onMounted(fetch)
 </script>
 

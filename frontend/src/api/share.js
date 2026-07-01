@@ -10,10 +10,11 @@ export const createShare = (data) => {
 }
 
 // 获取用户分享列表
-export const getUserShares = () => {
+export const getUserShares = (params) => {
     return request({
         url: '/share',
-        method: 'get'
+        method: 'get',
+        params
     })
 }
 

@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"errors"
 	"go-cloud-storage/backend/internal/middleware"
 	"go-cloud-storage/backend/pkg/utils"
 	"log/slog"
@@ -34,13 +35,14 @@ func (c *ShareController) CreateShare(ctx *gin.Context) {
 	}
 
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.Fail(ctx, 400, "参数错误: "+err.Error())
+		utils.Fail(ctx, 400, "参数错误")
 		return
 	}
 
 	share, err := c.shareService.CreateShare(userId, req.FileId, req.ExpireDays, req.ExtractionCode)
 	if err != nil {
-		utils.Fail(ctx, 500, err.Error())
+		slog.Error("创建分享失败", "error", err)
+		utils.Fail(ctx, 500, "创建分享失败")
 		return
 	}
 	utils.Success(ctx, share)
@@ -49,13 +51,16 @@ func (c *ShareController) CreateShare(ctx *gin.Context) {
 // GetUserShares 获取用户的分享列表
 func (c *ShareController) GetUserShares(ctx *gin.Context) {
 	userId := ctx.GetInt("userId")
+	page, _ := strconv.Atoi(ctx.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(ctx.DefaultQuery("pageSize", "20"))
 
-	shares, err := c.shareService.GetUserShares(userId)
+	shares, total, err := c.shareService.GetUserShares(userId, page, pageSize)
 	if err != nil {
-		utils.Fail(ctx, 500, err.Error())
+		slog.Error("获取分享列表失败", "error", err)
+		utils.Fail(ctx, 500, "获取分享列表失败")
 		return
 	}
-	utils.Success(ctx, shares)
+	utils.Success(ctx, gin.H{"list": shares, "total": total})
 }
 
 // GetShareDetail 获取分享详情
@@ -70,7 +75,8 @@ func (c *ShareController) GetShareDetail(ctx *gin.Context) {
 
 	share, err := c.shareService.GetShareDetail(userId, shareId)
 	if err != nil {
-		utils.Fail(ctx, 500, err.Error())
+		slog.Error("获取分享详情失败", "error", err)
+		utils.Fail(ctx, 500, "获取分享详情失败")
 		return
 	}
 	utils.Success(ctx, share)
@@ -88,7 +94,8 @@ func (c *ShareController) CancelShare(ctx *gin.Context) {
 
 	err = c.shareService.CancelShare(userId, shareId)
 	if err != nil {
-		utils.Fail(ctx, 500, err.Error())
+		slog.Error("取消分享失败", "error", err)
+		utils.Fail(ctx, 500, "取消分享失败")
 		return
 	}
 
@@ -110,13 +117,14 @@ func (c *ShareController) UpdateShare(ctx *gin.Context) {
 	}
 
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.Fail(ctx, 400, "参数错误: "+err.Error())
+		utils.Fail(ctx, 400, "参数错误")
 		return
 	}
 
 	err = c.shareService.UpdateShare(shareId, userId, req.ExtractionCode, req.ExpireDays)
 	if err != nil {
-		utils.Fail(ctx, 500, err.Error())
+		slog.Error("更新分享失败", "error", err)
+		utils.Fail(ctx, 500, "更新分享失败")
 		return
 	}
 	utils.Success(ctx, nil)
@@ -138,13 +146,18 @@ func (c *ShareController) AccessShare(ctx *gin.Context) {
 	shareInfo, err := c.shareService.AccessShare(shareToken, extractionCode)
 	if err != nil {
 		// 提取码错误时记录失败尝试
-		if err.Error() == "提取码错误" {
+		if errors.Is(err, services.ErrExtractCodeWrong) {
 			if locked := c.bruteProtector.RecordFailed(shareToken, clientIP); locked {
 				slog.Warn("share brute force lock triggered", "token", shareToken, "ip", clientIP)
 			}
 		}
-		slog.Info("share access failed", "token", shareToken, "ip", clientIP, "error", err.Error())
-		utils.Fail(ctx, 400, err.Error())
+		slog.Info("share access failed", "token", shareToken, "ip", clientIP, "error", err)
+		// 仅暴露用户友好的错误，防止内部错误泄露
+		if errors.Is(err, services.ErrExtractCodeWrong) || errors.Is(err, services.ErrShareExpired) || errors.Is(err, services.ErrShareNotFound) {
+			utils.Fail(ctx, 400, err.Error())
+		} else {
+			utils.Fail(ctx, 400, "访问分享失败")
+		}
 		return
 	}
 
@@ -161,7 +174,8 @@ func (c *ShareController) DownloadSharedFile(ctx *gin.Context) {
 
 	downloadURL, err := c.shareService.DownloadSharedFile(shareToken, extractionCode)
 	if err != nil {
-		utils.Fail(ctx, 400, err.Error())
+		slog.Error("下载分享文件失败", "error", err)
+		utils.Fail(ctx, 400, "下载失败")
 		return
 	}
 

@@ -81,6 +81,16 @@ type RecycleBin struct {
 	ExpireAt  time.Time `gorm:"not null;column:expire_at" json:"expire_at"`
 }
 
+// PasswordResetToken 密码重置令牌
+type PasswordResetToken struct {
+	Id        int       `gorm:"primaryKey;autoIncrement" json:"id"`
+	UserId    int       `gorm:"not null" json:"user_id"`
+	Token     string    `gorm:"size:128;unique;not null" json:"token"`
+	ExpiresAt time.Time `gorm:"not null" json:"expires_at"`
+	Used      bool      `gorm:"default:false" json:"used"`
+	CreatedAt time.Time `gorm:"autoCreateTime" json:"created_at"`
+}
+
 // StorageQuota 用户存储配额模型
 type StorageQuota struct {
 	UserID int   `gorm:"primaryKey" json:"user_id"`

@@ -180,3 +180,26 @@ export const chunkUploadCancel = (fileHash) => request({
     method: 'post',
     data: { fileHash }
 })
+
+/**
+ * 批量下载文件（ZIP打包）
+ * @param {string[]} fileIds
+ */
+export const downloadBatch = (fileIds) => {
+    return request({
+        url: '/file/download-batch',
+        method: 'post',
+        data: { fileIds },
+        responseType: 'blob'
+    })
+}
+
+/**
+ * 获取重复文件
+ */
+export const getDuplicateFiles = () => {
+    return request({
+        url: '/file/duplicates',
+        method: 'get'
+    })
+}

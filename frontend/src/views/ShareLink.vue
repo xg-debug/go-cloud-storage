@@ -64,6 +64,7 @@ import { useRoute } from 'vue-router'
 import { accessShare, downloadSharedFile } from '@/api/share'
 import { ElMessage } from 'element-plus'
 import { Loading, CircleCloseFilled, Lock, Download, Document, Picture, VideoCamera, Headset, Files } from '@element-plus/icons-vue'
+import { formatSize } from '@/utils/format'
 
 const route = useRoute()
 const raw = route.params.token || ''
@@ -92,7 +93,7 @@ onMounted(() => {
       needCode.value = false
       loading.value = false
       return
-    } catch {}
+    } catch { console.warn('Cache parse failed, reloading') }
   }
   loadShareInfo()
 })
@@ -130,13 +131,6 @@ const handleDownload = async () => {
   try { const url = await downloadSharedFile(token, extractCode.value); window.open(url, '_blank') }
   catch (err) { ElMessage.error('下载失败：' + (err.message || '未知错误')) }
   finally { downloading.value = false }
-}
-
-const formatSize = (bytes) => {
-  if (!bytes) return '0 B'
-  const k = 1024; const sizes = ['B', 'KB', 'MB', 'GB']
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
 }
 
 const getFileIcon = (type) => ({ image: Picture, video: VideoCamera, audio: Headset, document: Document }[type] || Files)

@@ -77,7 +77,7 @@ func (r *favoriteRepo) Delete(tx *gorm.DB, fileId string) error {
 		// 如果传入了事务对象，则使用事务
 		db = tx
 	}
-	return db.Delete(&models.Favorite{}, "fileId = ?", fileId).Error
+	return db.Where("file_id = ?", fileId).Delete(&models.Favorite{}).Error
 }
 
 func (r *favoriteRepo) DeleteBatch(tx *gorm.DB, fileIds []string) error {

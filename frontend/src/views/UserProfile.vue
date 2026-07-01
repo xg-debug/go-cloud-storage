@@ -27,7 +27,7 @@
             <div class="info-tags">
               <span class="info-tag"><el-icon :size="14"><Message /></el-icon>{{ user?.email }}</span>
               <span v-if="user?.phone" class="info-tag"><el-icon :size="14"><Phone /></el-icon>{{ user?.phone }}</span>
-              <span class="info-tag"><el-icon :size="14"><Clock /></el-icon>{{ user?.registerTime || '未知' }}</span>
+              <span class="info-tag"><el-icon :size="14"><Clock /></el-icon>{{ formatRegisterTime(user?.registerTime) }}</span>
             </div>
           </div>
           <div class="info-stats">
@@ -66,7 +66,7 @@
               <el-input v-model="profileForm.phone" placeholder="绑定手机号" />
             </el-form-item>
             <el-form-item label="注册时间">
-              <el-input :model-value="user?.registerTime || '-'" readonly disabled />
+              <el-input :model-value="formatRegisterTime(user?.registerTime)" readonly disabled />
             </el-form-item>
           </div>
           <div class="form-actions">
@@ -97,7 +97,7 @@
               <div v-for="t in fileTypes" :key="t.type" class="tb-row">
                 <span class="tb-dot" :style="{ background: t.color }"></span>
                 <span class="tb-label">{{ t.name }}</span>
-                <span class="tb-size">{{ t.size || '-' }}</span>
+                <span class="tb-size">{{ t.size_str || '-' }}</span>
                 <div class="tb-track"><div class="tb-fill" :style="{ width: Math.max(t.percentage, 2) + '%', background: t.color }"></div></div>
               </div>
             </div>
@@ -134,6 +134,7 @@ import { useStore } from 'vuex'
 import { ElMessage } from 'element-plus'
 import { Camera, Check, Clock, Key, Lock, Message, Phone, PieChart, User } from '@element-plus/icons-vue'
 import { updateProfile, uploadAvatar, getUserStats, updatePassword } from '@/api/user'
+import { formatSize } from '@/utils/format'
 
 const store = useStore()
 const user = computed(() => store.state.userInfo)
@@ -145,6 +146,22 @@ const storage = reactive({ used: '0', total: '10', pct: 0 })
 const fileStats = reactive({ totalFiles: 0, folders: 0, sharedFiles: 0 })
 const fileTypes = ref([])
 const typeColors = ['#2F6BFF', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6']
+
+function formatRegisterTime(val) {
+  if (!val) return '未知'
+  try {
+    const d = new Date(val)
+    if (isNaN(d.getTime())) return val
+    return d.getFullYear() + '-' +
+      String(d.getMonth() + 1).padStart(2, '0') + '-' +
+      String(d.getDate()).padStart(2, '0') + ' ' +
+      String(d.getHours()).padStart(2, '0') + ':' +
+      String(d.getMinutes()).padStart(2, '0') + ':' +
+      String(d.getSeconds()).padStart(2, '0')
+  } catch {
+    return val
+  }
+}
 
 function storageColor(pct) { if (pct > 90) return 'var(--cb-danger)'; if (pct > 70) return 'var(--cb-warning)'; return 'var(--cb-primary)' }
 
@@ -176,9 +193,9 @@ async function loadStats() {
       fileStats.totalFiles = fs.total_files || 0
       fileStats.folders = fs.folders || 0
       fileStats.sharedFiles = fs.shared_files || 0
-      fileTypes.value = (d.file_type_stats || []).map((t, i) => ({ ...t, color: typeColors[i % typeColors.length] }))
+      fileTypes.value = (d.file_type_stats || []).map((t, i) => ({ ...t, size_str: t.size_str || formatSize(t.size), color: typeColors[i % typeColors.length] }))
     }
-  } catch {}
+  } catch { ElMessage.error('加载统计信息失败') }
 }
 
 function initForm() {
@@ -194,7 +211,7 @@ async function saveProfile() {
     await updateProfile(profileForm)
     store.commit('setUserInfo', { ...user.value, username: profileForm.username, phone: profileForm.phone })
     ElMessage.success('资料已更新')
-  } catch {} finally { saving.value = false }
+  } catch { ElMessage.error('保存失败') } finally { saving.value = false }
 }
 
 async function onAvatarChange(e) {
@@ -206,7 +223,7 @@ async function onAvatarChange(e) {
     const res = await uploadAvatar(fd)
     store.commit('setUserInfo', { ...store.state.userInfo, avatar: res.avatar })
     ElMessage.success('头像已更新')
-  } catch {} finally { e.target.value = '' }
+  } catch { ElMessage.error('上传头像失败') } finally { e.target.value = '' }
 }
 
 async function changePassword() {
@@ -217,7 +234,7 @@ async function changePassword() {
     await updatePassword({ oldPassword: pwdForm.oldPassword, newPassword: pwdForm.newPassword })
     ElMessage.success('密码已修改')
     Object.assign(pwdForm, { oldPassword: '', newPassword: '', confirmPassword: '' })
-  } catch {} finally { changingPwd.value = false }
+  } catch { ElMessage.error('修改密码失败') } finally { changingPwd.value = false }
 }
 
 onMounted(() => { initForm(); loadStats() })

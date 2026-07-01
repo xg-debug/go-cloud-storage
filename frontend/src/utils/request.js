@@ -12,7 +12,7 @@ const service = axios.create({
 // 请求拦截器：每个请求带上 access_token
 service.interceptors.request.use(config => {
     // 免token接口列表
-    const whiteList = ['/login', '/register', '/refresh-token']
+    const whiteList = ['/login', '/register', '/refresh-token', '/forgot-password', '/reset-password']
     if (!whiteList.includes(config.url)) {
         const token = store.state.token || localStorage.getItem('token')
         if (token) {

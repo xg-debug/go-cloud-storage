@@ -29,13 +29,16 @@
           </el-table>
         </div>
       </template>
-      <div v-else class="cb-empty-state"><div class="empty-icon"><el-icon :size="36"><Share /></el-icon></div><h3>暂无分享</h3><p>在文件列表中点击分享按钮即可创建</p></div>
+      <div v-if="totalItems > pageSize" style="display:flex;justify-content:center;margin-top:24px;">
+        <el-pagination background layout="prev, pager, next, total" :total="totalItems" :page-size="pageSize" v-model:current-page="currentPage" @current-change="load" />
+      </div>
+      <EmptyState v-else :icon="Share" title="暂无分享" description="在文件列表中点击分享按钮即可创建" />
     </div>
 
     <el-dialog v-model="detailVisible" title="分享详情" width="500px">
       <div v-if="currentShare" class="d-grid">
         <div class="d-r"><span class="d-l">文件名</span><span class="d-v">{{ currentShare.fileName }}</span></div>
-        <div class="d-r"><span class="d-l">大小</span><span class="d-v">{{ fmtSize(currentShare.fileSize) }}</span></div>
+        <div class="d-r"><span class="d-l">大小</span><span class="d-v">{{ formatSize(currentShare.fileSize) }}</span></div>
         <div class="d-r"><span class="d-l">提取码</span>
           <span v-if="currentShare.extractCode" class="d-code-group">
             <span class="d-code">{{ currentShare.extractCode }}</span>
@@ -68,17 +71,30 @@ import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Close, CopyDocument, Link, Loading, Refresh, Share, View } from '@element-plus/icons-vue'
 import { getUserShares, cancelShare as cancelApi, updateShare } from '@/api/share'
+import EmptyState from '@/components/EmptyState.vue'
+import { formatSize } from '@/utils/format'
 
 const loading = ref(false); const shares = ref([])
+const totalItems = ref(0)
+const currentPage = ref(1)
+const pageSize = ref(10)
 const detailVisible = ref(false); const editVisible = ref(false)
 const currentShare = ref(null); const editing = ref(false)
 const editForm = ref({ extractionCode: '', expireDays: 0 })
 
-const totalShares = computed(() => shares.value.length)
+const totalShares = computed(() => totalItems.value)
 const activeShares = computed(() => shares.value.filter(s => s.status === 'active').length)
-const filteredShares = computed(() => [...shares.value].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)))
+const filteredShares = computed(() => shares.value)
 
-async function load() { loading.value = true; try { const r = await getUserShares(); shares.value = (Array.isArray(r) ? r : []).map(s => ({ ...s, createdAt: s.createdAt ? new Date(s.createdAt) : null })) } catch { ElMessage.error('加载失败') } finally { loading.value = false } }
+async function load() {
+  loading.value = true
+  try {
+    const r = await getUserShares({ page: currentPage.value, pageSize: pageSize.value })
+    const list = r?.list || (Array.isArray(r) ? r : [])
+    shares.value = list.map(s => ({ ...s, createdAt: s.createdAt ? new Date(s.createdAt) : null }))
+    totalItems.value = r?.total || list.length || 0
+  } catch { ElMessage.error('加载失败') } finally { loading.value = false }
+}
 const iconComp = t => ({ image: 'Picture', video: 'VideoCamera', audio: 'Headset', document: 'Document' }[t] || 'Files')
 const iconColor = t => ({ image: '#EC4899', video: '#EF4444', audio: '#8B5CF6', document: '#2F6BFF' }[t] || '#6B7280')
 function buildLink(s) { if (!s) return ''; if (s.shareUrl?.startsWith('http')) return s.shareUrl; if (s.shareToken) return `${location.origin}/s/${s.shareToken}`; return '' }
@@ -86,9 +102,8 @@ async function copyLink(s) { try { await navigator.clipboard.writeText(buildLink
 async function copyText(t) { try { await navigator.clipboard.writeText(t); ElMessage.success('已复制') } catch { ElMessage.error('复制失败') } }
 async function copyFullShare(s) { try { const t = `${buildLink(s)}\n提取码：${s.extractCode}`; await navigator.clipboard.writeText(t); ElMessage.success('已复制链接和提取码') } catch { ElMessage.error('复制失败') } }
 function showDetail(s) { currentShare.value = s; detailVisible.value = true }
-async function cancelShare(s) { try { await cancelApi(s.id); ElMessage.success('已取消'); load() } catch {} }
-async function confirmEdit() { editing.value = true; try { await updateShare(currentShare.value.id, { extraction_code: editForm.value.extractionCode, expire_days: editForm.value.expireDays }); ElMessage.success('已更新'); editVisible.value = false; load() } catch {} finally { editing.value = false } }
-function fmtSize(b) { if (!b) return '-'; const u = ['B','KB','MB','GB']; const k = 1024; const i = Math.floor(Math.log(b) / Math.log(k)); return parseFloat((b / Math.pow(k, i)).toFixed(2)) + ' ' + u[i] }
+async function cancelShare(s) { try { await cancelApi(s.id); ElMessage.success('已取消'); load() } catch { ElMessage.error('取消失败') } }
+async function confirmEdit() { editing.value = true; try { await updateShare(currentShare.value.id, { extraction_code: editForm.value.extractionCode, expire_days: editForm.value.expireDays }); ElMessage.success('已更新'); editVisible.value = false; load() } catch { ElMessage.error('更新失败') } finally { editing.value = false } }
 function fmtDate(d) { if (!d) return '-'; return new Date(d).toLocaleDateString('zh-CN', { year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' }) }
 function refreshData() { load() }
 onMounted(load)

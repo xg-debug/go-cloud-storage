@@ -1,0 +1,334 @@
+package services
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"io"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	"go-cloud-storage/backend/internal/models"
+	"go-cloud-storage/backend/pkg/utils"
+
+	"github.com/gin-gonic/gin"
+	"github.com/minio/minio-go/v7"
+	"gorm.io/gorm"
+)
+
+func (s *fileService) UploadFile(ctx context.Context, r io.Reader, userId int, fileName string, fileSize int64, fileHash string, parentId string) (*models.File, error) {
+	// 秒传检查：基于文件内容哈希跨用户匹配
+	existingFile, err := s.fileRepo.GetFileByMD5(userId, fileHash)
+	if err == nil && existingFile != nil && !existingFile.IsDeleted {
+		// 秒传成功：为当前用户创建新文件记录，复用已有的 MinIO 对象
+		ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(fileName), "."))
+		pid := sql.NullString{String: parentId, Valid: parentId != ""}
+		newFile := &models.File{
+			Id:            utils.NewUUID(),
+			UserId:        userId,
+			Name:          fileName,
+			Size:          existingFile.Size,
+			SizeStr:       existingFile.SizeStr,
+			IsDir:         false,
+			FileExtension: ext,
+			OssObjectKey:  existingFile.OssObjectKey,
+			FileHash:      fileHash,
+			ParentId:      pid,
+			IsDeleted:     false,
+			CreatedAt:     time.Now(),
+			UpdatedAt:     time.Now(),
+			FileURL:       existingFile.FileURL,
+			ThumbnailURL:  existingFile.ThumbnailURL,
+		}
+		err = s.db.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Create(newFile).Error; err != nil {
+				return fmt.Errorf("保存文件记录失败: %w", err)
+			}
+			return s.storageQuotaRepo.UpdateUsedSpace(tx, userId, newFile.Size)
+		})
+		if err != nil {
+			return nil, err
+		}
+		return newFile, nil
+	}
+
+	// 检查文件大小是否超过用户配额
+	availableSpace, err := s.storageQuotaRepo.GetAvailableSpace(userId)
+	if err != nil {
+		return nil, fmt.Errorf("获取可用空间失败: %w", err)
+	}
+	if fileSize > availableSpace {
+		return nil, errors.New("存储空间不足，请升级存储配额")
+	}
+
+	// 上传文件至 MinIO
+	uploadFile, err := s.minio.UploadFromStream(ctx, userId, r, fileName, fileSize, fileHash, parentId)
+	if err != nil {
+		return nil, fmt.Errorf("MinIO 上传失败: %w", err)
+	}
+
+	// 事务处理：入库 + 扣减配额
+	err = s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(uploadFile).Error; err != nil {
+			return fmt.Errorf("保存文件记录失败: %w", err)
+		}
+		return s.storageQuotaRepo.UpdateUsedSpace(tx, userId, fileSize)
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return uploadFile, nil
+}
+
+// InitChunkUpload 初始化分片上传
+// 逻辑：秒传检查 -> 断点续传检查 -> 新建上传任务
+func (s *fileService) InitChunkUpload(ctx context.Context, userId int, fileName, fileHash string, parentId string, fileSize int64) (gin.H, error) {
+	// 1.秒传检查：基于文件内容哈希跨用户匹配
+	existingFile, err := s.fileRepo.GetFileByMD5(userId, fileHash)
+	if err == nil && existingFile != nil && !existingFile.IsDeleted {
+		ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(fileName), "."))
+		pid := sql.NullString{String: parentId, Valid: parentId != ""}
+		newFile := &models.File{
+			Id:            utils.NewUUID(),
+			UserId:        userId,
+			Name:          fileName,
+			Size:          existingFile.Size,
+			SizeStr:       existingFile.SizeStr,
+			IsDir:         false,
+			FileExtension: ext,
+			OssObjectKey:  existingFile.OssObjectKey,
+			FileHash:      fileHash,
+			ParentId:      pid,
+			IsDeleted:     false,
+			CreatedAt:     time.Now(),
+			UpdatedAt:     time.Now(),
+			FileURL:       existingFile.FileURL,
+			ThumbnailURL:  existingFile.ThumbnailURL,
+		}
+		err = s.db.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Create(newFile).Error; err != nil {
+				return fmt.Errorf("保存文件记录失败: %w", err)
+			}
+			return s.storageQuotaRepo.UpdateUsedSpace(tx, userId, newFile.Size)
+		})
+		if err != nil {
+			return nil, err
+		}
+		return gin.H{
+			"finished": true,
+			"file":     newFile,
+			"url":      newFile.FileURL,
+		}, nil
+	}
+	// 2.存储配额检查：如果文件大小超出配额，直接返回错误。
+	remainingSpace, err := s.storageQuotaRepo.GetAvailableSpace(userId)
+	if err != nil {
+		return nil, fmt.Errorf("获取可用空间失败: %w", err)
+	}
+	if fileSize > remainingSpace {
+		return nil, errors.New("存储空间不足，请升级存储配额")
+	}
+
+	// 3.断点续传检查
+	sessionKey := fmt.Sprintf("upload:%d:%s", userId, fileHash)
+
+	// 检查是否有进行中的上传会话
+	sessionExists, err := s.redis.Exists(ctx, sessionKey).Result()
+	uploadId := ""
+	objectKey := ""
+
+	if err != nil || sessionExists == 0 {
+		// 3.1 无会话：初始化新的 MinIO 分片上传
+		objectKey = s.minio.GenerateObjectKey(userId, parentId, fileName)
+		uploadId, err = s.minio.InitiateMultipartUpload(ctx, objectKey)
+		if err != nil {
+			return nil, fmt.Errorf("初始化 OSS 上传失败: %w", err)
+		}
+
+		// 存入 Redis Hash，所有字段共享 24h TTL
+		err = s.redis.HSet(ctx, sessionKey,
+			"id", uploadId,
+			"key", objectKey,
+		).Err()
+		if err != nil {
+			return nil, err
+		}
+		s.redis.Expire(ctx, sessionKey, 24*time.Hour)
+	} else {
+		// 3.2 会话存在：从 Hash 中读取 uploadId 和 objectKey
+		uploadId, _ = s.redis.HGet(ctx, sessionKey, "id").Result()
+		objectKey, _ = s.redis.HGet(ctx, sessionKey, "key").Result()
+	}
+
+	// 4.获取已上传的分片列表（从 Hash 中读取 ETag 字段，排除 id/key/锁字段）
+	allFields, err := s.redis.HGetAll(ctx, sessionKey).Result()
+
+	uploadedChunks := make([]int, 0)
+	if err == nil {
+		for k := range allFields {
+			// 跳过元数据字段和 hash 字段，只提取纯数字 key（分片索引）
+			if k == "id" || k == "key" {
+				continue
+			}
+			if strings.HasSuffix(k, "_hash") {
+				continue
+			}
+			idx, convErr := strconv.Atoi(k)
+			if convErr == nil {
+				uploadedChunks = append(uploadedChunks, idx)
+			}
+		}
+	}
+
+	// 排序，方便前端处理
+	sort.Ints(uploadedChunks)
+
+	return gin.H{
+		"finished":       false,
+		"fileHash":       fileHash,
+		"uploadId":       uploadId,
+		"uploadedChunks": uploadedChunks,
+	}, nil
+}
+
+// UploadChunk 流式上传单个分片，可选 hash 校验
+// expectedChunkHash 为空时跳过校验；不为空时，服务端边上传边计算 SHA-256 并比对
+func (s *fileService) UploadChunk(ctx context.Context, userId int, fileHash string, chunkIndex int, r io.Reader, chunkSize int64, expectedChunkHash string) error {
+	sessionKey := fmt.Sprintf("upload:%d:%s", userId, fileHash)
+
+	uploadId, err := s.redis.HGet(ctx, sessionKey, "id").Result()
+	if err != nil || uploadId == "" {
+		return errors.New("上传任务不存在或已过期，请重新初始化")
+	}
+	objectKey, err := s.redis.HGet(ctx, sessionKey, "key").Result()
+	if err != nil {
+		return errors.New("文件路径丢失")
+	}
+
+	partNumber := chunkIndex + 1
+	partInfo, computedHash, err := s.minio.UploadPart(ctx, objectKey, uploadId, partNumber, r, chunkSize, expectedChunkHash)
+	if err != nil {
+		return fmt.Errorf("OSS 分片上传失败: %w", err)
+	}
+
+	// 幂等存储：ETag + 分片 hash 写入同一个 Hash
+	err = s.redis.HSet(ctx, sessionKey,
+		strconv.Itoa(chunkIndex), partInfo.ETag,
+		strconv.Itoa(chunkIndex)+"_hash", computedHash,
+	).Err()
+	if err != nil {
+		return err
+	}
+
+	// 单次 Expire 刷新整个会话的 TTL
+	s.redis.Expire(ctx, sessionKey, 24*time.Hour)
+	return nil
+}
+
+// MergeChunks 合并分片
+func (s *fileService) MergeChunks(ctx context.Context, userId int, fileHash, fileName, parentId string, fileSize int64) (*models.File, error) {
+	sessionKey := fmt.Sprintf("upload:%d:%s", userId, fileHash)
+
+	// 分布式锁
+	lockKey := fmt.Sprintf("upload:%d:%s:lock", userId, fileHash)
+	locked, err := s.redis.SetNX(ctx, lockKey, "1", 30*time.Second).Result()
+	if err != nil || !locked {
+		return nil, errors.New("合并正在进行中，请稍后重试")
+	}
+	defer s.redis.Del(ctx, lockKey)
+
+	uploadId, err := s.redis.HGet(ctx, sessionKey, "id").Result()
+	if err != nil || uploadId == "" {
+		return nil, errors.New("上传任务失败")
+	}
+	objectKey, err := s.redis.HGet(ctx, sessionKey, "key").Result()
+
+	// 1.获取所有分片 ETag（过滤 id/key 和非数字字段）
+	allFields, err := s.redis.HGetAll(ctx, sessionKey).Result()
+	if err != nil || len(allFields) <= 2 { // 只有 id 和 key，没有分片
+		return nil, errors.New("未找到已上传的分片数据")
+	}
+
+	var completeParts []minio.CompletePart
+	for k, v := range allFields {
+		if k == "id" || k == "key" || strings.HasSuffix(k, "_hash") {
+			continue
+		}
+		idx, convErr := strconv.Atoi(k)
+		if convErr == nil {
+			completeParts = append(completeParts, minio.CompletePart{
+				PartNumber: idx + 1,
+				ETag:       v,
+			})
+		}
+	}
+
+	// 按 PartNumber 升序
+	sort.Slice(completeParts, func(i, j int) bool {
+		return completeParts[i].PartNumber < completeParts[j].PartNumber
+	})
+
+	// 2.调用 MinIO 合并
+	fileURL, thumbnailURL, err := s.minio.CompleteMultipartUpload(ctx, objectKey, uploadId, completeParts)
+	if err != nil {
+		return nil, fmt.Errorf("OSS 合并失败: %w", err)
+	}
+
+	// 3.写入数据库
+	ext := strings.TrimPrefix(filepath.Ext(fileName), ".")
+	pid := sql.NullString{String: parentId, Valid: parentId != ""}
+
+	newFile := &models.File{
+		Id:            utils.NewUUID(),
+		UserId:        userId,
+		Name:          fileName,
+		ParentId:      pid,
+		OssObjectKey:  objectKey,
+		FileHash:      fileHash,
+		FileURL:       fileURL,
+		ThumbnailURL:  thumbnailURL,
+		Size:          fileSize,
+		SizeStr:       utils.FormatFileSize(fileSize),
+		FileExtension: ext,
+		CreatedAt:     time.Now(),
+		UpdatedAt:     time.Now(),
+	}
+
+	err = s.db.Transaction(func(tx *gorm.DB) error {
+		if err := s.fileRepo.CreateFile(newFile); err != nil {
+			return err
+		}
+		return s.storageQuotaRepo.UpdateUsedSpace(tx, userId, fileSize)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// 4.清理：一次 DEL 清掉整个 Hash
+	s.redis.Del(ctx, sessionKey)
+
+	return newFile, nil
+}
+
+// CancelChunkUpload 取消上传
+func (s *fileService) CancelChunkUpload(ctx context.Context, userId int, fileHash string) error {
+	sessionKey := fmt.Sprintf("upload:%d:%s", userId, fileHash)
+
+	uploadId, err := s.redis.HGet(ctx, sessionKey, "id").Result()
+	objectKey, _ := s.redis.HGet(ctx, sessionKey, "key").Result()
+	if err == nil && uploadId != "" && objectKey != "" {
+		_ = s.minio.AbortMultipartUpload(ctx, objectKey, uploadId)
+	}
+
+	// 一次 DEL 清理整个会话
+	s.redis.Del(ctx, sessionKey)
+	return nil
+}
+
+// SearchFiles 搜索文件和文件夹

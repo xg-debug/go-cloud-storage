@@ -34,10 +34,7 @@
           <el-pagination background layout="prev, pager, next, total" :total="totalCount" :page-size="pageSize" v-model:current-page="currentPage" @current-change="fetchFavorites" />
         </div>
       </template>
-      <div v-else class="cb-empty-state">
-        <div class="empty-icon"><el-icon :size="36"><Star /></el-icon></div>
-        <h3>暂无收藏</h3><p>在文件列表中点击收藏按钮即可添加</p>
-      </div>
+      <EmptyState v-else :icon="Star" title="暂无收藏" description="在文件列表中点击收藏按钮即可添加" />
     </div>
   </div>
 </template>
@@ -48,9 +45,11 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Download, Loading, Star, StarFilled, View } from '@element-plus/icons-vue'
 import { getFavorites, cancelFavorite } from '@/api/favorite'
-import { previewFile as previewApi, downloadFile as dlFile } from '@/api/file'
 import { getFileIcon, getFileIconColor } from '@/utils/fileIcon'
+import EmptyState from '@/components/EmptyState.vue'
+import { useFileActions } from '@/composables/useFileActions'
 
+const { download: doDownload, preview } = useFileActions()
 const router = useRouter()
 const loading = ref(false)
 const starredItems = ref([])
@@ -61,24 +60,22 @@ const pageSize = 10
 async function fetchFavorites() {
   loading.value = true
   try { const r = await getFavorites(currentPage.value, pageSize); starredItems.value = r.favoriteList || []; totalCount.value = r.total || 0 }
-  catch {} finally { loading.value = false }
+  catch { ElMessage.error('加载收藏夹失败') } finally { loading.value = false }
 }
 async function unFavorite(row) {
-  try { await cancelFavorite(row.file_id); starredItems.value = starredItems.value.filter(i => i.file_id !== row.file_id); totalCount.value--; ElMessage.success('已取消') }
-  catch { ElMessage.error('操作失败') }
+  try {
+    await cancelFavorite(row.file_id)
+    starredItems.value = starredItems.value.filter(i => i.file_id !== row.file_id)
+    totalCount.value--
+    ElMessage.success('已取消')
+  } catch { ElMessage.error('操作失败') }
 }
 function openFile(row) {
   if (row.is_dir) router.push({ name: 'MyDrive', query: { parentId: row.file_id } })
   else window.open(row.file_url, '_blank')
 }
-async function previewFile(row) {
-  try { const r = await previewApi(row.file_id); if (r?.file_url) window.open(r.file_url, '_blank'); else ElMessage.info('暂不支持预览') }
-  catch { ElMessage.info('暂不支持预览') }
-}
-async function downloadFile(row) {
-  try { const b = await dlFile(row.file_id); const u = URL.createObjectURL(b); const a = document.createElement('a'); a.href = u; a.download = row.name; a.click(); URL.revokeObjectURL(u) }
-  catch { ElMessage.error('下载失败') }
-}
+function previewFile(row) { preview(row) }
+function downloadFile(row) { doDownload(row) }
 onMounted(fetchFavorites)
 </script>
 

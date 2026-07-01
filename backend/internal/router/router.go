@@ -2,6 +2,7 @@ package router
 
 import (
 	"context"
+	"go-cloud-storage/backend/infrastructure/email"
 	"go-cloud-storage/backend/internal/controller"
 	"go-cloud-storage/backend/internal/middleware"
 	"go-cloud-storage/backend/infrastructure/cache"
@@ -50,8 +51,11 @@ func SetUpRouter(db *gorm.DB, minioService *minio.MinioService, rabbitClient *mq
 	storageQuotaRepo := repositories.NewStorageQuotaRepository(db)
 	notificationRepo := repositories.NewNotificationRepository(db)
 
+	// 初始化邮件服务
+	emailService := email.NewEmailService(cfg.SMTP.Host, cfg.SMTP.Port, cfg.SMTP.Username, cfg.SMTP.Password, cfg.SMTP.From)
+
 	// 初始化服务
-	userService := services.NewUserService(db, userRepo, fileRepo, storageQuotaRepo, minioService)
+	userService := services.NewUserService(db, userRepo, fileRepo, storageQuotaRepo, minioService, emailService)
 	fileService := services.NewFileService(db, cache.GetClient(), fileRepo, storageQuotaRepo, minioService)
 	recyclePurgeService := services.NewRecyclePurgeService(db, minioService, recycleRepo, fileRepo, shareRepo, favoriteRepo)
 	recycleService := services.NewRecycleService(db, recycleRepo, fileRepo, recyclePurgeService, rabbitClient)
@@ -123,9 +127,11 @@ func SetUpRouter(db *gorm.DB, minioService *minio.MinioService, rabbitClient *mq
 		file.GET("/recent", fileCtrl.GetRecentFiles)
 		file.POST("/search", fileCtrl.SearchFiles)
 		file.GET("/search/history", fileCtrl.GetSearchHistory)
+		file.GET("/duplicates", fileCtrl.GetDuplicateFiles)
 		file.DELETE("/search/history", fileCtrl.DeleteSearchHistory)
 		file.GET("/download/:fileId", fileCtrl.Download)
 		file.GET("/download-info/:fileId", fileCtrl.GetDownloadInfo)
+		file.POST("/download-batch", fileCtrl.DownloadBatch)
 	}
 
 	favorite := ginServer.Group("favorite")
@@ -197,7 +203,7 @@ func startRecycleCleanupWorkers(recycleService services.RecycleService, rabbitCl
 
 	go func() {
 		if err := rabbitClient.ConsumeExpiredFilePurge(ctx, func(ctx context.Context, fileID string) error {
-			return recycleService.DeleteSelected(ctx, []string{fileID})
+			return recycleService.DeleteSelected(ctx, 0, []string{fileID})
 		}); err != nil {
 			slog.Error("recycle cleanup consumer exited", "error", err)
 		}

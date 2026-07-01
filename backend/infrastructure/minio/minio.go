@@ -244,6 +244,14 @@ func (s *MinioService) DeleteFiles(ctx context.Context, objectKeys []string) err
 	return nil
 }
 
+// CopyObject 复制 MinIO 对象（服务端复制，不下载）
+func (s *MinioService) CopyObject(ctx context.Context, srcKey, dstKey string) error {
+	src := minio.CopySrcOptions{Bucket: s.bucket, Object: srcKey}
+	dst := minio.CopyDestOptions{Bucket: s.bucket, Object: dstKey}
+	_, err := s.client.CopyObject(ctx, dst, src)
+	return err
+}
+
 // InitiateMultipartUpload 初始化分片上传，返回 UploadID
 func (s *MinioService) InitiateMultipartUpload(ctx context.Context, objectKey string) (string, error) {
 	// 使用 Core API
@@ -291,9 +299,11 @@ func (s *MinioService) CompleteMultipartUpload(ctx context.Context, objectKey, u
 
 	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(objectKey), "."))
 
-	thumbnailURL, err := s.generateThumbnailFromObject(ctx, objectKey, ext)
-	if err != nil {
-		return fileURL, "", err
+	thumbnailURL := fileURL
+	if thumb, err := s.generateThumbnailFromObject(ctx, objectKey, ext); err == nil && thumb != "" {
+		thumbnailURL = thumb
+	} else if err != nil {
+		log.Printf("generate thumbnail failed (chunk upload): %v\n", err)
 	}
 
 	return fileURL, thumbnailURL, nil
