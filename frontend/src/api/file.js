@@ -120,7 +120,7 @@ export const moveFile = (data) => {
  * @param {FormData} formData - 包含文件和元数据的 FormData 对象
  * @param {function} onUploadProgress - 进度回调函数
  */
-export const uploadFile = (formData, onUploadProgress) => {
+export const uploadFile = (formData, onUploadProgress, config = {}) => {
     // formData 内部结构应该是:
     // formData.append('file', fileObject);
     // formData.append('parentId', currentParentId);
@@ -130,7 +130,8 @@ export const uploadFile = (formData, onUploadProgress) => {
         data: formData,
         headers: {'Content-Type': 'multipart/form-data'},
         timeout: 2 * 60 * 1000, // 2分钟超时
-        onUploadProgress
+        onUploadProgress,
+        ...config
     })
 }
 
@@ -138,10 +139,11 @@ export const uploadFile = (formData, onUploadProgress) => {
  * 初始化分片上传任务
  * @param {object} data - {fileHash: string, fileName: string, parentId: string, fileSize: int64}
  */
-export const chunkUploadInit = (data) => request({
+export const chunkUploadInit = (data, config = {}) => request({
     url: '/file/chunk/init',
     method: 'post',
-    data
+    data,
+    ...config
 })
 
 /**
@@ -149,13 +151,14 @@ export const chunkUploadInit = (data) => request({
  * @param {FormData} formData - 包含 chunkIndex, fileHash, file Blob 的 FormData
  * @param {function} onUploadProgress - 进度回调函数
  */
-export const chunkUploadPart = (formData, onUploadProgress) => {
+export const chunkUploadPart = (formData, onUploadProgress, config = {}) => {
     return request({
         url: '/file/chunk/upload',
         method: 'post',
         data: formData,
         headers: {'Content-Type': 'multipart/form-data'},
-        onUploadProgress
+        onUploadProgress,
+        ...config
     })
 }
 
@@ -163,11 +166,12 @@ export const chunkUploadPart = (formData, onUploadProgress) => {
  * 完成分片合并
  * @param {object} data - {fileHash: string, fileName: string, parentId: string, fileSize: int64}
  */
-export const chunkUploadMerge = (data) => {
+export const chunkUploadMerge = (data, config = {}) => {
     return request({
         url: '/file/chunk/merge',
         method: 'post',
-        data
+        data,
+        ...config
     })
 }
 
@@ -175,10 +179,11 @@ export const chunkUploadMerge = (data) => {
  * 取消分片上传任务
  * @param {object} data - {fileHash: string}
  */
-export const chunkUploadCancel = (fileHash) => request({
+export const chunkUploadCancel = (fileHash, config = {}) => request({
     url: '/file/chunk/cancel',
     method: 'post',
-    data: { fileHash }
+    data: { fileHash },
+    ...config
 })
 
 /**

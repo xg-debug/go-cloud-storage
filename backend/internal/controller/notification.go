@@ -28,7 +28,7 @@ func NewNotificationController(notificationService *services.NotificationService
 
 // GetNotifications 获取用户通知列表
 func (c *NotificationController) GetNotifications(ctx *gin.Context) {
-	userId := ctx.GetUint("userId")
+	userId := uint(ctx.GetInt("userId"))
 
 	page, _ := strconv.Atoi(ctx.DefaultQuery("page", "1"))
 	pageSize, _ := strconv.Atoi(ctx.DefaultQuery("page_size", "20"))
@@ -52,7 +52,7 @@ func (c *NotificationController) GetNotifications(ctx *gin.Context) {
 
 // GetUnreadCount 获取未读通知数量
 func (c *NotificationController) GetUnreadCount(ctx *gin.Context) {
-	userId := ctx.GetUint("userId")
+	userId := uint(ctx.GetInt("userId"))
 
 	count, err := c.notificationService.GetUnreadCount(userId)
 	if err != nil {
@@ -68,7 +68,7 @@ func (c *NotificationController) GetUnreadCount(ctx *gin.Context) {
 
 // MarkAsRead 标记通知为已读
 func (c *NotificationController) MarkAsRead(ctx *gin.Context) {
-	userId := ctx.GetUint("userId")
+	userId := uint(ctx.GetInt("userId"))
 
 	idStr := ctx.Param("id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
@@ -89,7 +89,7 @@ func (c *NotificationController) MarkAsRead(ctx *gin.Context) {
 
 // MarkAllAsRead 标记所有通知为已读
 func (c *NotificationController) MarkAllAsRead(ctx *gin.Context) {
-	userId := ctx.GetUint("userId")
+	userId := uint(ctx.GetInt("userId"))
 
 	err := c.notificationService.MarkAllAsRead(userId)
 	if err != nil {
@@ -103,7 +103,7 @@ func (c *NotificationController) MarkAllAsRead(ctx *gin.Context) {
 
 // DeleteNotification 删除通知
 func (c *NotificationController) DeleteNotification(ctx *gin.Context) {
-	userId := ctx.GetUint("userId")
+	userId := uint(ctx.GetInt("userId"))
 
 	idStr := ctx.Param("id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
@@ -124,7 +124,7 @@ func (c *NotificationController) DeleteNotification(ctx *gin.Context) {
 
 // DeleteAllNotifications 删除所有通知
 func (c *NotificationController) DeleteAllNotifications(ctx *gin.Context) {
-	userId := ctx.GetUint("userId")
+	userId := uint(ctx.GetInt("userId"))
 
 	err := c.notificationService.DeleteAllNotifications(userId)
 	if err != nil {

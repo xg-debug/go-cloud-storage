@@ -20,6 +20,8 @@ import (
 	"gorm.io/gorm"
 )
 
+const defaultUploadChunkSize int64 = 10 * 1024 * 1024
+
 func (s *fileService) UploadFile(ctx context.Context, r io.Reader, userId int, fileName string, fileSize int64, fileHash string, parentId string) (*models.File, error) {
 	// 秒传检查：基于文件内容哈希跨用户匹配
 	existingFile, err := s.fileRepo.GetFileByMD5(userId, fileHash)
@@ -88,7 +90,17 @@ func (s *fileService) UploadFile(ctx context.Context, r io.Reader, userId int, f
 
 // InitChunkUpload 初始化分片上传
 // 逻辑：秒传检查 -> 断点续传检查 -> 新建上传任务
-func (s *fileService) InitChunkUpload(ctx context.Context, userId int, fileName, fileHash string, parentId string, fileSize int64) (gin.H, error) {
+func (s *fileService) InitChunkUpload(ctx context.Context, userId int, fileName, fileHash string, parentId string, fileSize int64, chunkSize int64, totalChunks int) (gin.H, error) {
+	if chunkSize <= 0 {
+		chunkSize = defaultUploadChunkSize
+	}
+	if totalChunks <= 0 && fileSize > 0 {
+		totalChunks = int((fileSize + chunkSize - 1) / chunkSize)
+	}
+	if fileSize <= 0 || totalChunks <= 0 {
+		return nil, errors.New("文件大小或分片数量无效")
+	}
+
 	// 1.秒传检查：基于文件内容哈希跨用户匹配
 	existingFile, err := s.fileRepo.GetFileByMD5(userId, fileHash)
 	if err == nil && existingFile != nil && !existingFile.IsDeleted {
@@ -155,6 +167,9 @@ func (s *fileService) InitChunkUpload(ctx context.Context, userId int, fileName,
 		err = s.redis.HSet(ctx, sessionKey,
 			"id", uploadId,
 			"key", objectKey,
+			"fileSize", strconv.FormatInt(fileSize, 10),
+			"chunkSize", strconv.FormatInt(chunkSize, 10),
+			"totalChunks", strconv.Itoa(totalChunks),
 		).Err()
 		if err != nil {
 			return nil, err
@@ -164,6 +179,11 @@ func (s *fileService) InitChunkUpload(ctx context.Context, userId int, fileName,
 		// 3.2 会话存在：从 Hash 中读取 uploadId 和 objectKey
 		uploadId, _ = s.redis.HGet(ctx, sessionKey, "id").Result()
 		objectKey, _ = s.redis.HGet(ctx, sessionKey, "key").Result()
+		_ = s.redis.HSet(ctx, sessionKey,
+			"fileSize", strconv.FormatInt(fileSize, 10),
+			"chunkSize", strconv.FormatInt(chunkSize, 10),
+			"totalChunks", strconv.Itoa(totalChunks),
+		).Err()
 	}
 
 	// 4.获取已上传的分片列表（从 Hash 中读取 ETag 字段，排除 id/key/锁字段）
@@ -173,7 +193,7 @@ func (s *fileService) InitChunkUpload(ctx context.Context, userId int, fileName,
 	if err == nil {
 		for k := range allFields {
 			// 跳过元数据字段和 hash 字段，只提取纯数字 key（分片索引）
-			if k == "id" || k == "key" {
+			if k == "id" || k == "key" || k == "fileSize" || k == "chunkSize" || k == "totalChunks" {
 				continue
 			}
 			if strings.HasSuffix(k, "_hash") {
@@ -194,6 +214,8 @@ func (s *fileService) InitChunkUpload(ctx context.Context, userId int, fileName,
 		"fileHash":       fileHash,
 		"uploadId":       uploadId,
 		"uploadedChunks": uploadedChunks,
+		"chunkSize":      chunkSize,
+		"totalChunks":    totalChunks,
 	}, nil
 }
 
@@ -221,6 +243,7 @@ func (s *fileService) UploadChunk(ctx context.Context, userId int, fileHash stri
 	err = s.redis.HSet(ctx, sessionKey,
 		strconv.Itoa(chunkIndex), partInfo.ETag,
 		strconv.Itoa(chunkIndex)+"_hash", computedHash,
+		strconv.Itoa(chunkIndex)+"_size", strconv.FormatInt(chunkSize, 10),
 	).Err()
 	if err != nil {
 		return err
@@ -232,7 +255,7 @@ func (s *fileService) UploadChunk(ctx context.Context, userId int, fileHash stri
 }
 
 // MergeChunks 合并分片
-func (s *fileService) MergeChunks(ctx context.Context, userId int, fileHash, fileName, parentId string, fileSize int64) (*models.File, error) {
+func (s *fileService) MergeChunks(ctx context.Context, userId int, fileHash, fileName, parentId string, fileSize int64, chunkSize int64, totalChunks int) (*models.File, error) {
 	sessionKey := fmt.Sprintf("upload:%d:%s", userId, fileHash)
 
 	// 分布式锁
@@ -248,25 +271,63 @@ func (s *fileService) MergeChunks(ctx context.Context, userId int, fileHash, fil
 		return nil, errors.New("上传任务失败")
 	}
 	objectKey, err := s.redis.HGet(ctx, sessionKey, "key").Result()
+	if err != nil || objectKey == "" {
+		return nil, errors.New("文件路径丢失")
+	}
 
 	// 1.获取所有分片 ETag（过滤 id/key 和非数字字段）
 	allFields, err := s.redis.HGetAll(ctx, sessionKey).Result()
 	if err != nil || len(allFields) <= 2 { // 只有 id 和 key，没有分片
 		return nil, errors.New("未找到已上传的分片数据")
 	}
+	if chunkSize <= 0 {
+		chunkSize, _ = strconv.ParseInt(allFields["chunkSize"], 10, 64)
+	}
+	if chunkSize <= 0 {
+		chunkSize = defaultUploadChunkSize
+	}
+	if totalChunks <= 0 {
+		totalChunks, _ = strconv.Atoi(allFields["totalChunks"])
+	}
+	if totalChunks <= 0 && fileSize > 0 {
+		totalChunks = int((fileSize + chunkSize - 1) / chunkSize)
+	}
+	if totalChunks <= 0 {
+		return nil, errors.New("分片数量无效")
+	}
 
 	var completeParts []minio.CompletePart
+	seenParts := make(map[int]bool, totalChunks)
+	var uploadedSize int64
 	for k, v := range allFields {
-		if k == "id" || k == "key" || strings.HasSuffix(k, "_hash") {
+		if k == "id" || k == "key" || k == "fileSize" || k == "chunkSize" || k == "totalChunks" || strings.HasSuffix(k, "_hash") || strings.HasSuffix(k, "_size") {
 			continue
 		}
 		idx, convErr := strconv.Atoi(k)
 		if convErr == nil {
+			if idx < 0 || idx >= totalChunks {
+				return nil, fmt.Errorf("分片索引越界: %d", idx)
+			}
+			seenParts[idx] = true
+			if partSize, sizeErr := strconv.ParseInt(allFields[strconv.Itoa(idx)+"_size"], 10, 64); sizeErr == nil {
+				uploadedSize += partSize
+			}
 			completeParts = append(completeParts, minio.CompletePart{
 				PartNumber: idx + 1,
 				ETag:       v,
 			})
 		}
+	}
+	if len(completeParts) != totalChunks {
+		return nil, fmt.Errorf("分片不完整: 已上传 %d/%d", len(completeParts), totalChunks)
+	}
+	for idx := 0; idx < totalChunks; idx++ {
+		if !seenParts[idx] {
+			return nil, fmt.Errorf("缺少分片: %d", idx)
+		}
+	}
+	if uploadedSize > 0 && uploadedSize != fileSize {
+		return nil, fmt.Errorf("分片大小校验失败: got=%d expected=%d", uploadedSize, fileSize)
 	}
 
 	// 按 PartNumber 升序
@@ -278,6 +339,27 @@ func (s *fileService) MergeChunks(ctx context.Context, userId int, fileHash, fil
 	fileURL, thumbnailURL, err := s.minio.CompleteMultipartUpload(ctx, objectKey, uploadId, completeParts)
 	if err != nil {
 		return nil, fmt.Errorf("OSS 合并失败: %w", err)
+	}
+	if objectSize, err := s.minio.GetObjectInfo(ctx, objectKey); err != nil {
+		_ = s.minio.DeleteFile(ctx, objectKey)
+		return nil, fmt.Errorf("获取合并对象信息失败: %w", err)
+	} else if objectSize != fileSize {
+		_ = s.minio.DeleteFile(ctx, objectKey)
+		return nil, fmt.Errorf("合并对象大小校验失败: got=%d expected=%d", objectSize, fileSize)
+	}
+	if len(fileHash) == 64 {
+		computedHash, err := s.minio.ComputeObjectSHA256(ctx, objectKey)
+		if err != nil {
+			_ = s.minio.DeleteFile(ctx, objectKey)
+			return nil, fmt.Errorf("计算合并对象hash失败: %w", err)
+		}
+		if !strings.EqualFold(computedHash, fileHash) {
+			_ = s.minio.DeleteFile(ctx, objectKey)
+			return nil, errors.New("合并对象hash校验失败")
+		}
+	}
+	if thumb, err := s.minio.GenerateThumbnailForObject(ctx, objectKey); err == nil && thumb != "" {
+		thumbnailURL = thumb
 	}
 
 	// 3.写入数据库

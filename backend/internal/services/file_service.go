@@ -95,9 +95,9 @@ type FileService interface {
 	SearchFiles(userId int, keyword, parentId string, page, pageSize int) ([]FileItem, int64, error)
 
 	UploadFile(ctx context.Context, r io.Reader, userId int, fileName string, fileSize int64, fileHash string, parentId string) (*models.File, error)
-	InitChunkUpload(ctx context.Context, userId int, filename, fileMd5 string, parentId string, fileSize int64) (gin.H, error)
+	InitChunkUpload(ctx context.Context, userId int, filename, fileMd5 string, parentId string, fileSize int64, chunkSize int64, totalChunks int) (gin.H, error)
 	UploadChunk(ctx context.Context, userId int, fileHash string, chunkIndex int, r io.Reader, chunkSize int64, expectedChunkHash string) error
-	MergeChunks(ctx context.Context, userId int, fileHash, fileName, parentId string, fileSize int64) (*models.File, error)
+	MergeChunks(ctx context.Context, userId int, fileHash, fileName, parentId string, fileSize int64, chunkSize int64, totalChunks int) (*models.File, error)
 	CancelChunkUpload(ctx context.Context, userId int, fileHash string) error
 	GetChunkUploadProgress(ctx context.Context, userId int, fileHash string) (map[string]interface{}, error)
 
@@ -113,7 +113,6 @@ type FileService interface {
 	DownloadBatchZip(ctx context.Context, userId int, fileIds []string) (io.ReadCloser, string, error)
 	GetDuplicateFiles(ctx context.Context, userId int) ([]DuplicateGroup, int64, error)
 }
-
 
 type fileService struct {
 	db               *gorm.DB
@@ -142,7 +141,8 @@ func (s *fileService) GetFiles(ctx context.Context, userId int, parentId string,
 		if file.ParentId.Valid {
 			parentId = file.ParentId.String
 		}
-		var fileCount int64; var cntErr error
+		var fileCount int64
+		var cntErr error
 		if file.IsDir {
 			fileCount, cntErr = s.fileRepo.CountFilesInFolder(ctx, userId, file.Id)
 			if cntErr != nil {
@@ -200,26 +200,18 @@ func (s *fileService) Delete(fileId string, userId int) error {
 	if err != nil {
 		return err
 	}
+	if file.UserId != userId {
+		return errors.New("无权限操作该文件")
+	}
+	if file.IsDeleted {
+		return errors.New("文件已删除")
+	}
 
 	return s.db.Transaction(func(tx *gorm.DB) error {
 		if file.IsDir {
 			deletedIds, err := s.fileRepo.SoftDeleteFolder(tx, userId, fileId)
 			if err != nil {
 				return err
-			}
-
-			// 累加所有被删除文件的大小（不含文件夹本身，文件夹 size=0）
-			var totalSize int64
-			if len(deletedIds) > 0 {
-				deletedFiles, err := s.fileRepo.GetFileByIds(deletedIds)
-				if err != nil {
-					return err
-				}
-				for _, f := range deletedFiles {
-					if !f.IsDir {
-						totalSize += f.Size
-					}
-				}
 			}
 
 			for _, id := range deletedIds {
@@ -229,12 +221,6 @@ func (s *fileService) Delete(fileId string, userId int) error {
 					DeletedAt: time.Now(),
 					ExpireAt:  time.Now().Add(7 * 24 * time.Hour),
 				}); err != nil {
-					return err
-				}
-			}
-
-			if totalSize > 0 {
-				if err := s.storageQuotaRepo.UpdateUsedSpace(tx, userId, -totalSize); err != nil {
 					return err
 				}
 			}
@@ -252,11 +238,6 @@ func (s *fileService) Delete(fileId string, userId int) error {
 				return err
 			}
 
-			if file.Size > 0 {
-				if err := s.storageQuotaRepo.UpdateUsedSpace(tx, userId, -file.Size); err != nil {
-					return err
-				}
-			}
 		}
 
 		return nil

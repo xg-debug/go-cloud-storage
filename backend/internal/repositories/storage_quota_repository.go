@@ -33,22 +33,26 @@ func (r *storageQuotaRepo) GetByUserID(userID int) (*models.StorageQuota, error)
 	return &quota, nil
 }
 
-
 // Create 创建存储配额记录
 func (r *storageQuotaRepo) Create(quota *models.StorageQuota) error {
 	return r.db.Create(quota).Error
 }
 
-// UpdateUsedSpace 更新已使用空间（原子操作，防止超配额）
+// UpdateUsedSpace 更新已使用空间（原子操作，防止超配额；释放空间时向下钳制为 0）
 func (r *storageQuotaRepo) UpdateUsedSpace(tx *gorm.DB, userID int, deltaSize int64) error {
 	db := r.db
 	if tx != nil {
 		db = tx
 	}
 
-	result := db.Model(&models.StorageQuota{}).
-		Where("user_id = ? AND used + ? <= total", userID, deltaSize).
-		Update("used", gorm.Expr("used + ?", deltaSize))
+	query := db.Model(&models.StorageQuota{}).Where("user_id = ?", userID)
+	updateExpr := gorm.Expr("GREATEST(used + ?, 0)", deltaSize)
+	if deltaSize > 0 {
+		query = query.Where("used + ? <= total", deltaSize)
+		updateExpr = gorm.Expr("used + ?", deltaSize)
+	}
+
+	result := query.Update("used", updateExpr)
 	if result.Error != nil {
 		return result.Error
 	}

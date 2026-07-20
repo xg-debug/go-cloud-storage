@@ -15,6 +15,7 @@ front/node_modules/
 # Build output
 front/dist/
 backend/tmp/
+backend/.cache/
 
 # Environment & secrets
 .env

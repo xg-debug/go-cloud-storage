@@ -2,14 +2,14 @@ package router
 
 import (
 	"context"
-	"go-cloud-storage/backend/infrastructure/email"
-	"go-cloud-storage/backend/internal/controller"
-	"go-cloud-storage/backend/internal/middleware"
 	"go-cloud-storage/backend/infrastructure/cache"
-	"go-cloud-storage/backend/pkg/config"
+	"go-cloud-storage/backend/infrastructure/email"
 	"go-cloud-storage/backend/infrastructure/minio"
 	"go-cloud-storage/backend/infrastructure/mq"
+	"go-cloud-storage/backend/internal/controller"
+	"go-cloud-storage/backend/internal/middleware"
 	"go-cloud-storage/backend/internal/repositories"
+	"go-cloud-storage/backend/pkg/config"
 	"log/slog"
 	"time"
 
@@ -57,7 +57,7 @@ func SetUpRouter(db *gorm.DB, minioService *minio.MinioService, rabbitClient *mq
 	// 初始化服务
 	userService := services.NewUserService(db, userRepo, fileRepo, storageQuotaRepo, minioService, emailService)
 	fileService := services.NewFileService(db, cache.GetClient(), fileRepo, storageQuotaRepo, minioService)
-	recyclePurgeService := services.NewRecyclePurgeService(db, minioService, recycleRepo, fileRepo, shareRepo, favoriteRepo)
+	recyclePurgeService := services.NewRecyclePurgeService(db, minioService, recycleRepo, fileRepo, shareRepo, favoriteRepo, storageQuotaRepo)
 	recycleService := services.NewRecycleService(db, recycleRepo, fileRepo, recyclePurgeService, rabbitClient)
 	favoriteService := services.NewFavoriteService(favoriteRepo, fileRepo, fileService)
 	categoryService := services.NewCategoryService(db, fileRepo)
@@ -85,6 +85,8 @@ func SetUpRouter(db *gorm.DB, minioService *minio.MinioService, rabbitClient *mq
 	ginServer.POST("/login", loginCtrl.Login)
 	ginServer.POST("/register", loginCtrl.Register)
 	ginServer.POST("/refresh-token", loginCtrl.RefreshToken)
+	ginServer.POST("/forgot-password", userCtrl.ForgotPassword)
+	ginServer.POST("/reset-password", userCtrl.ResetPassword)
 
 	authGroup := ginServer.Group("")
 	authGroup.Use(middleware.JWTAuthMiddleware())
@@ -184,7 +186,6 @@ func SetUpRouter(db *gorm.DB, minioService *minio.MinioService, rabbitClient *mq
 		notification.PUT("/read-all", notificationCtrl.MarkAllAsRead)
 		notification.DELETE("/:id", notificationCtrl.DeleteNotification)
 		notification.DELETE("/all", notificationCtrl.DeleteAllNotifications)
-		notification.POST("", notificationCtrl.CreateNotification)
 	}
 
 	// 公开分享访问路由（无需认证）

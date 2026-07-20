@@ -194,6 +194,20 @@ func (s *MinioService) GetObjectInfo(ctx context.Context, objectKey string) (int
 	return info.Size, nil
 }
 
+func (s *MinioService) ComputeObjectSHA256(ctx context.Context, objectKey string) (string, error) {
+	obj, err := s.client.GetObject(ctx, s.bucket, objectKey, minio.GetObjectOptions{})
+	if err != nil {
+		return "", err
+	}
+	defer obj.Close()
+
+	hash := sha256.New()
+	if _, err := io.Copy(hash, obj); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%x", hash.Sum(nil)), nil
+}
+
 func (s *MinioService) DownloadFile(ctx context.Context, objectKey string) (io.ReadCloser, error) {
 	obj, err := s.client.GetObject(ctx, s.bucket, objectKey, minio.GetObjectOptions{})
 	if err != nil {
@@ -296,17 +310,18 @@ func (s *MinioService) CompleteMultipartUpload(ctx context.Context, objectKey, u
 	}
 	// 生成最终的文件 URL
 	fileURL := s.GenerateObjectURL(uploadInfo.Key)
+	return fileURL, fileURL, nil
+}
 
+func (s *MinioService) GenerateThumbnailForObject(ctx context.Context, objectKey string) (string, error) {
 	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(objectKey), "."))
-
-	thumbnailURL := fileURL
 	if thumb, err := s.generateThumbnailFromObject(ctx, objectKey, ext); err == nil && thumb != "" {
-		thumbnailURL = thumb
+		return thumb, nil
 	} else if err != nil {
 		log.Printf("generate thumbnail failed (chunk upload): %v\n", err)
+		return "", err
 	}
-
-	return fileURL, thumbnailURL, nil
+	return "", nil
 }
 
 // AbortMultipartUpload 取消分片上传

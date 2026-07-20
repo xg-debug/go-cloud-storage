@@ -7,8 +7,8 @@ import (
 	"go-cloud-storage/backend/internal/services"
 	"go-cloud-storage/backend/pkg/config"
 	"go-cloud-storage/backend/pkg/utils"
-	"log/slog"
 	"io"
+	"log/slog"
 	"mime"
 	"net/http"
 	"net/url"
@@ -22,8 +22,8 @@ import (
 )
 
 type FileController struct {
-	fileService   services.FileService
-	securityCfg   config.SecurityConfig
+	fileService services.FileService
+	securityCfg config.SecurityConfig
 }
 
 func NewFileController(service services.FileService, cfg *config.Config) *FileController {
@@ -270,10 +270,12 @@ func (c *FileController) SearchFiles(ctx *gin.Context) {
 // ChunkUploadInit 初始化分片上传
 func (c *FileController) ChunkUploadInit(ctx *gin.Context) {
 	var req struct {
-		FileName string `json:"fileName" binding:"required"`
-		FileHash string `json:"fileHash" binding:"required"`
-		FileSize int64  `json:"fileSize" binding:"required"`
-		ParentId string `json:"parentId"`
+		FileName    string `json:"fileName" binding:"required"`
+		FileHash    string `json:"fileHash" binding:"required"`
+		FileSize    int64  `json:"fileSize" binding:"required"`
+		ParentId    string `json:"parentId"`
+		ChunkSize   int64  `json:"chunkSize"`
+		TotalChunks int    `json:"totalChunks"`
 	}
 	if err := ctx.ShouldBindJSON(&req); err != nil {
 		utils.Fail(ctx, http.StatusBadRequest, "参数错误")
@@ -296,7 +298,7 @@ func (c *FileController) ChunkUploadInit(ctx *gin.Context) {
 	}
 
 	// 调用 Service 层逻辑
-	resp, err := c.fileService.InitChunkUpload(ctx, userId, req.FileName, req.FileHash, req.ParentId, req.FileSize)
+	resp, err := c.fileService.InitChunkUpload(ctx, userId, req.FileName, req.FileHash, req.ParentId, req.FileSize, req.ChunkSize, req.TotalChunks)
 	if err != nil {
 		slog.Error("初始化上传失败", "error", err)
 		utils.Fail(ctx, http.StatusInternalServerError, "初始化上传失败")
@@ -319,7 +321,11 @@ func (c *FileController) ChunkUploadPart(ctx *gin.Context) {
 		return
 	}
 
-	chunkIndex, _ := strconv.Atoi(chunkIndexStr)
+	chunkIndex, err := strconv.Atoi(chunkIndexStr)
+	if err != nil || chunkIndex < 0 {
+		utils.Fail(ctx, http.StatusBadRequest, "无效的分片索引")
+		return
+	}
 	userId := ctx.GetInt("userId")
 
 	fileHeader, err := ctx.FormFile("chunk")
@@ -339,7 +345,7 @@ func (c *FileController) ChunkUploadPart(ctx *gin.Context) {
 	// chunkHash 非空时，服务端会边上传边校验 hash
 	err = c.fileService.UploadChunk(ctx, userId, fileHash, chunkIndex, srcfile, fileHeader.Size, chunkHash)
 	if err != nil {
-			slog.Error("分片上传失败", "error", err)
+		slog.Error("分片上传失败", "error", err)
 		utils.Fail(ctx, http.StatusInternalServerError, "分片上传失败")
 		return
 	}
@@ -350,10 +356,12 @@ func (c *FileController) ChunkUploadPart(ctx *gin.Context) {
 // ChunkUploadMerge 合并分片
 func (c *FileController) ChunkUploadMerge(ctx *gin.Context) {
 	var req struct {
-		FileHash string `json:"fileHash" binding:"required"`
-		FileName string `json:"fileName" binding:"required"`
-		FileSize int64  `json:"fileSize" binding:"required"`
-		ParentId string `json:"parentId"`
+		FileHash    string `json:"fileHash" binding:"required"`
+		FileName    string `json:"fileName" binding:"required"`
+		FileSize    int64  `json:"fileSize" binding:"required"`
+		ParentId    string `json:"parentId"`
+		ChunkSize   int64  `json:"chunkSize"`
+		TotalChunks int    `json:"totalChunks"`
 	}
 	if err := ctx.ShouldBindJSON(&req); err != nil {
 		utils.Fail(ctx, http.StatusBadRequest, "参数错误")
@@ -363,9 +371,9 @@ func (c *FileController) ChunkUploadMerge(ctx *gin.Context) {
 
 	// 调用 Service 层逻辑
 	// Service 层逻辑：从 Redis 取出所有 Parts (ETags) -> 调用 MinIO CompleteMultipartUpload -> 写入数据库 -> 清理 Redis
-	file, err := c.fileService.MergeChunks(ctx, userId, req.FileHash, req.FileName, req.ParentId, req.FileSize)
+	file, err := c.fileService.MergeChunks(ctx, userId, req.FileHash, req.FileName, req.ParentId, req.FileSize, req.ChunkSize, req.TotalChunks)
 	if err != nil {
-			slog.Error("合并文件失败", "error", err)
+		slog.Error("合并文件失败", "error", err)
 		utils.Fail(ctx, http.StatusInternalServerError, "合并文件失败")
 		return
 	}
@@ -384,7 +392,7 @@ func (c *FileController) GetChunkUploadProgress(ctx *gin.Context) {
 
 	progress, err := c.fileService.GetChunkUploadProgress(ctx, userId, fileHash)
 	if err != nil {
-			slog.Error("查询进度失败", "error", err)
+		slog.Error("查询进度失败", "error", err)
 		utils.Fail(ctx, http.StatusInternalServerError, "查询进度失败")
 		return
 	}
@@ -405,7 +413,7 @@ func (c *FileController) ChunkUploadCancel(ctx *gin.Context) {
 	// Service 层逻辑：获取 UploadID -> 调用 MinIO AbortMultipartUpload -> 清理 Redis
 	err := c.fileService.CancelChunkUpload(ctx, userId, req.FileHash)
 	if err != nil {
-			slog.Error("取消上传失败", "error", err)
+		slog.Error("取消上传失败", "error", err)
 		utils.Fail(ctx, http.StatusInternalServerError, "取消上传失败")
 		return
 	}
@@ -418,7 +426,7 @@ func (c *FileController) GetFolderTree(ctx *gin.Context) {
 
 	tree, err := c.fileService.GetFolderTree(ctx, userId)
 	if err != nil {
-			slog.Error("获取文件夹树失败", "error", err)
+		slog.Error("获取文件夹树失败", "error", err)
 		utils.Fail(ctx, http.StatusInternalServerError, "获取文件夹树失败")
 		return
 	}
@@ -441,7 +449,7 @@ func (c *FileController) MoveFile(ctx *gin.Context) {
 	userId := ctx.GetInt("userId")
 
 	if err := c.fileService.MoveFile(ctx, userId, req.FileId, req.TargetFolderId); err != nil {
-			slog.Error("移动文件失败", "error", err)
+		slog.Error("移动文件失败", "error", err)
 		utils.Fail(ctx, http.StatusInternalServerError, "移动文件失败")
 		return
 	}
@@ -562,7 +570,7 @@ func (c *FileController) CopyFile(ctx *gin.Context) {
 	}
 	userId := ctx.GetInt("userId")
 	if err := c.fileService.CopyFile(ctx, userId, req.FileId, req.TargetFolderId); err != nil {
-			slog.Error("复制文件失败", "error", err)
+		slog.Error("复制文件失败", "error", err)
 		utils.Fail(ctx, http.StatusInternalServerError, "复制文件失败")
 		return
 	}

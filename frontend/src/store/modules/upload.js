@@ -1,8 +1,10 @@
 import { uploadFile, chunkUploadInit, chunkUploadPart, chunkUploadMerge, chunkUploadCancel } from '@/api/file'
+import { sha256File } from '@/utils/sha256'
 
 const CHUNK_SIZE = 10 * 1024 * 1024
 const CHUNK_THRESHOLD = 10 * 1024 * 1024
 const MAX_CONCURRENT_CHUNKS = 3
+const HASH_CHUNK_SIZE = 4 * 1024 * 1024
 
 let taskIdCounter = 0
 
@@ -10,12 +12,24 @@ function genId() {
   return `upload_${Date.now()}_${++taskIdCounter}`
 }
 
-async function calcSHA256(file) {
-  const buffer = await file.arrayBuffer()
-  const hashBuffer = await crypto.subtle.digest('SHA-256', buffer)
-  return Array.from(new Uint8Array(hashBuffer))
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('')
+function isAbortError(err) {
+  return err?.name === 'AbortError' || err?.name === 'CanceledError' || err?.code === 'ERR_CANCELED' || err?.message === 'cancelled' || err?.message === 'canceled'
+}
+
+function getAbortSignal(state, taskId) {
+  return state.tasks.find(t => t.id === taskId)?.cancelController?.signal
+}
+
+async function calcSHA256(file, state, taskId, commit, progressStart = 0, progressSpan = 5) {
+  return sha256File(file, {
+    chunkSize: HASH_CHUNK_SIZE,
+    signal: getAbortSignal(state, taskId),
+    onProgress: ratio => {
+      const t = state.tasks.find(t => t.id === taskId)
+      if (!t || t.status === 'paused' || t.status === 'cancelled') return
+      commit('UPDATE_TASK', { id: taskId, updates: { progress: Math.round(progressStart + ratio * progressSpan) } })
+    }
+  })
 }
 
 export default {
@@ -108,7 +122,10 @@ export default {
         }
         commit('UPDATE_TASK', { id: taskId, updates: { status: 'completed', progress: 100, file: null } })
       } catch (err) {
-        if (err?.name === 'AbortError' || err?.message === 'cancelled') {
+        const latestTask = state.tasks.find(t => t.id === taskId)
+        if (latestTask?.status === 'paused') {
+          commit('UPDATE_TASK', { id: taskId, updates: { cancelController: null } })
+        } else if (isAbortError(err)) {
           commit('UPDATE_TASK', { id: taskId, updates: { status: 'cancelled' } })
         } else if (err?.message === 'paused') {
           // status already set by pauseTask
@@ -124,7 +141,7 @@ export default {
       const task = state.tasks.find(t => t.id === taskId)
       if (!task) return
 
-      const fileHash = await calcSHA256(task.file)
+      const fileHash = await calcSHA256(task.file, state, taskId, commit, 0, 5)
       commit('UPDATE_TASK', { id: taskId, updates: { fileHash } })
 
       await new Promise((resolve, reject) => {
@@ -136,9 +153,9 @@ export default {
         uploadFile(form, (e) => {
           const t = state.tasks.find(t => t.id === taskId)
           if (!t || t.status === 'paused' || t.status === 'cancelled') return
-          const pct = Math.round((e.loaded * 100) / e.total)
+          const pct = 5 + Math.round((e.loaded * 95) / e.total)
           commit('UPDATE_TASK', { id: taskId, updates: { progress: pct } })
-        }).then(() => resolve()).catch(reject)
+        }, { signal: getAbortSignal(state, taskId) }).then(() => resolve()).catch(reject)
       })
     },
 
@@ -146,7 +163,7 @@ export default {
       let task = state.tasks.find(t => t.id === taskId)
       if (!task) return
 
-      const fileHash = await calcSHA256(task.file)
+      const fileHash = await calcSHA256(task.file, state, taskId, commit, 0, 5)
       commit('UPDATE_TASK', { id: taskId, updates: { fileHash } })
 
       // Check for pause/cancel
@@ -164,8 +181,10 @@ export default {
         fileHash,
         parentId: task.parentId,
         fileName: task.fileName,
-        fileSize: task.fileSize
-      })
+        fileSize: task.fileSize,
+        chunkSize: CHUNK_SIZE,
+        totalChunks: Math.ceil(task.fileSize / CHUNK_SIZE)
+      }, { signal: getAbortSignal(state, taskId) })
 
       checkState()
 
@@ -186,17 +205,18 @@ export default {
 
       let finishedCount = uploaded.size
       const updateProgress = () => {
-        commit('UPDATE_TASK', { id: taskId, updates: { progress: Math.round((finishedCount / totalChunks) * 95) } })
+        commit('UPDATE_TASK', { id: taskId, updates: { progress: 5 + Math.round((finishedCount / totalChunks) * 90) } })
       }
       updateProgress()
 
       // Upload with concurrency limit
       let activeCount = 0
       let chunkIdx = 0
+      let stopped = false
 
       await new Promise((resolve, reject) => {
         const uploadNext = async () => {
-          while (chunkIdx < pendingChunks.length && activeCount < MAX_CONCURRENT_CHUNKS) {
+          while (!stopped && chunkIdx < pendingChunks.length && activeCount < MAX_CONCURRENT_CHUNKS) {
             const idx = pendingChunks[chunkIdx++]
             activeCount++
 
@@ -212,19 +232,20 @@ export default {
                 form.append('chunkIndex', idx)
                 form.append('chunk', chunk)
 
-                await chunkUploadPart(form, () => {})
+                await chunkUploadPart(form, () => {}, { signal: getAbortSignal(state, taskId) })
 
                 checkState()
                 finishedCount++
                 updateProgress()
                 commit('UPDATE_TASK', { id: taskId, updates: { uploadedChunks: [...state.tasks.find(t => t.id === taskId).uploadedChunks, idx] } })
               } catch (e) {
+                stopped = true
                 reject(e)
                 return
               } finally {
                 activeCount--
-                if (chunkIdx < pendingChunks.length) uploadNext()
-                else if (activeCount === 0) resolve()
+                if (!stopped && chunkIdx < pendingChunks.length) uploadNext()
+                else if (activeCount === 0 && !stopped) resolve()
               }
             }
             doChunk()
@@ -241,8 +262,10 @@ export default {
         fileHash,
         fileName: task.fileName,
         fileSize: task.fileSize,
-        parentId: task.parentId
-      })
+        parentId: task.parentId,
+        totalChunks,
+        chunkSize: CHUNK_SIZE
+      }, { signal: getAbortSignal(state, taskId) })
 
       checkState()
       commit('UPDATE_TASK', { id: taskId, updates: { progress: 100 } })
@@ -252,6 +275,9 @@ export default {
       const task = state.tasks.find(t => t.id === taskId)
       if (!task || task.status !== 'uploading') return
       commit('UPDATE_TASK', { id: taskId, updates: { status: 'paused' } })
+      if (task.cancelController) {
+        task.cancelController.abort()
+      }
     },
 
     resumeTask({ commit, state, dispatch }, taskId) {

@@ -85,7 +85,7 @@ func (s *fileService) GetChunkUploadProgress(ctx context.Context, userId int, fi
 	uploadedChunks := make([]int, 0)
 	if err == nil {
 		for k := range allFields {
-			if k == "id" || k == "key" || strings.HasSuffix(k, "_hash") {
+			if k == "id" || k == "key" || k == "fileSize" || k == "chunkSize" || k == "totalChunks" || strings.HasSuffix(k, "_hash") || strings.HasSuffix(k, "_size") {
 				continue
 			}
 			idx, convErr := strconv.Atoi(k)
@@ -111,8 +111,8 @@ func (s *fileService) GetDownloadInfo(ctx context.Context, userId int, fileId st
 	}
 
 	const (
-		midChunkSize       int64 = 5 * 1024 * 1024   // 中等文件 5MB/块
-		largeChunkSize     int64 = 10 * 1024 * 1024  // 大文件 10MB/块
+		midChunkSize       int64 = 5 * 1024 * 1024  // 中等文件 5MB/块
+		largeChunkSize     int64 = 10 * 1024 * 1024 // 大文件 10MB/块
 		presignedThreshold int64 = 100 * 1024 * 1024
 	)
 
@@ -153,30 +153,13 @@ func (s *fileService) DownloadBatchZip(ctx context.Context, userId int, fileIds 
 		return nil, "", errors.New("未选择文件")
 	}
 
-	// Get all files belonging to user
-	files, err := s.fileRepo.GetFileByIds(fileIds)
+	files, err := s.getBatchDownloadFiles(ctx, userId, fileIds)
 	if err != nil {
 		return nil, "", fmt.Errorf("获取文件信息失败: %w", err)
 	}
 
-	// Collect non-directory files owned by user
-	var toDownload []*models.File
-	var names = make(map[string]int)
-	for i := range files {
-		f := &files[i]
-		if f.IsDir {
-			continue
-		}
-		if f.UserId != userId {
-			continue
-		}
-		// Deduplicate names
-		base := f.Name
-		names[base]++
-		toDownload = append(toDownload, f)
-	}
-
-	if len(toDownload) == 0 {
+	entries := buildZipEntries(files, fileIds)
+	if len(entries) == 0 {
 		return nil, "", errors.New("没有可下载的文件")
 	}
 
@@ -188,57 +171,177 @@ func (s *fileService) DownloadBatchZip(ctx context.Context, userId int, fileIds 
 		zw := zip.NewWriter(writer)
 		defer zw.Close()
 
-		// Reset name counter for actual naming
-		used := make(map[string]int)
-
-		for _, f := range toDownload {
+		for _, entry := range entries {
 			select {
 			case <-ctx.Done():
 				return
 			default:
 			}
 
-			// Generate unique name in ZIP
-			zipName := f.Name
-			if cnt := used[f.Name]; cnt > 0 {
-				ext := filepath.Ext(f.Name)
-				base := strings.TrimSuffix(f.Name, ext)
-				zipName = fmt.Sprintf("%s_%d%s", base, cnt, ext)
+			if entry.file.IsDir {
+				if _, err := zw.Create(entry.zipPath + "/"); err != nil {
+					slog.Error("create zip folder failed", "folder", entry.zipPath, "error", err)
+				}
+				continue
 			}
-			used[f.Name]++
 
 			header := &zip.FileHeader{
-				Name:     zipName,
+				Name:     entry.zipPath,
 				Method:   zip.Deflate,
-				Modified: f.UpdatedAt,
+				Modified: entry.file.UpdatedAt,
 			}
 			header.SetMode(0644)
 
 			w, err := zw.CreateHeader(header)
 			if err != nil {
-				slog.Error("create zip entry failed", "file", f.Name, "error", err)
+				slog.Error("create zip entry failed", "file", entry.file.Name, "error", err)
 				continue
 			}
 
-			obj, err := s.minio.DownloadFile(ctx, f.OssObjectKey)
+			obj, err := s.minio.DownloadFile(ctx, entry.file.OssObjectKey)
 			if err != nil {
-				slog.Error("download from minio failed", "key", f.OssObjectKey, "error", err)
+				slog.Error("download from minio failed", "key", entry.file.OssObjectKey, "error", err)
 				continue
 			}
 
 			_, copyErr := io.Copy(w, obj)
 			obj.Close()
 			if copyErr != nil {
-				slog.Error("zip copy failed", "file", f.Name, "error", copyErr)
+				slog.Error("zip copy failed", "file", entry.file.Name, "error", copyErr)
 			}
 		}
 	}()
 
 	zipFileName := "files.zip"
-	if len(toDownload) == 1 {
-		zipFileName = strings.TrimSuffix(toDownload[0].Name, filepath.Ext(toDownload[0].Name)) + ".zip"
+	if len(fileIds) == 1 {
+		for _, file := range files {
+			if file.Id == fileIds[0] {
+				zipFileName = strings.TrimSuffix(file.Name, filepath.Ext(file.Name)) + ".zip"
+				break
+			}
+		}
 	}
 
 	return reader, zipFileName, nil
 }
 
+type zipEntry struct {
+	file    *models.File
+	zipPath string
+}
+
+func (s *fileService) getBatchDownloadFiles(ctx context.Context, userId int, fileIds []string) ([]models.File, error) {
+	var files []models.File
+	err := s.db.WithContext(ctx).Raw(`
+		WITH RECURSIVE selected AS (
+			SELECT * FROM file
+			WHERE user_id = ? AND is_deleted = 0 AND id IN ?
+			UNION ALL
+			SELECT f.* FROM file f
+			INNER JOIN selected s ON f.parent_id = s.id
+			WHERE f.user_id = ? AND f.is_deleted = 0
+		)
+		SELECT DISTINCT * FROM selected
+	`, userId, fileIds, userId).Scan(&files).Error
+	return files, err
+}
+
+func buildZipEntries(files []models.File, selectedIDs []string) []zipEntry {
+	if len(files) == 0 {
+		return nil
+	}
+
+	fileMap := make(map[string]*models.File, len(files))
+	for i := range files {
+		fileMap[files[i].Id] = &files[i]
+	}
+
+	selectedSet := make(map[string]bool, len(selectedIDs))
+	for _, id := range selectedIDs {
+		selectedSet[id] = true
+	}
+
+	usedPaths := make(map[string]int)
+	entries := make([]zipEntry, 0, len(files))
+	for i := range files {
+		file := &files[i]
+		path := batchZipPath(file, fileMap, selectedSet)
+		if path == "" {
+			continue
+		}
+		path = uniqueZipPath(safeZipPath(path), usedPaths, file.IsDir)
+		entries = append(entries, zipEntry{file: file, zipPath: path})
+	}
+
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].file.IsDir != entries[j].file.IsDir {
+			return entries[i].file.IsDir
+		}
+		return entries[i].zipPath < entries[j].zipPath
+	})
+	return entries
+}
+
+func batchZipPath(file *models.File, fileMap map[string]*models.File, selectedSet map[string]bool) string {
+	names := []string{file.Name}
+	current := file
+	root := file
+	for current.ParentId.Valid {
+		parent, ok := fileMap[current.ParentId.String]
+		if !ok {
+			break
+		}
+		names = append(names, parent.Name)
+		current = parent
+		if selectedSet[parent.Id] {
+			root = parent
+		}
+	}
+
+	if selectedSet[file.Id] && root.Id == file.Id {
+		return file.Name
+	}
+
+	for len(names) > 0 && names[len(names)-1] != root.Name {
+		names = names[:len(names)-1]
+	}
+	for i, j := 0, len(names)-1; i < j; i, j = i+1, j-1 {
+		names[i], names[j] = names[j], names[i]
+	}
+	return strings.Join(names, "/")
+}
+
+func safeZipPath(path string) string {
+	parts := strings.Split(strings.ReplaceAll(path, "\\", "/"), "/")
+	safe := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" || part == "." || part == ".." {
+			continue
+		}
+		safe = append(safe, part)
+	}
+	return strings.Join(safe, "/")
+}
+
+func uniqueZipPath(path string, used map[string]int, isDir bool) string {
+	if path == "" {
+		path = "unnamed"
+	}
+	key := path
+	if isDir {
+		key += "/"
+	}
+	if used[key] == 0 {
+		used[key] = 1
+		return path
+	}
+
+	used[key]++
+	ext := filepath.Ext(path)
+	base := strings.TrimSuffix(path, ext)
+	if isDir {
+		return fmt.Sprintf("%s_%d", path, used[key]-1)
+	}
+	return fmt.Sprintf("%s_%d%s", base, used[key]-1, ext)
+}
