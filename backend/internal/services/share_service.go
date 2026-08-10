@@ -1,8 +1,10 @@
 package services
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	miniosrv "go-cloud-storage/backend/infrastructure/minio"
 	"log/slog"
 	"math"
 	"net/url"
@@ -36,12 +38,14 @@ type ShareService interface {
 type shareService struct {
 	shareRepo repositories.ShareRepository
 	fileRepo  repositories.FileRepository
+	minio     *miniosrv.MinioService
 }
 
-func NewShareService(shareRepo repositories.ShareRepository, fileRepo repositories.FileRepository) ShareService {
+func NewShareService(shareRepo repositories.ShareRepository, fileRepo repositories.FileRepository, minio *miniosrv.MinioService) ShareService {
 	return &shareService{
 		shareRepo: shareRepo,
 		fileRepo:  fileRepo,
+		minio:     minio,
 	}
 }
 
@@ -126,7 +130,7 @@ func (s *shareService) GetUserShares(userId int, page, pageSize int) ([]*ShareIt
 	var result []*ShareItem
 	for _, share := range shares {
 		file, ok := fileMap[share.FileId]
-		if !ok {
+		if !ok || file.UserId != userId || file.IsDeleted {
 			continue
 		}
 
@@ -195,7 +199,7 @@ func (s *shareService) GetShareDetail(userId int, shareId int) (*ShareDetail, er
 		return nil, errors.New("无权查看此分享")
 	}
 
-	file, err := s.fileRepo.GetFileById(share.FileId)
+	file, err := s.fileRepo.GetUserFileByID(userId, share.FileId)
 	if err != nil {
 		return nil, errors.New("文件不存在")
 	}
@@ -265,24 +269,19 @@ func (s *shareService) AccessShare(shareToken string, inputCode string) (*ShareA
 	}
 
 	canPreview, previewType := filetypes.Previewable(file.FileExtension)
-	officePreviewURL := buildShareOfficePreviewURL(file.FileURL)
 	downloadURL := fmt.Sprintf("/s/%s/download", shareToken)
 
 	if share.GetExtractionCode() != "" && inputCode == "" {
 		return &ShareAccessResponse{
-			ShareToken:       shareToken,
-			FileName:         file.Name,
-			FileSize:         file.Size,
-			FileType:         filetypes.Category(file.FileExtension),
-			UpdatedAt:        share.UpdatedAt,
-			ExpireAt:         share.ExpireTime,
-			FileURL:          file.FileURL,
-			ThumbnailURL:     file.ThumbnailURL,
-			CanPreview:       canPreview,
-			PreviewType:      previewType,
-			OfficePreviewURL: officePreviewURL,
-			DownloadUrl:      downloadURL,
-			NeedCode:         true,
+			ShareToken:  shareToken,
+			FileName:    file.Name,
+			FileSize:    file.Size,
+			FileType:    filetypes.Category(file.FileExtension),
+			UpdatedAt:   share.UpdatedAt,
+			ExpireAt:    share.ExpireTime,
+			CanPreview:  canPreview,
+			PreviewType: previewType,
+			NeedCode:    true,
 		}, nil
 	}
 
@@ -294,6 +293,14 @@ func (s *shareService) AccessShare(shareToken string, inputCode string) (*ShareA
 		slog.Error("更新访问计数失败", "error", err, "shareId", share.Id)
 	}
 
+	previewURL := file.FileURL
+	if canPreview && s.minio != nil {
+		if u, err := s.minio.PresignedGetPreviewURL(context.Background(), file.OssObjectKey, 30*time.Minute); err == nil {
+			previewURL = u
+		}
+	}
+	officePreviewURL := buildShareOfficePreviewURL(previewURL)
+
 	return &ShareAccessResponse{
 		ShareToken:       shareToken,
 		FileName:         file.Name,
@@ -302,7 +309,7 @@ func (s *shareService) AccessShare(shareToken string, inputCode string) (*ShareA
 		UpdatedAt:        share.UpdatedAt,
 		ExpireAt:         share.ExpireTime,
 		DownloadUrl:      downloadURL,
-		FileURL:          file.FileURL,
+		FileURL:          previewURL,
 		ThumbnailURL:     file.ThumbnailURL,
 		CanPreview:       canPreview,
 		PreviewType:      previewType,
@@ -333,6 +340,9 @@ func (s *shareService) DownloadSharedFile(shareToken string, inputCode string) (
 		slog.Error("更新下载计数失败", "error", err, "shareId", share.Id)
 	}
 
+	if s.minio != nil {
+		return s.minio.PresignedDownloadURL(context.Background(), file.OssObjectKey, file.Name, 10*time.Minute)
+	}
 	return file.FileURL, nil
 }
 

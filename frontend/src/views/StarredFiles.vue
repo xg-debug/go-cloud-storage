@@ -72,10 +72,17 @@ async function unFavorite(row) {
 }
 function openFile(row) {
   if (row.is_dir) router.push({ name: 'MyDrive', query: { parentId: row.file_id } })
-  else window.open(row.file_url, '_blank')
+  else preview(normalizeFileActionRow(row))
 }
-function previewFile(row) { preview(row) }
-function downloadFile(row) { doDownload(row) }
+function previewFile(row) { preview(normalizeFileActionRow(row)) }
+function downloadFile(row) { doDownload(normalizeFileActionRow(row)) }
+function normalizeFileActionRow(row) {
+  return {
+    ...row,
+    id: row.id || row.file_id,
+    extension: row.extension || ''
+  }
+}
 onMounted(fetchFavorites)
 </script>
 

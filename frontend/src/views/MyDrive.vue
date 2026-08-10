@@ -344,7 +344,7 @@ import {
   ArrowDown, ArrowLeft, ArrowRight, Close, Delete, Download, Edit, Folder, FolderAdd, FolderOpened,
   Grid, HomeFilled, List, MoreFilled, Search, Share, SortDown, SortUp, Star, Upload, View, Warning
 } from '@element-plus/icons-vue'
-import { listFiles, createFolder, deleteFile, renameFile, previewFile, searchFiles, getFolderTree, moveFile, downloadBatch } from '@/api/file'
+import { listFiles, createFolder, deleteFile, renameFile, previewFile, searchFiles, getFolderTree, moveFile, createBatchDownload } from '@/api/file'
 import { addFavorite } from '@/api/favorite'
 import { getFileIcon, getFileIconColor } from '@/utils/fileIcon'
 import CreateShareDialog from '@/components/CreateShareDialog.vue'
@@ -731,16 +731,16 @@ async function batchDownloadHandler() {
     return
   }
   try {
-    const blob = await downloadBatch(ids)
-    const url = URL.createObjectURL(blob)
+    const task = await createBatchDownload(ids)
+    if (!task?.downloadUrl) {
+      throw new Error('missing download url')
+    }
     const a = document.createElement('a')
-    a.href = url
-    a.download = ids.length === 1
-      ? (fileList.value.find(f => f.id === ids[0])?.name || 'download')
-      : 'files.zip'
+    a.href = task.downloadUrl
+    a.download = task.fileName || 'files.zip'
+    a.rel = 'noopener'
     a.click()
-    URL.revokeObjectURL(url)
-    ElMessage.success('下载完成')
+    ElMessage.success('批量下载已开始')
   } catch {
     ElMessage.error('批量下载失败')
   }

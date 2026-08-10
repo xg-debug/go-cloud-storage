@@ -57,11 +57,12 @@ func SetUpRouter(db *gorm.DB, minioService *minio.MinioService, rabbitClient *mq
 	// 初始化服务
 	userService := services.NewUserService(db, userRepo, fileRepo, storageQuotaRepo, minioService, emailService)
 	fileService := services.NewFileService(db, cache.GetClient(), fileRepo, storageQuotaRepo, minioService)
+	fileService.StartChunkUploadCleanup(context.Background())
 	recyclePurgeService := services.NewRecyclePurgeService(db, minioService, recycleRepo, fileRepo, shareRepo, favoriteRepo, storageQuotaRepo)
 	recycleService := services.NewRecycleService(db, recycleRepo, fileRepo, recyclePurgeService, rabbitClient)
 	favoriteService := services.NewFavoriteService(favoriteRepo, fileRepo, fileService)
 	categoryService := services.NewCategoryService(db, fileRepo)
-	shareService := services.NewShareService(shareRepo, fileRepo)
+	shareService := services.NewShareService(shareRepo, fileRepo, minioService)
 	statsService := services.NewStatsService(fileRepo, storageQuotaRepo, shareRepo)
 	storageQuotaService := services.NewStorageQuotaService(storageQuotaRepo)
 	sseBroker := services.NewSSEBroker()
@@ -96,6 +97,7 @@ func SetUpRouter(db *gorm.DB, minioService *minio.MinioService, rabbitClient *mq
 
 	user := ginServer.Group("user")
 	user.Use(middleware.JWTAuthMiddleware())
+	user.Use(middleware.RateLimitMiddleware())
 	{
 		user.PUT("/update", userCtrl.UpdateProfile)
 		user.PUT("/password", userCtrl.UpdatePassword)
@@ -106,6 +108,7 @@ func SetUpRouter(db *gorm.DB, minioService *minio.MinioService, rabbitClient *mq
 
 	file := ginServer.Group("file")
 	file.Use(middleware.JWTAuthMiddleware()) // 为路由组注册中间件
+	file.Use(middleware.RateLimitMiddleware())
 	{
 		file.POST("/list", fileCtrl.GetFiles)
 		file.POST("/create-folder", fileCtrl.CreateFolder)
@@ -138,6 +141,7 @@ func SetUpRouter(db *gorm.DB, minioService *minio.MinioService, rabbitClient *mq
 
 	favorite := ginServer.Group("favorite")
 	favorite.Use(middleware.JWTAuthMiddleware())
+	favorite.Use(middleware.RateLimitMiddleware())
 	{
 		favorite.GET("", favoriteCtrl.GetFavoriteList)
 		favorite.POST("/:fileId", favoriteCtrl.Favorite)
@@ -146,6 +150,7 @@ func SetUpRouter(db *gorm.DB, minioService *minio.MinioService, rabbitClient *mq
 
 	recycle := ginServer.Group("recycle")
 	recycle.Use(middleware.JWTAuthMiddleware()) // 为路由组注册中间件
+	recycle.Use(middleware.RateLimitMiddleware())
 	{
 		recycle.GET("", recycleCtrl.ListRecycleFiles)
 
@@ -160,6 +165,7 @@ func SetUpRouter(db *gorm.DB, minioService *minio.MinioService, rabbitClient *mq
 	// 分类路由
 	category := ginServer.Group("category")
 	category.Use(middleware.JWTAuthMiddleware())
+	category.Use(middleware.RateLimitMiddleware())
 	{
 		category.POST("/files", categoryCtrl.GetFilesByCategory)
 	}
@@ -167,6 +173,7 @@ func SetUpRouter(db *gorm.DB, minioService *minio.MinioService, rabbitClient *mq
 	// 分享路由
 	share := ginServer.Group("share")
 	share.Use(middleware.JWTAuthMiddleware())
+	share.Use(middleware.RateLimitMiddleware())
 	{
 		share.POST("", shareCtrl.CreateShare)                // 创建分享
 		share.GET("", shareCtrl.GetUserShares)               // 获取用户分享列表
@@ -178,6 +185,7 @@ func SetUpRouter(db *gorm.DB, minioService *minio.MinioService, rabbitClient *mq
 	// 通知路由
 	notification := ginServer.Group("notification")
 	notification.Use(middleware.JWTAuthMiddleware())
+	notification.Use(middleware.RateLimitMiddleware())
 	{
 		notification.GET("/stream", notificationCtrl.NotificationSSE)
 		notification.GET("", notificationCtrl.GetNotifications)

@@ -52,8 +52,10 @@ import { ArrowRight, Clock } from '@element-plus/icons-vue'
 import { getRecentFiles } from '@/api/file'
 import { getFileIcon, getFileIconColor } from '@/utils/fileIcon'
 import EmptyState from '@/components/EmptyState.vue'
+import { useFileActions } from '@/composables/useFileActions'
 
 const router = useRouter()
+const { preview } = useFileActions()
 const timeRange = ref('week')
 const files = ref([])
 
@@ -62,7 +64,7 @@ async function fetchData() {
 }
 function openFile(f) {
   if (f.is_dir) router.push({ name: 'MyDrive', query: { parentId: f.id } })
-  else window.open(f.file_url, '_blank')
+  else preview(f)
 }
 function iconBg(f) {
   if (f.is_dir) return '#FFFBF0'

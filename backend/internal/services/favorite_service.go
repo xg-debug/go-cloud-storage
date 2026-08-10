@@ -1,6 +1,7 @@
 package services
 
 import (
+	"errors"
 	"go-cloud-storage/backend/internal/models"
 	"go-cloud-storage/backend/internal/models/dto"
 	"go-cloud-storage/backend/internal/repositories"
@@ -52,7 +53,7 @@ func (s favoriteService) GetFavorites(userId, page, pageSize int) ([]dto.Favorit
 	var result []dto.FavoriteDTO
 	for _, f := range favs {
 		file, ok := fileMap[f.FileId]
-		if !ok {
+		if !ok || file.UserId != userId || file.IsDeleted {
 			continue
 		}
 		fullPath, err := s.fileService.GetFilePath(file)
@@ -61,11 +62,14 @@ func (s favoriteService) GetFavorites(userId, page, pageSize int) ([]dto.Favorit
 		}
 
 		result = append(result, dto.FavoriteDTO{
+			Id:        f.FileId,
 			FileId:    f.FileId,
 			Name:      file.Name,
 			IsDir:     file.IsDir,
 			Path:      fullPath,
+			Size:      file.Size,
 			SizeStr:   file.SizeStr,
+			Extension: file.FileExtension,
 			FileURL:   file.FileURL,
 			CreatedAt: f.CreatedAt.Format("2006-01-02 15:04:05"),
 		})
@@ -75,6 +79,10 @@ func (s favoriteService) GetFavorites(userId, page, pageSize int) ([]dto.Favorit
 }
 
 func (s favoriteService) AddToFavorite(fileId string, userId int) error {
+	file, err := s.fileRepo.GetUserFileByID(userId, fileId)
+	if err != nil || file == nil {
+		return errors.New("文件不存在或无权限")
+	}
 	var favorite = &models.Favorite{
 		UserId:    userId,
 		FileId:    fileId,

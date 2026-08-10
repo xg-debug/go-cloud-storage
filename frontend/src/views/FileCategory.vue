@@ -76,10 +76,12 @@ import { ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Delete, Download, Grid, List, Loading, Warning } from '@element-plus/icons-vue'
-import { getFilesByCategory, deleteFile, downloadFile } from '@/api/file'
+import { getFilesByCategory, deleteFile } from '@/api/file'
 import EmptyState from '@/components/EmptyState.vue'
+import { useFileActions } from '@/composables/useFileActions'
 
 const route = useRoute()
+const { download: doDownload, preview } = useFileActions()
 const viewMode = ref('list')
 const files = ref([])
 const total = ref(0)
@@ -107,8 +109,7 @@ async function loadFiles(type) {
   catch { ElMessage.error('加载文件列表失败') } finally { loading.value = false }
 }
 watch(() => route.params.type, t => { selectedCategory.value = t; if (t) loadFiles(t) }, { immediate: true })
-function previewHandler(f) { if (f.file_url) window.open(f.file_url, '_blank'); else ElMessage.info('暂不支持预览') }
-async function doDownload(f) { try { const b = await downloadFile(f.id); const u = URL.createObjectURL(b); const a = document.createElement('a'); a.href = u; a.download = f.name; a.click(); URL.revokeObjectURL(u) } catch { ElMessage.error('下载失败') } }
+function previewHandler(f) { preview(f) }
 function doDelete(f) { deleteTarget.value = f; deleteVisible.value = true }
 async function confirmDelete() { deleting.value = true; try { await deleteFile(deleteTarget.value.id); ElMessage.success('已删除'); deleteVisible.value = false; loadFiles(selectedCategory.value) } catch { ElMessage.error('删除失败') } finally { deleting.value = false } }
 </script>

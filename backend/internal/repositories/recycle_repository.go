@@ -1,6 +1,7 @@
 package repositories
 
 import (
+	"errors"
 	"go-cloud-storage/backend/internal/models"
 	"gorm.io/gorm"
 	"time"
@@ -112,8 +113,12 @@ func (r *recycleRepo) RestoreOne(fileId string) error {
 			return err
 		}
 		// 2.修改file表中软删除的标志
-		if err := tx.Model(&models.File{}).Where("file_id = ?", fileId).Update("is_deleted", false).Error; err != nil {
-			return err
+		result := tx.Model(&models.File{}).Where("id = ?", fileId).Update("is_deleted", false)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return errors.New("文件不存在")
 		}
 		return nil
 	})
@@ -126,8 +131,12 @@ func (r *recycleRepo) RestoreBatch(fileIds []string) error {
 			return err
 		}
 		// 2.修改file表中软删除的标志
-		if err := tx.Model(&models.File{}).Where("file_id IN ?", fileIds).Updates(map[string]interface{}{"is_deleted": false}).Error; err != nil {
-			return err
+		result := tx.Model(&models.File{}).Where("id IN ?", fileIds).Updates(map[string]interface{}{"is_deleted": false})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return errors.New("文件不存在")
 		}
 		return nil
 	})

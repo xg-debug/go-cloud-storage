@@ -7,6 +7,7 @@ import (
 	"go-cloud-storage/backend/internal/models"
 	"go-cloud-storage/backend/pkg/filetypes"
 	"go-cloud-storage/backend/pkg/utils"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -52,7 +53,7 @@ type FileRepository interface {
 
 	GetAllFolders(ctx context.Context, userId int) ([]models.File, error)
 	CountFilesInFolder(ctx context.Context, userId int, folderId string) (int64, error)
-	UpdateParent(ctx context.Context, id, parentId string) error
+	UpdateParent(ctx context.Context, userId int, id, parentId string) error
 	IsSubFolder(ctx context.Context, userId int, sourceId, targetId string) (bool, error)
 	GetAncestorNames(ctx context.Context, fileId string) ([]string, error)
 }
@@ -280,10 +281,11 @@ func (r *fileRepo) AddToRecycle(db *gorm.DB, recycleEntry *models.RecycleBin) er
 
 // MarkAsNotDeleted 恢复文件（单个/多个） userId 传 nil 表示不限制用户
 func (r *fileRepo) MarkAsNotDeleted(db *gorm.DB, fileIds []string, userId *int) error {
-	query := db.Model(&models.File{})
-	if len(fileIds) > 0 {
-		query = query.Where("id IN ?", fileIds)
+	if len(fileIds) == 0 {
+		return nil
 	}
+	query := db.Model(&models.File{})
+	query = query.Where("id IN ?", fileIds)
 	if userId != nil {
 		query = query.Where("user_id = ?", *userId)
 	}
@@ -293,18 +295,20 @@ func (r *fileRepo) MarkAsNotDeleted(db *gorm.DB, fileIds []string, userId *int) 
 // CheckDuplicateName 检查同级目录下是否存在同名文件
 func (r *fileRepo) CheckDuplicateName(userId int, parentId, name string) (bool, error) {
 	var count int64
-	err := r.db.Model(&models.File{}).
-		Where("user_id = ? AND parent_id = ? AND name = ? AND is_deleted = ?", userId, parentId, name, false).
-		Count(&count).Error
+	query := r.db.Model(&models.File{}).
+		Where("user_id = ? AND name = ? AND is_deleted = ?", userId, name, false)
+	query = applyParentScope(query, parentId)
+	err := query.Count(&count).Error
 	return count > 0, err
 }
 
 // GetFileByParentAndName 根据 parentId + name 查找文件（用于复制时防重名）
 func (r *fileRepo) GetFileByParentAndName(ctx context.Context, userId int, parentId, name string) (*models.File, error) {
 	var file models.File
-	err := r.db.WithContext(ctx).
-		Where("user_id = ? AND parent_id = ? AND name = ? AND is_deleted = ?", userId, parentId, name, false).
-		First(&file).Error
+	query := r.db.WithContext(ctx).
+		Where("user_id = ? AND name = ? AND is_deleted = ?", userId, name, false)
+	query = applyParentScope(query, parentId)
+	err := query.First(&file).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
@@ -388,16 +392,21 @@ func (r *fileRepo) FindByHash(hash string) (*models.File, error) {
 
 // RenameFile 重命名文件/目录
 func (r *fileRepo) RenameFile(userId int, fileId, newName string) error {
-	return r.db.Model(&models.File{}).
-		Where("id = ? AND user_id = ?", fileId, userId).
-		Update("name", newName).Error
+	result := r.db.Model(&models.File{}).
+		Where("id = ? AND user_id = ? AND is_deleted = ?", fileId, userId, false).
+		Update("name", newName)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return errors.New("文件不存在或无权限")
+	}
+	return nil
 }
 
 // MoveFile 移动文件
 func (r *fileRepo) MoveFile(userId int, fileId, newParentId string) error {
-	return r.db.Model(&models.File{}).
-		Where("id = ? AND user_id = ?", fileId, userId).
-		Update("parent_id", newParentId).Error
+	return r.UpdateParent(context.Background(), userId, fileId, newParentId)
 }
 
 // GetAllUserFiles 获取用户所有文件（不包括已删除的）
@@ -407,10 +416,10 @@ func (r *fileRepo) GetAllUserFiles(userId int) ([]models.File, error) {
 	return files, err
 }
 
-// GetFileByMD5 根据文件哈希查找文件（用于跨用户秒传）
+// GetFileByMD5 根据文件哈希查找当前用户已有文件（用于同用户秒传）
 func (r *fileRepo) GetFileByMD5(userId int, fileMD5 string) (*models.File, error) {
 	var file models.File
-	err := r.db.Where("file_hash = ? AND is_deleted = ?", fileMD5, false).First(&file).Error
+	err := r.db.Where("user_id = ? AND file_hash = ? AND is_dir = ? AND is_deleted = ?", userId, fileMD5, false, false).First(&file).Error
 	return &file, err
 }
 
@@ -429,8 +438,28 @@ func (r *fileRepo) GetAllFolders(ctx context.Context, userId int) ([]models.File
 	return folders, err
 }
 
-func (r *fileRepo) UpdateParent(ctx context.Context, id, parentId string) error {
-	return r.db.WithContext(ctx).Model(&models.File{}).Where("id = ?", id).Update("parent_id", parentId).Error
+func (r *fileRepo) UpdateParent(ctx context.Context, userId int, id, parentId string) error {
+	var parentValue interface{}
+	if strings.TrimSpace(parentId) != "" {
+		parentValue = parentId
+	}
+	result := r.db.WithContext(ctx).Model(&models.File{}).
+		Where("id = ? AND user_id = ? AND is_deleted = ?", id, userId, false).
+		Update("parent_id", parentValue)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return errors.New("文件不存在或无权限")
+	}
+	return nil
+}
+
+func applyParentScope(query *gorm.DB, parentId string) *gorm.DB {
+	if strings.TrimSpace(parentId) == "" {
+		return query.Where("parent_id IS NULL")
+	}
+	return query.Where("parent_id = ?", parentId)
 }
 
 // IsSubFolder 判断 targetId 是否在 sourceId 的子孙树内

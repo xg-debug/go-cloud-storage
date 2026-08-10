@@ -2,9 +2,9 @@ package services
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"path/filepath"
 	"strings"
 
@@ -19,9 +19,24 @@ func (s *fileService) CopyFile(ctx context.Context, userId int, fileId, targetFo
 		return errors.New("不能复制到自身")
 	}
 
-	file, err := s.fileRepo.GetFileById(fileId)
+	file, err := s.fileRepo.GetUserFileByID(userId, fileId)
 	if err != nil {
-		return fmt.Errorf("找不到源文件: %w", err)
+		return fmt.Errorf("找不到源文件或无权限: %w", err)
+	}
+	if isProtectedRootFolder(file) {
+		return errors.New("不能复制根目录")
+	}
+	if err := s.ensureTargetFolder(ctx, userId, targetFolderId); err != nil {
+		return err
+	}
+	if file.IsDir && targetFolderId != "" {
+		isSub, err := s.fileRepo.IsSubFolder(ctx, userId, file.Id, targetFolderId)
+		if err != nil {
+			return err
+		}
+		if isSub {
+			return errors.New("不能复制到子文件夹")
+		}
 	}
 
 	// 检查配额
@@ -51,52 +66,59 @@ func (s *fileService) CopyFile(ctx context.Context, userId int, fileId, targetFo
 		counter++
 	}
 
+	copiedKeys := make([]string, 0)
+	var copyErr error
 	if file.IsDir {
-		return s.copyFolder(ctx, userId, file, targetFolderId, newName)
+		copyErr = s.copyFolder(ctx, userId, file, targetFolderId, newName, &copiedKeys)
+	} else {
+		copyErr = s.copySingleFile(ctx, userId, file, targetFolderId, newName, &copiedKeys)
 	}
-	return s.copySingleFile(ctx, userId, file, targetFolderId, newName)
+	if copyErr != nil {
+		s.cleanupCopiedObjects(copiedKeys)
+	}
+	return copyErr
 }
 
-func (s *fileService) copySingleFile(ctx context.Context, userId int, src *models.File, targetParentId, newName string) error {
+func (s *fileService) copySingleFile(ctx context.Context, userId int, src *models.File, targetParentId, newName string, copiedKeys *[]string) error {
 	return s.db.Transaction(func(tx *gorm.DB) error {
-		return s.copyFileRecord(ctx, tx, userId, src, targetParentId, newName)
+		return s.copyFileRecord(ctx, tx, userId, src, targetParentId, newName, copiedKeys)
 	})
 }
 
-func (s *fileService) copyFolder(ctx context.Context, userId int, src *models.File, targetParentId, newName string) error {
+func (s *fileService) copyFolder(ctx context.Context, userId int, src *models.File, targetParentId, newName string, copiedKeys *[]string) error {
 	return s.db.Transaction(func(tx *gorm.DB) error {
 		newId := uuid.New().String()
 		if err := tx.Model(&models.File{}).Create(&models.File{
-			Id: newId, UserId: userId, Name: newName, IsDir: true, ParentId: sql.NullString{String: targetParentId, Valid: true}, Size: 0, SizeStr: "-",
+			Id: newId, UserId: userId, Name: newName, IsDir: true, ParentId: nullableParentID(targetParentId), Size: 0, SizeStr: "-",
 		}).Error; err != nil {
 			return fmt.Errorf("创建文件夹记录失败: %w", err)
 		}
-		return s.copyChildren(ctx, tx, userId, src.Id, newId)
+		return s.copyChildren(ctx, tx, userId, src.Id, newId, copiedKeys)
 	})
 }
 
-func (s *fileService) copyChildren(ctx context.Context, tx *gorm.DB, userId int, srcId, targetParentId string) error {
+func (s *fileService) copyChildren(ctx context.Context, tx *gorm.DB, userId int, srcId, targetParentId string, copiedKeys *[]string) error {
 	children, _, err := s.fileRepo.GetFiles(ctx, userId, srcId, 1, 10000, "created_at", "desc")
 	if err != nil {
 		return err
 	}
 	for _, child := range children {
-		childFile, _ := s.fileRepo.GetFileById(child.Id)
-		if childFile == nil {
-			continue
+		childFile, err := s.fileRepo.GetUserFileByID(userId, child.Id)
+		if err != nil {
+			return err
 		}
 		if childFile.IsDir {
 			newId := uuid.New().String()
 			if err := tx.Model(&models.File{}).Create(&models.File{
-				Id: newId, UserId: userId, Name: childFile.Name, IsDir: true, ParentId: sql.NullString{String: targetParentId, Valid: true}, Size: 0, SizeStr: "-",
+				Id: newId, UserId: userId, Name: childFile.Name, IsDir: true, ParentId: nullableParentID(targetParentId), Size: 0, SizeStr: "-",
 			}).Error; err != nil {
 				return err
 			}
-			if err := s.copyChildren(ctx, tx, userId, childFile.Id, newId); err != nil {
+			if err := s.copyChildren(ctx, tx, userId, childFile.Id, newId, copiedKeys); err != nil {
 				return err
 			}
 		} else {
-			if err := s.copyFileRecord(ctx, tx, userId, childFile, targetParentId, childFile.Name); err != nil {
+			if err := s.copyFileRecord(ctx, tx, userId, childFile, targetParentId, childFile.Name, copiedKeys); err != nil {
 				return err
 			}
 		}
@@ -104,21 +126,23 @@ func (s *fileService) copyChildren(ctx context.Context, tx *gorm.DB, userId int,
 	return nil
 }
 
-func (s *fileService) copyFileRecord(ctx context.Context, tx *gorm.DB, userId int, src *models.File, targetParentId, newName string) error {
+func (s *fileService) copyFileRecord(ctx context.Context, tx *gorm.DB, userId int, src *models.File, targetParentId, newName string, copiedKeys *[]string) error {
 	// 生成新的 OSS key 并复制 MinIO 对象
 	newKey := s.minio.GenerateObjectKey(userId, targetParentId, newName)
 	if err := s.minio.CopyObject(ctx, src.OssObjectKey, newKey); err != nil {
 		return fmt.Errorf("复制文件对象失败: %w", err)
 	}
+	*copiedKeys = append(*copiedKeys, newKey)
 
 	// 如果源文件有缩略图，也复制缩略图对象
-	newThumbnailURL := src.ThumbnailURL
+	newThumbnailURL := ""
 	if src.ThumbnailURL != "" {
 		thumbKey := s.minio.GenerateObjectKey(userId, targetParentId, "thumb_"+newName)
 		// 从 OSS URL 中解析缩略图 key（样式：.../bucket/objectKey）
 		parts := strings.Split(src.OssObjectKey, "/")
 		thumbSrcKey := strings.Replace(src.OssObjectKey, parts[len(parts)-1], "thumb_"+parts[len(parts)-1], 1)
 		if err := s.minio.CopyObject(ctx, thumbSrcKey, thumbKey); err == nil {
+			*copiedKeys = append(*copiedKeys, thumbKey)
 			newThumbnailURL = s.minio.GenerateObjectURL(thumbKey)
 		}
 	}
@@ -128,10 +152,33 @@ func (s *fileService) copyFileRecord(ctx context.Context, tx *gorm.DB, userId in
 	if err := tx.Model(&models.File{}).Create(&models.File{
 		Id: uuid.New().String(), UserId: userId, Name: newName, Size: src.Size, SizeStr: src.SizeStr,
 		IsDir: false, FileExtension: src.FileExtension, FileHash: src.FileHash, FileURL: newFileURL,
-		ThumbnailURL: newThumbnailURL, OssObjectKey: newKey, ParentId: sql.NullString{String: targetParentId, Valid: true},
+		ThumbnailURL: newThumbnailURL, OssObjectKey: newKey, ParentId: nullableParentID(targetParentId),
 	}).Error; err != nil {
 		return err
 	}
 	return s.storageQuotaRepo.UpdateUsedSpace(tx, userId, src.Size)
 }
 
+func (s *fileService) cleanupCopiedObjects(objectKeys []string) {
+	if len(objectKeys) == 0 {
+		return
+	}
+	seen := make(map[string]struct{}, len(objectKeys))
+	deduped := make([]string, 0, len(objectKeys))
+	for _, key := range objectKeys {
+		if key == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		deduped = append(deduped, key)
+	}
+	if len(deduped) == 0 {
+		return
+	}
+	if err := s.minio.DeleteFiles(context.Background(), deduped); err != nil {
+		slog.Error("cleanup copied objects after copy failure failed", "count", len(deduped), "error", err)
+	}
+}

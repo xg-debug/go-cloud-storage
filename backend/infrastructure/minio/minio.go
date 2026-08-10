@@ -13,6 +13,7 @@ import (
 	"image/png"
 	"io"
 	"log"
+	"mime"
 	"mime/multipart"
 	"net/url"
 	"os/exec"
@@ -102,7 +103,7 @@ func NewMinioService(cfg *config.MinioConfig) (*MinioService, error) {
 }
 
 // UploadFromStream 小文件上传 (流式)
-// fileHash 由前端计算传入（MD5 或 SHA-256），后端不做重复计算，确保秒传一致性
+// fileHash 由前端计算传入（SHA-256），后端不做重复计算，确保秒传一致性
 func (s *MinioService) UploadFromStream(ctx context.Context, userId int, r io.Reader, fileName string, fileSize int64, fileHash, parentId string) (*models.File, error) {
 	if fileName == "" {
 		return nil, errors.New("文件名不能为空")
@@ -111,11 +112,7 @@ func (s *MinioService) UploadFromStream(ctx context.Context, userId int, r io.Re
 
 	objectKey := s.GenerateObjectKey(userId, parentId, fileName)
 
-	// 使用 TeeReader：边上传边缓冲，一份数据同时用于 MinIO 上传和缩略图生成
-	var buf bytes.Buffer
-	tee := io.TeeReader(r, &buf)
-
-	_, err := s.client.PutObject(ctx, s.bucket, objectKey, tee, fileSize, minio.PutObjectOptions{
+	_, err := s.client.PutObject(ctx, s.bucket, objectKey, r, fileSize, minio.PutObjectOptions{
 		ContentType: "application/octet-stream",
 	})
 	if err != nil {
@@ -145,12 +142,6 @@ func (s *MinioService) UploadFromStream(ctx context.Context, userId int, r io.Re
 		UpdatedAt:     time.Now(),
 		FileURL:       fileURL,
 		ThumbnailURL:  fileURL,
-	}
-
-	if thumbURL, err := s.generateThumbnailFromBytes(ctx, objectKey, ext, buf.Bytes()); err == nil && thumbURL != "" {
-		newFile.ThumbnailURL = thumbURL
-	} else if err != nil {
-		log.Printf("generate thumbnail failed (small upload): %v\n", err)
 	}
 
 	return newFile, nil
@@ -237,8 +228,53 @@ func (s *MinioService) PresignedGetURL(ctx context.Context, objectKey string, ex
 	return u.String(), nil
 }
 
+func (s *MinioService) PresignedDownloadURL(ctx context.Context, objectKey, fileName string, expiry time.Duration) (string, error) {
+	reqParams := make(url.Values)
+	if fileName != "" {
+		reqParams.Set("response-content-disposition", mime.FormatMediaType("attachment", map[string]string{"filename": fileName}))
+	}
+	u, err := s.client.PresignedGetObject(ctx, s.bucket, objectKey, expiry, reqParams)
+	if err != nil {
+		return "", err
+	}
+	return u.String(), nil
+}
+
+func (s *MinioService) PutObjectStream(ctx context.Context, objectKey string, r io.Reader, size int64, contentType string) (int64, error) {
+	if strings.TrimSpace(contentType) == "" {
+		contentType = "application/octet-stream"
+	}
+	opts := minio.PutObjectOptions{ContentType: contentType}
+	if size < 0 {
+		opts.PartSize = 10 * 1024 * 1024
+	}
+	info, err := s.client.PutObject(ctx, s.bucket, objectKey, r, size, opts)
+	if err != nil {
+		return 0, err
+	}
+	return info.Size, nil
+}
+
 func (s *MinioService) DeleteFile(ctx context.Context, objectKey string) error {
 	return s.client.RemoveObject(ctx, s.bucket, objectKey, minio.RemoveObjectOptions{})
+}
+
+func (s *MinioService) DeleteObjectWithThumbnail(ctx context.Context, objectKey string) error {
+	if objectKey == "" {
+		return nil
+	}
+	if err := s.DeleteFile(ctx, objectKey); err != nil {
+		return err
+	}
+	_ = s.DeleteThumbnailForObject(ctx, objectKey)
+	return nil
+}
+
+func (s *MinioService) DeleteThumbnailForObject(ctx context.Context, objectKey string) error {
+	if objectKey == "" {
+		return nil
+	}
+	return s.DeleteFile(ctx, thumbnailObjectKey(objectKey))
 }
 
 func (s *MinioService) DeleteFiles(ctx context.Context, objectKeys []string) error {
@@ -295,10 +331,17 @@ func (s *MinioService) UploadPart(ctx context.Context, objectKey, uploadId strin
 	// 如果前端传了 expectedHash 就校验
 	if expectedHash != "" && computedHash != expectedHash {
 		return minio.ObjectPart{}, computedHash, fmt.Errorf(
-			"分片 %d hash 校验失败: got=%s expected=%s", partNumber, computedHash[:16], expectedHash[:16])
+			"分片 %d hash 校验失败: got=%s expected=%s", partNumber, shortHash(computedHash), shortHash(expectedHash))
 	}
 
 	return part, computedHash, nil
+}
+
+func shortHash(hash string) string {
+	if len(hash) <= 16 {
+		return hash
+	}
+	return hash[:16]
 }
 
 // CompleteMultipartUpload 完成分片上传，parts 参数必须包含所有分片的 PartNumber 和 ETag，且通常需要按 PartNumber 排序

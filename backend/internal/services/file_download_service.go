@@ -14,7 +14,21 @@ import (
 	"time"
 
 	"go-cloud-storage/backend/internal/models"
+	"go-cloud-storage/backend/pkg/utils"
 )
+
+const (
+	batchZipPresignTTL = 30 * time.Minute
+	batchZipObjectTTL  = 2 * time.Hour
+	batchZipPrefix     = "tmp/batch-downloads"
+)
+
+type BatchDownloadResult struct {
+	FileName         string `json:"fileName"`
+	DownloadURL      string `json:"downloadUrl"`
+	ExpiresInSeconds int64  `json:"expiresInSeconds"`
+	Size             int64  `json:"size"`
+}
 
 func (s *fileService) Download(ctx context.Context, userId int, fileId string) (io.ReadCloser, *models.File, error) {
 	file, err := s.fileRepo.GetUserFileByID(userId, fileId)
@@ -61,7 +75,7 @@ func (s *fileService) GetPresignedDownloadURL(ctx context.Context, userId int, f
 		return "", nil, errors.New("要下载的文件不存在")
 	}
 
-	u, err := s.minio.PresignedGetURL(ctx, file.OssObjectKey, 10*time.Minute)
+	u, err := s.minio.PresignedDownloadURL(ctx, file.OssObjectKey, file.Name, 10*time.Minute)
 	if err != nil {
 		return "", nil, err
 	}
@@ -111,9 +125,8 @@ func (s *fileService) GetDownloadInfo(ctx context.Context, userId int, fileId st
 	}
 
 	const (
-		midChunkSize       int64 = 5 * 1024 * 1024  // 中等文件 5MB/块
-		largeChunkSize     int64 = 10 * 1024 * 1024 // 大文件 10MB/块
-		presignedThreshold int64 = 100 * 1024 * 1024
+		midChunkSize   int64 = 5 * 1024 * 1024  // 中等文件 5MB/块
+		largeChunkSize int64 = 10 * 1024 * 1024 // 大文件 10MB/块
 	)
 
 	var chunkSize int64
@@ -131,10 +144,7 @@ func (s *fileService) GetDownloadInfo(ctx context.Context, userId int, fileId st
 		chunks = (file.Size + chunkSize - 1) / chunkSize
 	}
 
-	directURL := ""
-	if file.Size > presignedThreshold {
-		directURL, _ = s.minio.PresignedGetURL(ctx, file.OssObjectKey, 10*time.Minute)
-	}
+	directURL, _ := s.minio.PresignedDownloadURL(ctx, file.OssObjectKey, file.Name, 10*time.Minute)
 
 	return map[string]interface{}{
 		"fileId":            file.Id,
@@ -143,6 +153,8 @@ func (s *fileService) GetDownloadInfo(ctx context.Context, userId int, fileId st
 		"chunkSize":         chunkSize,
 		"chunks":            chunks,
 		"supportsRange":     true,
+		"preferredStrategy": "presigned",
+		"expiresInSeconds":  600,
 		"directDownloadUrl": directURL,
 	}, nil
 }
@@ -166,63 +178,152 @@ func (s *fileService) DownloadBatchZip(ctx context.Context, userId int, fileIds 
 	reader, writer := io.Pipe()
 
 	go func() {
-		defer writer.Close()
+		if err := s.writeBatchZip(ctx, writer, entries); err != nil {
+			_ = writer.CloseWithError(err)
+			return
+		}
+		_ = writer.Close()
+	}()
 
-		zw := zip.NewWriter(writer)
-		defer zw.Close()
+	zipFileName := batchZipFileName(files, fileIds)
 
-		for _, entry := range entries {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-			}
+	return reader, zipFileName, nil
+}
 
-			if entry.file.IsDir {
-				if _, err := zw.Create(entry.zipPath + "/"); err != nil {
-					slog.Error("create zip folder failed", "folder", entry.zipPath, "error", err)
-				}
-				continue
-			}
+func (s *fileService) CreateBatchDownload(ctx context.Context, userId int, fileIds []string) (*BatchDownloadResult, error) {
+	if len(fileIds) == 0 {
+		return nil, errors.New("未选择文件")
+	}
 
-			header := &zip.FileHeader{
-				Name:     entry.zipPath,
-				Method:   zip.Deflate,
-				Modified: entry.file.UpdatedAt,
-			}
-			header.SetMode(0644)
+	files, err := s.getBatchDownloadFiles(ctx, userId, fileIds)
+	if err != nil {
+		return nil, fmt.Errorf("获取文件信息失败: %w", err)
+	}
 
-			w, err := zw.CreateHeader(header)
-			if err != nil {
-				slog.Error("create zip entry failed", "file", entry.file.Name, "error", err)
-				continue
-			}
+	entries := buildZipEntries(files, fileIds)
+	if len(entries) == 0 {
+		return nil, errors.New("没有可下载的文件")
+	}
 
-			obj, err := s.minio.DownloadFile(ctx, entry.file.OssObjectKey)
-			if err != nil {
-				slog.Error("download from minio failed", "key", entry.file.OssObjectKey, "error", err)
-				continue
-			}
+	zipFileName := batchZipFileName(files, fileIds)
+	objectKey := fmt.Sprintf("%s/%d/%s.zip", batchZipPrefix, userId, utils.NewUUID())
 
-			_, copyErr := io.Copy(w, obj)
-			obj.Close()
-			if copyErr != nil {
-				slog.Error("zip copy failed", "file", entry.file.Name, "error", copyErr)
-			}
+	reader, writer := io.Pipe()
+	zipErrCh := make(chan error, 1)
+	go func() {
+		err := s.writeBatchZip(ctx, writer, entries)
+		if err != nil {
+			_ = writer.CloseWithError(err)
+		} else {
+			_ = writer.Close()
+		}
+		zipErrCh <- err
+	}()
+
+	size, uploadErr := s.minio.PutObjectStream(ctx, objectKey, reader, -1, "application/zip")
+	if uploadErr != nil {
+		_ = reader.CloseWithError(uploadErr)
+		if zipErr := <-zipErrCh; zipErr != nil {
+			slog.Error("batch zip writer failed after upload error", "error", zipErr)
+		}
+		return nil, fmt.Errorf("生成批量下载文件失败: %w", uploadErr)
+	}
+	if zipErr := <-zipErrCh; zipErr != nil {
+		_ = s.minio.DeleteFile(context.Background(), objectKey)
+		return nil, fmt.Errorf("生成批量下载文件失败: %w", zipErr)
+	}
+
+	downloadURL, err := s.minio.PresignedDownloadURL(ctx, objectKey, zipFileName, batchZipPresignTTL)
+	if err != nil {
+		_ = s.minio.DeleteFile(context.Background(), objectKey)
+		return nil, err
+	}
+
+	time.AfterFunc(batchZipObjectTTL, func() {
+		if err := s.minio.DeleteFile(context.Background(), objectKey); err != nil {
+			slog.Warn("cleanup temporary batch zip failed", "objectKey", objectKey, "error", err)
+		}
+	})
+
+	return &BatchDownloadResult{
+		FileName:         zipFileName,
+		DownloadURL:      downloadURL,
+		ExpiresInSeconds: int64(batchZipPresignTTL.Seconds()),
+		Size:             size,
+	}, nil
+}
+
+func (s *fileService) writeBatchZip(ctx context.Context, w io.Writer, entries []zipEntry) error {
+	zw := zip.NewWriter(w)
+	closed := false
+	defer func() {
+		if !closed {
+			_ = zw.Close()
 		}
 	}()
 
-	zipFileName := "files.zip"
-	if len(fileIds) == 1 {
-		for _, file := range files {
-			if file.Id == fileIds[0] {
-				zipFileName = strings.TrimSuffix(file.Name, filepath.Ext(file.Name)) + ".zip"
-				break
+	for _, entry := range entries {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		if entry.file.IsDir {
+			if _, err := zw.Create(entry.zipPath + "/"); err != nil {
+				return fmt.Errorf("创建ZIP目录失败: %w", err)
 			}
+			continue
+		}
+
+		header := &zip.FileHeader{
+			Name:     entry.zipPath,
+			Method:   zip.Deflate,
+			Modified: entry.file.UpdatedAt,
+		}
+		header.SetMode(0644)
+
+		entryWriter, err := zw.CreateHeader(header)
+		if err != nil {
+			return fmt.Errorf("创建ZIP条目失败: %w", err)
+		}
+
+		obj, err := s.minio.DownloadFile(ctx, entry.file.OssObjectKey)
+		if err != nil {
+			return fmt.Errorf("读取文件对象失败: %w", err)
+		}
+
+		_, copyErr := io.Copy(entryWriter, obj)
+		closeErr := obj.Close()
+		if copyErr != nil {
+			return fmt.Errorf("写入ZIP条目失败: %w", copyErr)
+		}
+		if closeErr != nil {
+			return fmt.Errorf("关闭文件对象失败: %w", closeErr)
 		}
 	}
 
-	return reader, zipFileName, nil
+	if err := zw.Close(); err != nil {
+		return fmt.Errorf("关闭ZIP失败: %w", err)
+	}
+	closed = true
+	return nil
+}
+
+func batchZipFileName(files []models.File, selectedIDs []string) string {
+	zipFileName := "files.zip"
+	if len(selectedIDs) == 1 {
+		for _, file := range files {
+			if file.Id == selectedIDs[0] {
+				name := strings.TrimSpace(strings.TrimSuffix(file.Name, filepath.Ext(file.Name)))
+				if name == "" {
+					name = "download"
+				}
+				return name + ".zip"
+			}
+		}
+	}
+	return zipFileName
 }
 
 type zipEntry struct {

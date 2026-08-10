@@ -43,10 +43,17 @@ type RecentFile struct {
 }
 
 type FileBrief struct {
-	Name     string `json:"name"`
-	IsDir    bool   `json:"is_dir"`
-	Modified string `json:"modified"`
-	SizeStr  string `json:"size_str"`
+	Id           string `json:"id"`
+	Name         string `json:"name"`
+	ParentId     string `json:"parent_id"`
+	IsDir        bool   `json:"is_dir"`
+	Size         int64  `json:"size"`
+	SizeStr      string `json:"size_str"`
+	Extension    string `json:"extension"`
+	FileURL      string `json:"file_url"`
+	ThumbnailURL string `json:"thumbnail_url"`
+	CreatedAt    string `json:"created_at"`
+	Modified     string `json:"modified"`
 }
 
 type FilePreview struct {
@@ -100,6 +107,7 @@ type FileService interface {
 	MergeChunks(ctx context.Context, userId int, fileHash, fileName, parentId string, fileSize int64, chunkSize int64, totalChunks int) (*models.File, error)
 	CancelChunkUpload(ctx context.Context, userId int, fileHash string) error
 	GetChunkUploadProgress(ctx context.Context, userId int, fileHash string) (map[string]interface{}, error)
+	StartChunkUploadCleanup(ctx context.Context)
 
 	GetFolderTree(ctx context.Context, userId int) ([]FolderNode, error)
 	MoveFile(ctx context.Context, userId int, fileId, targetFolderId string) error
@@ -111,6 +119,7 @@ type FileService interface {
 	GetPresignedDownloadURL(ctx context.Context, userId int, fileId string) (string, *models.File, error)
 	GetDownloadInfo(ctx context.Context, userId int, fileId string) (map[string]interface{}, error)
 	DownloadBatchZip(ctx context.Context, userId int, fileIds []string) (io.ReadCloser, string, error)
+	CreateBatchDownload(ctx context.Context, userId int, fileIds []string) (*BatchDownloadResult, error)
 	GetDuplicateFiles(ctx context.Context, userId int) ([]DuplicateGroup, int64, error)
 }
 
@@ -167,6 +176,21 @@ func (s *fileService) GetFiles(ctx context.Context, userId int, parentId string,
 }
 
 func (s *fileService) CreateFolder(userId int, folderName string, parentId string) (*models.File, error) {
+	ctx := context.Background()
+	folderName = strings.TrimSpace(folderName)
+	if err := validateFileName(folderName); err != nil {
+		return nil, err
+	}
+	if err := s.ensureTargetFolder(ctx, userId, parentId); err != nil {
+		return nil, err
+	}
+	exists, err := s.fileRepo.CheckDuplicateName(userId, parentId, folderName)
+	if err != nil {
+		return nil, err
+	}
+	if exists {
+		return nil, errors.New("该目录下已有同名的文件夹")
+	}
 	folder, err := s.fileRepo.CreateFolder(userId, folderName, parentId)
 	if err != nil {
 		return nil, err
@@ -175,13 +199,23 @@ func (s *fileService) CreateFolder(userId int, folderName string, parentId strin
 }
 
 func (s *fileService) Rename(userId int, fileId, newName string) error {
-	// 检查是否存在
-	file, err := s.fileRepo.GetFileById(fileId)
-	if err != nil {
+	newName = strings.TrimSpace(newName)
+	if err := validateFileName(newName); err != nil {
 		return err
 	}
+	file, err := s.fileRepo.GetUserFileByID(userId, fileId)
+	if err != nil {
+		return errors.New("文件不存在或无权限")
+	}
+	if isProtectedRootFolder(file) {
+		return errors.New("不能重命名根目录")
+	}
+	if file.Name == newName {
+		return nil
+	}
 	// 重名检查
-	exists, err := s.fileRepo.CheckDuplicateName(userId, file.ParentId.String, newName)
+	parentId := nullToString(file.ParentId)
+	exists, err := s.fileRepo.CheckDuplicateName(userId, parentId, newName)
 	if err != nil {
 		return err
 	}
@@ -192,7 +226,7 @@ func (s *fileService) Rename(userId int, fileId, newName string) error {
 	if exists {
 		return errors.New("该目录下已有同名的" + typeStr)
 	}
-	return s.fileRepo.UpdateFileNameById(fileId, newName)
+	return s.fileRepo.RenameFile(userId, fileId, newName)
 }
 
 func (s *fileService) Delete(fileId string, userId int) error {
@@ -205,6 +239,9 @@ func (s *fileService) Delete(fileId string, userId int) error {
 	}
 	if file.IsDeleted {
 		return errors.New("文件已删除")
+	}
+	if isProtectedRootFolder(file) {
+		return errors.New("不能删除根目录")
 	}
 
 	return s.db.Transaction(func(tx *gorm.DB) error {
@@ -290,11 +327,22 @@ func (s *fileService) GetRecentFiles(userId int, timeRange string) ([]*RecentFil
 			result = append(result, resultMap[day])
 		}
 		// 对已经创建的RecentFile对象修改（返回值是指针类型）: 把文件信息封装成 FileBrief，追加到 Files 列表。
+		parentId := ""
+		if f.ParentId.Valid {
+			parentId = f.ParentId.String
+		}
 		resultMap[day].Files = append(resultMap[day].Files, FileBrief{
-			Name:     f.Name,
-			IsDir:    f.IsDir,
-			Modified: f.UpdatedAt.Format("15:04"),
-			SizeStr:  f.SizeStr,
+			Id:           f.Id,
+			Name:         f.Name,
+			ParentId:     parentId,
+			IsDir:        f.IsDir,
+			Size:         f.Size,
+			SizeStr:      f.SizeStr,
+			Extension:    f.FileExtension,
+			FileURL:      f.FileURL,
+			ThumbnailURL: f.ThumbnailURL,
+			CreatedAt:    f.CreatedAt.Format("2006-01-02 15:04:05"),
+			Modified:     f.UpdatedAt.Format("15:04"),
 		})
 	}
 	return result, nil
@@ -506,16 +554,24 @@ func (s *fileService) GetFolderTree(ctx context.Context, userId int) ([]FolderNo
 }
 
 func (s *fileService) MoveFile(ctx context.Context, userId int, fileId, targetFolderId string) error {
-	//file, _ := s.fileRepo.GetFileById(fileId)
-
 	if fileId == targetFolderId {
 		return errors.New("不能移动到自身")
 	}
 
-	// 若是目录，不能移动到子目录
-	file, err := s.fileRepo.GetFileById(fileId)
+	file, err := s.fileRepo.GetUserFileByID(userId, fileId)
 	if err != nil {
+		return errors.New("文件不存在或无权限")
+	}
+	if isProtectedRootFolder(file) {
+		return errors.New("不能移动根目录")
+	}
+	if err := s.ensureTargetFolder(ctx, userId, targetFolderId); err != nil {
 		return err
+	}
+
+	currentParentId := nullToString(file.ParentId)
+	if currentParentId == targetFolderId {
+		return nil
 	}
 	if file.IsDir {
 		isSub, err := s.fileRepo.IsSubFolder(ctx, userId, fileId, targetFolderId)
@@ -526,8 +582,19 @@ func (s *fileService) MoveFile(ctx context.Context, userId int, fileId, targetFo
 			return errors.New("不能移动到子文件夹")
 		}
 	}
+	exists, err := s.fileRepo.CheckDuplicateName(userId, targetFolderId, file.Name)
+	if err != nil {
+		return err
+	}
+	if exists {
+		typeStr := "文件夹"
+		if !file.IsDir {
+			typeStr = "文件"
+		}
+		return errors.New("目标目录下已有同名的" + typeStr)
+	}
 	// 更新 parentId
-	return s.fileRepo.UpdateParent(ctx, fileId, targetFolderId)
+	return s.fileRepo.UpdateParent(ctx, userId, fileId, targetFolderId)
 }
 
 func (s *fileService) PreviewStream(ctx context.Context, userId int, fileId string) (io.ReadCloser, *models.File, error) {
@@ -620,4 +687,40 @@ func nullToString(ns sql.NullString) string {
 		return ns.String
 	}
 	return ""
+}
+
+func nullableParentID(parentId string) sql.NullString {
+	parentId = strings.TrimSpace(parentId)
+	return sql.NullString{String: parentId, Valid: parentId != ""}
+}
+
+func validateFileName(name string) error {
+	if name == "" {
+		return errors.New("名称不能为空")
+	}
+	if name == "/" {
+		return errors.New("名称不能为根目录")
+	}
+	if strings.ContainsAny(name, `/\`) {
+		return errors.New("名称不能包含路径分隔符")
+	}
+	return nil
+}
+
+func isProtectedRootFolder(file *models.File) bool {
+	return file != nil && file.IsDir && file.Name == "/" && !file.ParentId.Valid
+}
+
+func (s *fileService) ensureTargetFolder(ctx context.Context, userId int, targetFolderId string) error {
+	if strings.TrimSpace(targetFolderId) == "" {
+		return nil
+	}
+	target, err := s.fileRepo.GetUserFileByID(userId, targetFolderId)
+	if err != nil {
+		return errors.New("目标文件夹不存在或无权限")
+	}
+	if !target.IsDir {
+		return errors.New("目标不是文件夹")
+	}
+	return nil
 }

@@ -129,6 +129,10 @@ func LoadConfig() (*Config, error) {
 	v.BindEnv("minio.secretAccessKey", "GCS_MINIO_SECRET_KEY")
 	v.BindEnv("jwt.secret", "GCS_JWT_SECRET")
 
+	v.SetDefault("security.defaultQuotaGB", 10)
+	v.SetDefault("security.maxFileSizeMB", 500)
+	v.SetDefault("security.rateLimitRPS", 50)
+
 	// 读取配置文件
 	if err := v.ReadInConfig(); err != nil {
 		return nil, err
@@ -161,12 +165,6 @@ func validateConfig(cfg *Config) error {
 	// 安全配置默认值
 	if cfg.Security.DefaultQuotaGB <= 0 {
 		cfg.Security.DefaultQuotaGB = 10
-	}
-	if cfg.Security.MaxFileSizeMB <= 0 {
-		cfg.Security.MaxFileSizeMB = 500 // 默认500MB
-	}
-	if cfg.Security.RateLimitRPS <= 0 {
-		cfg.Security.RateLimitRPS = 50 // 默认每秒50次
 	}
 	if cfg.Security.AllowedExtensions == nil {
 		// 默认允许常见文件类型

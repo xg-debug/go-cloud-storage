@@ -25,7 +25,8 @@ var defaultLimiter *RateLimiter
 
 func InitRateLimiter(rate, burst int) {
 	if rate <= 0 {
-		rate = 50
+		defaultLimiter = nil
+		return
 	}
 	if burst <= 0 {
 		burst = 100

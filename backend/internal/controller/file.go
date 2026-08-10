@@ -21,6 +21,8 @@ import (
 	"github.com/go-redis/redis/v8"
 )
 
+const normalUploadMaxSize int64 = 10 * 1024 * 1024
+
 type FileController struct {
 	fileService services.FileService
 	securityCfg config.SecurityConfig
@@ -102,6 +104,10 @@ func (c *FileController) UploadFile(ctx *gin.Context) {
 	userId := ctx.GetInt("userId")
 
 	fileHash := ctx.PostForm("fileHash")
+	if !isSHA256Hex(fileHash) {
+		utils.Fail(ctx, http.StatusBadRequest, "无效的文件hash")
+		return
+	}
 
 	// 获取上传的文件（对应前端 FormData.append('file', file)）
 	fileHeader, err := ctx.FormFile("file")
@@ -120,6 +126,10 @@ func (c *FileController) UploadFile(ctx *gin.Context) {
 	maxSize := int64(c.securityCfg.MaxFileSizeMB) * 1024 * 1024
 	if fileHeader.Size > maxSize {
 		utils.Fail(ctx, http.StatusBadRequest, fmt.Sprintf("文件大小超过限制（最大 %dMB）", c.securityCfg.MaxFileSizeMB))
+		return
+	}
+	if fileHeader.Size > normalUploadMaxSize {
+		utils.Fail(ctx, http.StatusBadRequest, "普通上传文件不能超过10MB，请使用分片上传")
 		return
 	}
 
@@ -281,6 +291,10 @@ func (c *FileController) ChunkUploadInit(ctx *gin.Context) {
 		utils.Fail(ctx, http.StatusBadRequest, "参数错误")
 		return
 	}
+	if !isSHA256Hex(req.FileHash) {
+		utils.Fail(ctx, http.StatusBadRequest, "无效的文件hash")
+		return
+	}
 
 	userId := ctx.GetInt("userId")
 
@@ -318,6 +332,10 @@ func (c *FileController) ChunkUploadPart(ctx *gin.Context) {
 
 	if fileHash == "" || chunkIndexStr == "" {
 		utils.Fail(ctx, http.StatusBadRequest, "缺少必要参数 fileHash 或 chunkIndex")
+		return
+	}
+	if !isSHA256Hex(fileHash) {
+		utils.Fail(ctx, http.StatusBadRequest, "无效的文件hash")
 		return
 	}
 
@@ -365,6 +383,10 @@ func (c *FileController) ChunkUploadMerge(ctx *gin.Context) {
 	}
 	if err := ctx.ShouldBindJSON(&req); err != nil {
 		utils.Fail(ctx, http.StatusBadRequest, "参数错误")
+		return
+	}
+	if !isSHA256Hex(req.FileHash) {
+		utils.Fail(ctx, http.StatusBadRequest, "无效的文件hash")
 		return
 	}
 	userId := ctx.GetInt("userId")
@@ -475,21 +497,14 @@ func (c *FileController) Download(ctx *gin.Context) {
 	fileId := ctx.Param("fileId")
 	userId := ctx.GetInt("userId")
 
-	file, err := c.fileService.GetFileById(fileId)
-	if err != nil {
-		utils.Fail(ctx, http.StatusBadRequest, "文件不存在")
-		return
-	}
-
-	// 大文件 (>100MB): 返回 MinIO 预签名 URL 让客户端直连
-	// 客户端可用 Range 头并行下载，且不经过应用服务器
-	if file.Size > 100*1024*1024 {
-		u, _, err := c.fileService.GetPresignedDownloadURL(ctx, userId, fileId)
+	rangeHeader := ctx.GetHeader("Range")
+	if rangeHeader == "" {
+		u, file, err := c.fileService.GetPresignedDownloadURL(ctx, userId, fileId)
 		if err != nil {
 			utils.Fail(ctx, http.StatusInternalServerError, "生成下载链接失败")
 			return
 		}
-		ctx.Header("Content-Disposition", "attachment; filename=\""+file.Name+"\"")
+		ctx.Header("Content-Disposition", contentDispositionAttachment(file.Name))
 		ctx.Redirect(http.StatusFound, u)
 		return
 	}
@@ -500,61 +515,32 @@ func (c *FileController) Download(ctx *gin.Context) {
 		return
 	}
 
-	rangeHeader := ctx.GetHeader("Range")
-
 	// 支持 Range 请求: 客户端可多线程分段下载
-	if rangeHeader != "" {
-		var start, end int64
-		_, err := fmt.Sscanf(rangeHeader, "bytes=%d-%d", &start, &end)
-		if err != nil {
-			// 尝试 "bytes=0-" 格式
-			_, err = fmt.Sscanf(rangeHeader, "bytes=%d-", &start)
-			if err != nil {
-				utils.Fail(ctx, http.StatusBadRequest, "无效的 Range 头")
-				return
-			}
-			end = objSize - 1
-		}
-
-		if start > end || start >= objSize {
+	start, end, rangeStatus, err := parseSingleRange(rangeHeader, objSize)
+	if err != nil {
+		if rangeStatus == http.StatusRequestedRangeNotSatisfiable {
 			ctx.Header("Content-Range", fmt.Sprintf("bytes */%d", objSize))
 			ctx.Status(http.StatusRequestedRangeNotSatisfiable)
 			return
 		}
-		if end >= objSize {
-			end = objSize - 1
-		}
-
-		reader, fileInfo, infoSize, err := c.fileService.DownloadRange(ctx, userId, fileId, start, end)
-		if err != nil {
-			utils.Fail(ctx, http.StatusInternalServerError, "下载失败")
-			return
-		}
-		defer reader.Close()
-
-		contentLen := end - start + 1
-		ctx.Header("Content-Disposition", "attachment; filename=\""+fileInfo.Name+"\"")
-		ctx.Header("Content-Type", "application/octet-stream")
-		ctx.Header("Content-Length", fmt.Sprintf("%d", contentLen))
-		ctx.Header("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, infoSize))
-		ctx.Header("Accept-Ranges", "bytes")
-		ctx.Status(http.StatusPartialContent)
-		io.Copy(ctx.Writer, reader)
+		utils.Fail(ctx, http.StatusBadRequest, "无效的 Range 头")
 		return
 	}
 
-	// 无 Range: 全量下载
-	reader, fileInfo, err := c.fileService.Download(ctx, userId, fileId)
+	reader, fileInfo, infoSize, err := c.fileService.DownloadRange(ctx, userId, fileId, start, end)
 	if err != nil {
 		utils.Fail(ctx, http.StatusInternalServerError, "下载失败")
 		return
 	}
 	defer reader.Close()
 
-	ctx.Header("Content-Disposition", "attachment; filename=\""+fileInfo.Name+"\"")
+	contentLen := end - start + 1
+	ctx.Header("Content-Disposition", contentDispositionAttachment(fileInfo.Name))
 	ctx.Header("Content-Type", "application/octet-stream")
-	ctx.Header("Content-Length", fmt.Sprintf("%d", objSize))
+	ctx.Header("Content-Length", fmt.Sprintf("%d", contentLen))
+	ctx.Header("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, infoSize))
 	ctx.Header("Accept-Ranges", "bytes")
+	ctx.Status(http.StatusPartialContent)
 	io.Copy(ctx.Writer, reader)
 }
 
@@ -577,7 +563,7 @@ func (c *FileController) CopyFile(ctx *gin.Context) {
 	utils.Success(ctx, gin.H{"message": "复制成功"})
 }
 
-// DownloadBatch streams multiple files as a ZIP archive
+// DownloadBatch creates a temporary ZIP object and returns a presigned direct download URL.
 func (c *FileController) DownloadBatch(ctx *gin.Context) {
 	var req struct {
 		FileIds []string `json:"fileIds" binding:"required"`
@@ -593,20 +579,13 @@ func (c *FileController) DownloadBatch(ctx *gin.Context) {
 
 	userId := ctx.GetInt("userId")
 
-	reader, zipName, err := c.fileService.DownloadBatchZip(ctx, userId, req.FileIds)
+	result, err := c.fileService.CreateBatchDownload(ctx, userId, req.FileIds)
 	if err != nil {
 		slog.Error("批量下载失败", "error", err)
 		utils.Fail(ctx, http.StatusInternalServerError, "批量下载失败")
 		return
 	}
-	defer reader.Close()
-
-	ctx.Header("Content-Type", "application/zip")
-	ctx.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, url.QueryEscape(zipName)))
-	ctx.Header("Accept-Ranges", "bytes")
-	ctx.Status(http.StatusOK)
-
-	io.Copy(ctx.Writer, reader)
+	utils.Success(ctx, result)
 }
 
 func (c *FileController) isAllowedExtension(fileName string) bool {
@@ -630,6 +609,83 @@ func mimeTypeByExtension(ext string) string {
 		return t
 	}
 	return "application/octet-stream"
+}
+
+func contentDispositionAttachment(fileName string) string {
+	return mime.FormatMediaType("attachment", map[string]string{"filename": fileName})
+}
+
+func parseSingleRange(header string, size int64) (int64, int64, int, error) {
+	if size <= 0 {
+		return 0, 0, http.StatusRequestedRangeNotSatisfiable, fmt.Errorf("empty object")
+	}
+
+	const prefix = "bytes="
+	if !strings.HasPrefix(header, prefix) {
+		return 0, 0, http.StatusBadRequest, fmt.Errorf("range unit must be bytes")
+	}
+
+	spec := strings.TrimSpace(strings.TrimPrefix(header, prefix))
+	if spec == "" || strings.Contains(spec, ",") {
+		return 0, 0, http.StatusBadRequest, fmt.Errorf("only a single byte range is supported")
+	}
+
+	parts := strings.SplitN(spec, "-", 2)
+	if len(parts) != 2 {
+		return 0, 0, http.StatusBadRequest, fmt.Errorf("invalid byte range")
+	}
+
+	startText := strings.TrimSpace(parts[0])
+	endText := strings.TrimSpace(parts[1])
+
+	if startText == "" {
+		suffixLen, err := strconv.ParseInt(endText, 10, 64)
+		if err != nil || suffixLen <= 0 {
+			return 0, 0, http.StatusBadRequest, fmt.Errorf("invalid suffix range")
+		}
+		if suffixLen >= size {
+			return 0, size - 1, http.StatusPartialContent, nil
+		}
+		return size - suffixLen, size - 1, http.StatusPartialContent, nil
+	}
+
+	start, err := strconv.ParseInt(startText, 10, 64)
+	if err != nil || start < 0 {
+		return 0, 0, http.StatusBadRequest, fmt.Errorf("invalid range start")
+	}
+	if start >= size {
+		return 0, 0, http.StatusRequestedRangeNotSatisfiable, fmt.Errorf("range start past object")
+	}
+
+	end := size - 1
+	if endText != "" {
+		parsedEnd, err := strconv.ParseInt(endText, 10, 64)
+		if err != nil || parsedEnd < 0 {
+			return 0, 0, http.StatusBadRequest, fmt.Errorf("invalid range end")
+		}
+		end = parsedEnd
+	}
+	if start > end {
+		return 0, 0, http.StatusRequestedRangeNotSatisfiable, fmt.Errorf("range start after end")
+	}
+	if end >= size {
+		end = size - 1
+	}
+
+	return start, end, http.StatusPartialContent, nil
+}
+
+func isSHA256Hex(v string) bool {
+	if len(v) != 64 {
+		return false
+	}
+	for _, c := range v {
+		if (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F') {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func saveSearchHistory(userId int, keyword string) {

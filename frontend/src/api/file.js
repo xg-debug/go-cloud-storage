@@ -36,6 +36,14 @@ export const downloadFile = (fileId) => {
     })
 }
 
+// 获取下载策略和预签名直链
+export const getDownloadInfo = (fileId) => {
+    return request({
+        url: `/file/download-info/${fileId}`,
+        method: 'get'
+    })
+}
+
 // 删除文件
 export const deleteFile = (fileId) => {
     return request({
@@ -187,15 +195,14 @@ export const chunkUploadCancel = (fileHash, config = {}) => request({
 })
 
 /**
- * 批量下载文件（ZIP打包）
+ * 创建批量下载任务，后端生成临时 ZIP 对象并返回预签名下载 URL
  * @param {string[]} fileIds
  */
-export const downloadBatch = (fileIds) => {
+export const createBatchDownload = (fileIds) => {
     return request({
         url: '/file/download-batch',
         method: 'post',
-        data: { fileIds },
-        responseType: 'blob'
+        data: { fileIds }
     })
 }
 

@@ -1,17 +1,25 @@
 import { ElMessage } from 'element-plus'
-import { downloadFile as downloadApi, previewFile as previewApi } from '@/api/file'
+import { downloadFile as downloadApi, getDownloadInfo, previewFile as previewApi } from '@/api/file'
 import { addFavorite, cancelFavorite } from '@/api/favorite'
 import { formatSize, formatTime } from '@/utils/format'
 
 export function useFileActions() {
   async function download(item) {
     try {
+      const info = await getDownloadInfo(item.id)
+      if (info?.directDownloadUrl) {
+        triggerDownload(info.directDownloadUrl, info.fileName || item.name)
+        return
+      }
+
+      if (item.size && item.size > 10 * 1024 * 1024) {
+        ElMessage.error('下载链接生成失败，请稍后重试')
+        return
+      }
+
       const blob = await downloadApi(item.id)
       const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = item.name
-      a.click()
+      triggerDownload(url, item.name)
       URL.revokeObjectURL(url)
     } catch {
       ElMessage.error('下载失败')
@@ -60,4 +68,14 @@ export function useFileActions() {
   }
 
   return { download, preview, toggleStar, getFileType, isImage, formatSize, formatTime }
+}
+
+function triggerDownload(url, fileName) {
+  const a = document.createElement('a')
+  a.href = url
+  if (fileName) a.download = fileName
+  a.rel = 'noopener'
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
 }
