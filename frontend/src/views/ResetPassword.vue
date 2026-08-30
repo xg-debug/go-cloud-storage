@@ -7,7 +7,7 @@
       </div>
       <el-form ref="formRef" :model="form" :rules="rules" @keyup.enter="handleSubmit">
         <el-form-item prop="password">
-          <el-input v-model="form.password" type="password" placeholder="新密码（6位以上，含大小写字母和数字）" :prefix-icon="Lock" size="large" show-password />
+          <el-input v-model="form.password" type="password" placeholder="新密码（8位以上，含大小写字母和数字）" :prefix-icon="Lock" size="large" show-password />
         </el-form-item>
         <div class="password-strength" v-if="form.password">
           <span v-for="i in 3" :key="i" :class="{ active: passwordScore >= i }"></span>
@@ -43,7 +43,7 @@ const success = ref(false)
 const passwordScore = computed(() => {
   const v = form.password || ''
   let s = 0
-  if (v.length >= 6) s++
+  if (v.length >= 8) s++
   if (/[a-z]/.test(v) && /[A-Z]/.test(v)) s++
   if (/\d/.test(v)) s++
   return s
@@ -53,7 +53,7 @@ const passwordText = computed(() => ['弱', '中', '强', '安全'][passwordScor
 const rules = {
   password: [
     { required: true, message: '请输入新密码', trigger: 'blur' },
-    { min: 6, message: '至少6个字符', trigger: 'blur' },
+    { min: 8, message: '至少8个字符', trigger: 'blur' },
     { pattern: /(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/, message: '需包含大小写字母和数字', trigger: 'blur' }
   ],
   passwordConfirm: [

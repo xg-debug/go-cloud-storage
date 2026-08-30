@@ -12,14 +12,16 @@ type CategoryService interface {
 }
 
 type categoryService struct {
-	db       *gorm.DB
-	fileRepo repositories.FileRepository
+	db          *gorm.DB
+	fileRepo    repositories.FileRepository
+	fileService FileService
 }
 
-func NewCategoryService(db *gorm.DB, fileRepo repositories.FileRepository) CategoryService {
+func NewCategoryService(db *gorm.DB, fileRepo repositories.FileRepository, fs FileService) CategoryService {
 	return &categoryService{
-		db:       db,
-		fileRepo: fileRepo,
+		db:          db,
+		fileRepo:    fileRepo,
+		fileService: fs,
 	}
 }
 
@@ -33,10 +35,7 @@ func (s *categoryService) GetFilesByCategory(userId int, fileType string, sortBy
 
 	fileList := make([]FileItem, 0, len(files))
 	for _, file := range files {
-		thumbnailURL := file.ThumbnailURL
-		if fileType == "video" {
-			thumbnailURL = thumbnailURL + "?x-oss-process=video/snapshot,t_1000,f_jpg,w_400,h_300,m_fast"
-		}
+		fileURL, thumbURL := s.fileService.ResolveFileURLs(ctx, &file)
 		parentId := ""
 		if file.ParentId.Valid {
 			parentId = file.ParentId.String
@@ -50,8 +49,8 @@ func (s *categoryService) GetFilesByCategory(userId int, fileType string, sortBy
 			SizeStr:      file.SizeStr,
 			Extension:    file.FileExtension,
 			CreatedAt:    file.CreatedAt.Format("2006年01月02日"),
-			FileURL:      file.FileURL,
-			ThumbnailURL: thumbnailURL,
+			FileURL:      fileURL,
+			ThumbnailURL: thumbURL,
 		})
 	}
 	return fileList, total, nil

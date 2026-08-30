@@ -10,6 +10,8 @@ import (
 
 	"go-cloud-storage/backend/internal/models"
 
+	miniosrv "go-cloud-storage/backend/infrastructure/minio"
+
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
@@ -39,8 +41,17 @@ func (s *fileService) CopyFile(ctx context.Context, userId int, fileId, targetFo
 		}
 	}
 
-	// 检查配额
-	if !file.IsDir {
+	// 检查配额：文件夹先统计子树总大小，避免复制到一半才失败
+	if file.IsDir {
+		totalSize, sizeErr := s.fileRepo.SumSubtreeSize(ctx, file.Id)
+		if sizeErr != nil {
+			return fmt.Errorf("统计复制大小失败: %w", sizeErr)
+		}
+		quota, _ := s.storageQuotaRepo.GetByUserID(userId)
+		if quota != nil && quota.Used+totalSize > quota.Total {
+			return errors.New("存储空间不足")
+		}
+	} else {
 		quota, _ := s.storageQuotaRepo.GetByUserID(userId)
 		if quota != nil && quota.Used+file.Size > quota.Total {
 			return errors.New("存储空间不足")
@@ -98,32 +109,41 @@ func (s *fileService) copyFolder(ctx context.Context, userId int, src *models.Fi
 }
 
 func (s *fileService) copyChildren(ctx context.Context, tx *gorm.DB, userId int, srcId, targetParentId string, copiedKeys *[]string) error {
-	children, _, err := s.fileRepo.GetFiles(ctx, userId, srcId, 1, 10000, "created_at", "desc")
-	if err != nil {
-		return err
-	}
-	for _, child := range children {
-		childFile, err := s.fileRepo.GetUserFileByID(userId, child.Id)
+	// 分页遍历子项，避免单层超过 10000 时静默丢失文件
+	const pageSize = 2000
+	for page := 1; ; page++ {
+		children, _, err := s.fileRepo.GetFiles(ctx, userId, srcId, page, pageSize, "created_at", "desc")
 		if err != nil {
 			return err
 		}
-		if childFile.IsDir {
-			newId := uuid.New().String()
-			if err := tx.Model(&models.File{}).Create(&models.File{
-				Id: newId, UserId: userId, Name: childFile.Name, IsDir: true, ParentId: nullableParentID(targetParentId), Size: 0, SizeStr: "-",
-			}).Error; err != nil {
+		if len(children) == 0 {
+			return nil
+		}
+		for _, child := range children {
+			childFile, err := s.fileRepo.GetUserFileByID(userId, child.Id)
+			if err != nil {
 				return err
 			}
-			if err := s.copyChildren(ctx, tx, userId, childFile.Id, newId, copiedKeys); err != nil {
-				return err
-			}
-		} else {
-			if err := s.copyFileRecord(ctx, tx, userId, childFile, targetParentId, childFile.Name, copiedKeys); err != nil {
-				return err
+			if childFile.IsDir {
+				newId := uuid.New().String()
+				if err := tx.Model(&models.File{}).Create(&models.File{
+					Id: newId, UserId: userId, Name: childFile.Name, IsDir: true, ParentId: nullableParentID(targetParentId), Size: 0, SizeStr: "-",
+				}).Error; err != nil {
+					return err
+				}
+				if err := s.copyChildren(ctx, tx, userId, childFile.Id, newId, copiedKeys); err != nil {
+					return err
+				}
+			} else {
+				if err := s.copyFileRecord(ctx, tx, userId, childFile, targetParentId, childFile.Name, copiedKeys); err != nil {
+					return err
+				}
 			}
 		}
+		if len(children) < pageSize {
+			return nil
+		}
 	}
-	return nil
 }
 
 func (s *fileService) copyFileRecord(ctx context.Context, tx *gorm.DB, userId int, src *models.File, targetParentId, newName string, copiedKeys *[]string) error {
@@ -134,16 +154,15 @@ func (s *fileService) copyFileRecord(ctx context.Context, tx *gorm.DB, userId in
 	}
 	*copiedKeys = append(*copiedKeys, newKey)
 
-	// 如果源文件有缩略图，也复制缩略图对象
+	// 如果源文件有缩略图，也复制缩略图对象。
+	// 缩略图 key 规则为 <原key去扩展名>_thumb.jpg（与缩略图生成逻辑一致）。
 	newThumbnailURL := ""
-	if src.ThumbnailURL != "" {
-		thumbKey := s.minio.GenerateObjectKey(userId, targetParentId, "thumb_"+newName)
-		// 从 OSS URL 中解析缩略图 key（样式：.../bucket/objectKey）
-		parts := strings.Split(src.OssObjectKey, "/")
-		thumbSrcKey := strings.Replace(src.OssObjectKey, parts[len(parts)-1], "thumb_"+parts[len(parts)-1], 1)
-		if err := s.minio.CopyObject(ctx, thumbSrcKey, thumbKey); err == nil {
-			*copiedKeys = append(*copiedKeys, thumbKey)
-			newThumbnailURL = s.minio.GenerateObjectURL(thumbKey)
+	if src.ThumbnailURL != "" && src.OssObjectKey != "" {
+		thumbSrcKey := miniosrv.ThumbnailObjectKey(src.OssObjectKey)
+		newThumbKey := miniosrv.ThumbnailObjectKey(newKey)
+		if err := s.minio.CopyObject(ctx, thumbSrcKey, newThumbKey); err == nil {
+			*copiedKeys = append(*copiedKeys, newThumbKey)
+			newThumbnailURL = s.minio.GenerateObjectURL(newThumbKey)
 		}
 	}
 

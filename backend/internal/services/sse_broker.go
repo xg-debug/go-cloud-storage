@@ -2,9 +2,16 @@ package services
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
+)
+
+const (
+	// SSE 连接上限：防止恶意客户端大量建立长连接耗尽内存
+	maxSSEClientsPerUser = 8
+	maxSSEClientsTotal   = 5000
 )
 
 type SSEClient struct {
@@ -23,16 +30,23 @@ func NewSSEBroker() *SSEBroker {
 	}
 }
 
-func (b *SSEBroker) Subscribe(userId int, clientId string) *SSEClient {
+// Subscribe 注册 SSE 连接。超过单用户/全局连接上限时返回错误。
+func (b *SSEBroker) Subscribe(userId int, clientId string) (*SSEClient, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if len(b.clients) >= maxSSEClientsTotal {
+		return nil, errors.New("SSE 连接数已达全局上限")
+	}
+	if len(b.clients[userId]) >= maxSSEClientsPerUser {
+		return nil, errors.New("该用户的 SSE 连接数已达上限")
+	}
 	client := &SSEClient{ID: userId, Messages: make(chan []byte, 64)}
 	if b.clients[userId] == nil {
 		b.clients[userId] = make(map[string]*SSEClient)
 	}
 	b.clients[userId][clientId] = client
 	slog.Info("SSE client connected", "userId", userId, "clientId", clientId)
-	return client
+	return client, nil
 }
 
 func (b *SSEBroker) Unsubscribe(userId int, clientId string) {
@@ -62,7 +76,7 @@ func (b *SSEBroker) SendToUser(userId int, eventType string, data interface{}) {
 		select {
 		case client.Messages <- msg:
 		default:
-			// channel full, skip
+			// channel full, skip（未读通知计数可作补偿通道）
 		}
 	}
 }

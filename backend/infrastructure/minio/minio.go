@@ -27,6 +27,7 @@ import (
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
+	"github.com/minio/minio-go/v7/pkg/lifecycle"
 )
 
 type MinioService struct {
@@ -73,24 +74,17 @@ func NewMinioService(cfg *config.MinioConfig) (*MinioService, error) {
 		}
 	}
 
-	// 设置 Bucket 策略为公开只读 (public-read)
-	// 这一步是必须的，否则外部无法直接通过 URL 访问图片(403 Forbidden)
-	policy := fmt.Sprintf(`{
-		"Version": "2012-10-17",
-		"Statement": [
-			{
-				"Effect": "Allow",
-				"Principal": {
-					"AWS": ["*"]
-				},
-				"Action": ["s3:GetObject"],
-				"Resource": ["arn:aws:s3:::%s/*"]
-			}
-		]
-	}`, cfg.Bucket)
+	// 安全加固：Bucket 必须为私有（移除历史遗留的 public-read 策略）。
+	// 所有对外访问（预览/下载/缩略图/分享）一律通过预签名 URL，杜绝永久直链外泄。
+	if err := minioClient.SetBucketPolicy(ctx, cfg.Bucket, ""); err != nil {
+		return nil, fmt.Errorf("清除 Bucket 公开策略失败: %w", err)
+	}
 
-	if err := minioClient.SetBucketPolicy(ctx, cfg.Bucket, policy); err != nil {
-		return nil, fmt.Errorf("设置 Bucket 策略失败: %w", err)
+	// 生命周期规则：自动中止超过 1 天未完成的 Multipart Upload，
+	// 防止 Redis 会话丢失/进程崩溃后产生孤儿分片占用存储。
+	if err := applyAbortMultipartLifecycle(ctx, minioClient, cfg.Bucket); err != nil {
+		// 部分对象存储不支持该规则，失败仅告警不阻断启动
+		log.Printf("warn: failed to set abort-multipart lifecycle rule: %v\n", err)
 	}
 
 	return &MinioService{
@@ -100,6 +94,21 @@ func NewMinioService(cfg *config.MinioConfig) (*MinioService, error) {
 		endpoint: cfg.Endpoint,
 		useSSL:   cfg.UseSSL,
 	}, nil
+}
+
+// applyAbortMultipartLifecycle 配置生命周期规则，自动清理未完成的 Multipart Upload。
+func applyAbortMultipartLifecycle(ctx context.Context, client *minio.Client, bucket string) error {
+	cfg := lifecycle.NewConfiguration()
+	cfg.Rules = []lifecycle.Rule{
+		{
+			ID:     "abort-incomplete-multipart-uploads",
+			Status: "Enabled",
+			AbortIncompleteMultipartUpload: lifecycle.AbortIncompleteMultipartUpload{
+				DaysAfterInitiation: 1,
+			},
+		},
+	}
+	return client.SetBucketLifecycle(ctx, bucket, cfg)
 }
 
 // UploadFromStream 小文件上传 (流式)
@@ -274,7 +283,7 @@ func (s *MinioService) DeleteThumbnailForObject(ctx context.Context, objectKey s
 	if objectKey == "" {
 		return nil
 	}
-	return s.DeleteFile(ctx, thumbnailObjectKey(objectKey))
+	return s.DeleteFile(ctx, ThumbnailObjectKey(objectKey))
 }
 
 func (s *MinioService) DeleteFiles(ctx context.Context, objectKeys []string) error {
@@ -397,6 +406,50 @@ func (s *MinioService) PresignedGetPreviewURL(ctx context.Context, objectKey str
 	return u.String(), nil
 }
 
+// PresignThumbnailURL 生成缩略图对象的预签名 URL（私有桶下缩略图同样需要签名访问）。
+// 缩略图可能尚未生成，返回的 URL 可能 404，由前端兜底显示占位图。
+func (s *MinioService) PresignThumbnailURL(ctx context.Context, objectKey string, expiry time.Duration) (string, error) {
+	if objectKey == "" {
+		return "", nil
+	}
+	u, err := s.client.PresignedGetObject(ctx, s.bucket, ThumbnailObjectKey(objectKey), expiry, nil)
+	if err != nil {
+		return "", err
+	}
+	return u.String(), nil
+}
+
+// PresignAvatarURL 从数据库中存储的头像 URL 解析对象键并生成预签名 URL。
+// 解析失败（例如历史遗留的第三方存储 URL）时原样返回，保证兼容。
+func (s *MinioService) PresignAvatarURL(ctx context.Context, storedURL string, expiry time.Duration) string {
+	if storedURL == "" {
+		return ""
+	}
+	key, ok := s.parseObjectKeyFromURL(storedURL)
+	if !ok {
+		return storedURL
+	}
+	u, err := s.client.PresignedGetObject(ctx, s.bucket, key, expiry, nil)
+	if err != nil {
+		return storedURL
+	}
+	return u.String()
+}
+
+// parseObjectKeyFromURL 从 `http(s)://endpoint/bucket/objectKey?...` 中提取 objectKey。
+func (s *MinioService) parseObjectKeyFromURL(storedURL string) (string, bool) {
+	u, err := url.Parse(storedURL)
+	if err != nil || u.Host == "" {
+		return "", false
+	}
+	trimmed := strings.TrimPrefix(u.Path, "/")
+	parts := strings.SplitN(trimmed, "/", 2)
+	if len(parts) != 2 || parts[0] != s.bucket || parts[1] == "" {
+		return "", false
+	}
+	return parts[1], true
+}
+
 func (s *MinioService) GenerateObjectURL(objectKey string) string {
 	protocol := "http"
 	if s.useSSL {
@@ -502,7 +555,7 @@ func (s *MinioService) extractVideoThumbnailData(ctx context.Context, r io.Reade
 }
 
 func (s *MinioService) uploadThumbnail(ctx context.Context, objectKey string, data []byte, contentType string) (string, error) {
-	thumbKey := thumbnailObjectKey(objectKey)
+	thumbKey := ThumbnailObjectKey(objectKey)
 	reader := bytes.NewReader(data)
 	_, err := s.client.PutObject(ctx, s.bucket, thumbKey, reader, int64(len(data)), minio.PutObjectOptions{
 		ContentType: contentType,
@@ -513,7 +566,7 @@ func (s *MinioService) uploadThumbnail(ctx context.Context, objectKey string, da
 	return s.GenerateObjectURL(thumbKey), nil
 }
 
-func thumbnailObjectKey(objectKey string) string {
+func ThumbnailObjectKey(objectKey string) string {
 	ext := filepath.Ext(objectKey)
 	base := strings.TrimSuffix(objectKey, ext)
 	return fmt.Sprintf("%s_thumb.jpg", base)

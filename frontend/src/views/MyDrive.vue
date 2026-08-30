@@ -1,32 +1,43 @@
 <template>
   <div class="drive">
-    <!-- Breadcrumb bar (when navigating folders or searching) -->
-    <div v-if="isInFolder || isSearching" class="drive-bar">
-      <div class="drive-bar-left">
-        <el-button v-show="pathIdStack.length > 1" :icon="ArrowLeft" circle size="small" @click="goBack" />
-        <el-breadcrumb separator="/">
-          <el-breadcrumb-item @click="goRoot"><el-icon :size="14"><HomeFilled /></el-icon> 我的文件</el-breadcrumb-item>
-          <el-breadcrumb-item v-for="(name, idx) in currentPath" :key="idx" @click="goToBreadcrumb(idx)">
-            {{ name }}
-          </el-breadcrumb-item>
-        </el-breadcrumb>
-        <span v-if="!isSearching" class="drive-count">{{ total }} 项</span>
-        <!-- Sort -->
+    <header class="workspace-header">
+      <div class="workspace-heading">
+        <div class="workspace-title-row">
+          <el-button v-show="pathIdStack.length > 1" :icon="ArrowLeft" circle size="small" title="返回上一级" @click="goBack" />
+          <h1 v-if="!isInFolder">我的文件</h1>
+          <el-breadcrumb v-else separator="/">
+            <el-breadcrumb-item @click="goRoot"><el-icon :size="14"><HomeFilled /></el-icon> 我的文件</el-breadcrumb-item>
+            <el-breadcrumb-item v-for="(name, idx) in currentPath" :key="idx" @click="goToBreadcrumb(idx)">
+              {{ name }}
+            </el-breadcrumb-item>
+          </el-breadcrumb>
+        </div>
+        <p>{{ isSearching ? `正在搜索“${searchKeyword}”` : `${total} 项内容` }}</p>
+      </div>
+      <div class="workspace-primary-actions">
+        <el-button :icon="FolderAdd" @click="handleNewFolder">新建文件夹</el-button>
+        <el-button type="primary" :icon="Upload" @click="uploadDialogVisible = true">上传文件</el-button>
+      </div>
+    </header>
+
+    <div class="workspace-toolbar">
+      <div class="workspace-toolbar-left">
+        <strong>{{ isSearching ? '搜索结果' : (isInFolder ? currentPath[currentPath.length - 1] : '全部文件') }}</strong>
         <span v-if="!isSearching && fileList.length > 0" class="drive-sort-inline">
           <el-radio-group v-model="sortBy" size="small" @change="loadFiles">
             <el-radio-button value="created_at">时间</el-radio-button>
             <el-radio-button value="name">名称</el-radio-button>
             <el-radio-button value="size">大小</el-radio-button>
           </el-radio-group>
-          <el-button size="small" link :icon="sortOrder === 'asc' ? SortUp : SortDown" @click="toggleSortOrder" />
+          <el-button size="small" link :icon="sortOrder === 'asc' ? SortUp : SortDown" :title="sortOrder === 'asc' ? '升序' : '降序'" @click="toggleSortOrder" />
         </span>
       </div>
-      <div class="drive-bar-right">
-        <el-button class="view-toggle-btn" size="small" @click="viewMode = viewMode === 'grid' ? 'list' : 'grid'" :title="viewMode === 'grid' ? '切换列表视图' : '切换网格视图'">
-          <el-icon :size="16"><component :is="viewMode === 'grid' ? List : Grid" /></el-icon>
-        </el-button>
-      </div>
+      <el-button class="view-toggle-btn" size="small" @click="viewMode = viewMode === 'grid' ? 'list' : 'grid'" :title="viewMode === 'grid' ? '切换列表视图' : '切换网格视图'">
+        <el-icon :size="16"><component :is="viewMode === 'grid' ? List : Grid" /></el-icon>
+      </el-button>
     </div>
+
+    <FileUploadDialog v-model="uploadDialogVisible" :parent-id="currentParentId" @success="handleUploadSuccess" />
 
     <!-- Search banner -->
     <div v-if="isSearching" class="drive-search-banner">
@@ -34,67 +45,9 @@
       <el-button type="primary" link size="small" @click="clearSearch(); loadFiles()">清除搜索</el-button>
     </div>
 
-    <!-- Welcome area (only at root, not searching) -->
-    <template v-if="!isInFolder && !isSearching">
-      <div class="drive-welcome">
-        <div class="welcome-greeting">
-          <h1>你好{{ greetingEmoji }}，今天想找点什么呢？</h1>
-          <p>{{ greetingHint }}</p>
-        </div>
-        <div class="welcome-actions">
-          <el-button type="primary" :icon="Upload" size="large" round @click="uploadDialogVisible = true">上传文件</el-button>
-          <FileUploadDialog v-model="uploadDialogVisible" :parent-id="currentParentId" @success="handleUploadSuccess" />
-          <el-button :icon="FolderAdd" size="large" round @click="handleNewFolder">新建文件夹</el-button>
-        </div>
-      </div>
-
-      <!-- Quick Access -->
-      <div v-if="quickFolders.length > 0" class="drive-section">
-        <h2 class="section-head">快速访问</h2>
-        <div class="quick-scroll">
-          <div
-            v-for="f in quickFolders" :key="f.id"
-            class="quick-card"
-            :style="{ '--qc-color': f.color }"
-            @click="navigateTo(f)"
-          >
-            <div class="qc-icon">
-              <el-icon :size="22"><Folder /></el-icon>
-            </div>
-            <div class="qc-info">
-              <strong>{{ f.name }}</strong>
-              <span>{{ f.file_count || 0 }} 个文件</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Recent files section label -->
-      <div class="drive-section" v-if="!isInFolder">
-        <div class="section-head-row">
-          <div class="section-head-left">
-            <h2 class="section-head">全部文件</h2>
-            <!-- Sort inline -->
-            <span v-if="fileList.length > 0" class="drive-sort-inline">
-              <el-radio-group v-model="sortBy" size="small" @change="loadFiles">
-                <el-radio-button value="created_at">时间</el-radio-button>
-                <el-radio-button value="name">名称</el-radio-button>
-                <el-radio-button value="size">大小</el-radio-button>
-              </el-radio-group>
-              <el-button size="small" link :icon="sortOrder === 'asc' ? SortUp : SortDown" @click="toggleSortOrder" />
-            </span>
-          </div>
-          <div class="section-actions">
-            <el-button class="view-toggle-btn" size="small" @click="viewMode = viewMode === 'grid' ? 'list' : 'grid'" :title="viewMode === 'grid' ? '切换列表视图' : '切换网格视图'">
-              <el-icon :size="16"><component :is="viewMode === 'grid' ? List : Grid" /></el-icon>
-            </el-button>
-          </div>
-        </div>
-      </div>
-    </template>
-
-    <!-- File area -->
-    <div class="drive-files" :class="{ 'has-welcome': !isInFolder && !isSearching }">
+    <div class="drive-workspace">
+      <!-- File area -->
+      <div class="drive-files">
       <!-- Grid -->
       <div v-if="viewMode === 'grid'" class="file-grid">
         <article
@@ -167,7 +120,7 @@
 
       <!-- List -->
       <div v-else class="cb-table-wrap">
-        <el-table :data="fileList" row-key="id" @row-dblclick="handleOpen" @selection-change="onSelectionChange">
+        <el-table :data="fileList" row-key="id" @row-click="onTableRowClick" @row-dblclick="handleOpen" @selection-change="onSelectionChange">
           <el-table-column type="selection" width="44" />
           <el-table-column width="48">
             <template #default="{ row }">
@@ -219,11 +172,37 @@
 
       <!-- Empty -->
       <EmptyState v-if="!loading && fileList.length === 0 && !isSearching" :icon="Folder" title="此文件夹为空" description="拖拽文件到此处或点击上传按钮" />
+      </div>
+
+      <aside v-if="selectedFile" class="file-details" aria-label="文件详情">
+        <div class="details-head">
+          <strong>详情</strong>
+          <button type="button" title="关闭详情" @click="selectedIds = []"><el-icon><Close /></el-icon></button>
+        </div>
+        <div class="details-preview" :class="{ folder: selectedFile.is_dir }">
+          <img v-if="!selectedFile.is_dir && selectedFile.thumbnail_url" :src="selectedFile.thumbnail_url" :alt="selectedFile.name" />
+          <el-icon v-else :size="52" :color="getFileIconColor(selectedFile.name, selectedFile.is_dir)">
+            <component :is="getFileIcon(selectedFile.name, selectedFile.is_dir)" />
+          </el-icon>
+        </div>
+        <h2 :title="selectedFile.name">{{ selectedFile.name }}</h2>
+        <div class="details-actions">
+          <el-button v-if="!selectedFile.is_dir" type="primary" :icon="View" @click="handleAction(selectedFile, 'preview')">预览</el-button>
+          <el-button v-if="!selectedFile.is_dir" :icon="Download" @click="handleAction(selectedFile, 'download')">下载</el-button>
+          <el-button v-if="!selectedFile.is_dir" :icon="Share" @click="handleAction(selectedFile, 'share')">分享</el-button>
+        </div>
+        <dl class="details-meta">
+          <div><dt>类型</dt><dd>{{ selectedFile.is_dir ? '文件夹' : selectedFileType }}</dd></div>
+          <div><dt>大小</dt><dd>{{ selectedFile.size_str || '-' }}</dd></div>
+          <div><dt>修改时间</dt><dd>{{ formatTime(selectedFile.updated_at || selectedFile.created_at) }}</dd></div>
+          <div><dt>所在位置</dt><dd>{{ currentPath.length ? `我的文件 / ${currentPath.join(' / ')}` : '我的文件' }}</dd></div>
+        </dl>
+      </aside>
     </div>
 
     <!-- Batch actions bar -->
     <transition name="slide-up">
-      <div v-if="selectedIds.length > 0" class="batch-bar">
+      <div v-if="selectedIds.length > 1" class="batch-bar">
         <span class="batch-count">已选择 {{ selectedIds.length }} 项</span>
         <div class="batch-actions">
           <el-button size="small" round @click="handleBatchAction('download')"><el-icon><Download /></el-icon>下载</el-button>
@@ -352,6 +331,7 @@ import FileUploadDialog from '@/components/FileUploadDialog.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import { useFileActions } from '@/composables/useFileActions'
 import { marked } from 'marked'
+import DOMPurify from 'dompurify'
 
 const { download: doDownload, getFileType, isImage, formatTime } = useFileActions()
 
@@ -380,25 +360,16 @@ let searchTimer = null
 
 // ── Computed ──
 const isInFolder = computed(() => pathIdStack.value.length > 1)
-const quickFolders = computed(() => {
-  if (isInFolder.value || isSearching.value) return []
-  return fileList.value.filter(f => f.is_dir).slice(0, 6).map((f, i) => ({
-    ...f,
-    color: ['#F59E0B','#8B5CF6','#EC4899','#10B981','#2F6BFF','#F97316'][i % 6]
-  }))
+const selectedFile = computed(() => {
+  if (selectedIds.value.length !== 1) return null
+  return fileList.value.find(file => file.id === selectedIds.value[0]) || null
 })
-
-const greetingEmoji = computed(() => {
-  const h = new Date().getHours()
-  if (h < 12) return ' ☀️'
-  if (h < 18) return ' 👋'
-  return ' 🌙'
-})
-const greetingHint = computed(() => {
-  const h = new Date().getHours()
-  if (h < 12) return '早上好！文件已为你整理好，随时开始工作。'
-  if (h < 18) return '下午好！你的云端文件随身携带，随时访问。'
-  return '晚上好！查看今天的工作成果，或为明天做准备。'
+const selectedFileType = computed(() => {
+  if (!selectedFile.value) return '-'
+  const extension = selectedFile.value.file_extension || selectedFile.value.name.split('.').pop()
+  return {
+    image: '图片', video: '视频', audio: '音频', document: '文档', other: '其他文件'
+  }[getFileType(extension)]
 })
 
 // ── Context menu ──
@@ -488,9 +459,6 @@ onMounted(() => document.addEventListener('keydown', onKeydown))
 onUnmounted(() => document.removeEventListener('click', onDocumentClick))
 onUnmounted(() => document.removeEventListener('keydown', onKeydown))
 
-// ── Navigation ──
-function navigateTo(f) { handleOpen(f) }
-
 // ── Dialogs ──
 const renameDialogVisible = ref(false)
 const renameForm = ref({ id: '', name: '' })
@@ -535,10 +503,11 @@ const previewTitle = computed(() => {
 // ── Load files ──
 async function loadFiles() {
   loading.value = true
-  try {
-    const res = await listFiles({ parentId: currentParentId.value, sortBy: sortBy.value, sortOrder: sortOrder.value, page: currentPage.value, pageSize: pageSize.value })
-    fileList.value = res.list || []
-    total.value = res.total || 0
+	try {
+		const res = await listFiles({ parentId: currentParentId.value, sortBy: sortBy.value, sortOrder: sortOrder.value, page: currentPage.value, pageSize: pageSize.value })
+		fileList.value = res.list || []
+		total.value = res.total || 0
+		selectedIds.value = []
   } catch { ElMessage.error('加载文件列表失败') }
   finally { loading.value = false }
 }
@@ -577,12 +546,12 @@ function goBack() {
 // ── Select ──
 function onCardClick(e, item) {
   if (e.ctrlKey || e.metaKey) toggleSelect(item)
-  else if (e.shiftKey && selectedIds.value.length > 0) {
+	else if (e.shiftKey && selectedIds.value.length > 0) {
     const last = fileList.value.findIndex(f => f.id === selectedIds.value.at(-1))
     const cur = fileList.value.findIndex(f => f.id === item.id)
     const range = fileList.value.slice(Math.min(last, cur), Math.max(last, cur) + 1)
-    selectedIds.value = [...new Set([...selectedIds.value, ...range.map(f => f.id)])]
-  }
+		selectedIds.value = [...new Set([...selectedIds.value, ...range.map(f => f.id)])]
+	} else selectedIds.value = [item.id]
 }
 function toggleSelect(item) {
   const idx = selectedIds.value.indexOf(item.id)
@@ -590,6 +559,9 @@ function toggleSelect(item) {
   else selectedIds.value.push(item.id)
 }
 function onSelectionChange(sel) { selectedIds.value = sel.map(s => s.id) }
+function onTableRowClick(row, column) {
+  if (column?.type !== 'selection') selectedIds.value = [row.id]
+}
 
 // ── Actions ──
 function handleAction(item, cmd) {
@@ -599,7 +571,8 @@ function handleAction(item, cmd) {
     preview: () => handlePreview(item),
     share: () => {
       if (item.is_dir) { ElMessage.warning('暂不支持分享文件夹'); return }
-      shareFileInfo.value = { id: item.id, name: item.name, size: item.size, fileType: getFileType(item.extension) }
+      const extension = item.file_extension || item.name.split('.').pop()
+      shareFileInfo.value = { id: item.id, name: item.name, size: item.size, fileType: getFileType(extension) }
       shareDialogVisible.value = true
     },
     star: () => { addFavorite(item.id).then(() => ElMessage.success('已收藏')).catch(() => ElMessage.error('收藏失败')) },
@@ -634,10 +607,14 @@ async function handlePreview(item, idx) {
     if (d.preview_type === 'markdown' && d.file_url) {
       const res = await fetch(d.file_url)
       const text = await res.text()
-      markdownHtml.value = marked(text)
+      markdownHtml.value = DOMPurify.sanitize(marked(text), {
+        USE_PROFILES: { html: true },
+        FORBID_TAGS: ['style', 'form'],
+        FORBID_ATTR: ['style']
+      })
     }
   } catch { previewVisible.value = false; ElMessage.error('预览失败') }
-  finally { previewLoading.value = false }
+  finally { previewLoading.value = false; loading.value = false }
 }
 
 async function navImage(dir) {
@@ -817,20 +794,47 @@ watch(() => store.state.file.needRefresh, val => {
   background: var(--cb-bg);
 }
 
-/* ── Bar ── */
-.drive-bar {
-  display: flex; justify-content: space-between; align-items: center;
-  padding: 12px 28px;
+/* ── Desktop workspace header ── */
+.workspace-header {
+  min-height: 84px;
+  padding: 18px 28px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  flex-shrink: 0;
   background: var(--cb-surface);
   border-bottom: 1px solid var(--cb-border-light);
+}
+.workspace-heading { min-width: 0; }
+.workspace-title-row { display: flex; align-items: center; gap: 10px; min-height: 30px; }
+.workspace-title-row h1 {
+  margin: 0;
+  color: var(--cb-text);
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -.35px;
+}
+.workspace-heading p {
+  margin: 4px 0 0;
+  color: var(--cb-text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+.workspace-primary-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.workspace-toolbar {
+  min-height: 54px;
+  padding: 10px 28px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
   flex-shrink: 0;
+  background: var(--cb-bg);
+  border-bottom: 1px solid var(--cb-border-light);
 }
-.drive-bar-left { display: flex; align-items: center; gap: 10px; }
-.drive-count {
-  font-size: 12px; color: var(--cb-text-muted); font-weight: 600;
-  background: var(--cb-bg-alt); padding: 2px 8px; border-radius: 99px;
-}
-.drive-bar-right { flex-shrink: 0; }
+.workspace-toolbar-left { display: flex; align-items: center; min-width: 0; }
+.workspace-toolbar-left > strong { color: var(--cb-text); font-size: 14px; white-space: nowrap; }
 .drive-sort-inline {
   display: inline-flex; align-items: center; gap: 4px;
   margin-left: 12px;
@@ -853,89 +857,52 @@ watch(() => store.state.file.needRefresh, val => {
   border-bottom: 1px solid var(--cb-primary-soft);
 }
 
-/* ── Welcome ── */
-.drive-welcome {
-  padding: 32px 28px 24px;
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 24px;
-}
-.welcome-greeting h1 {
-  font-size: 26px;
-  font-weight: 800;
-  color: var(--cb-text);
-  letter-spacing: -0.5px;
-  margin: 0 0 8px;
-}
-.welcome-greeting p {
-  font-size: 14px;
-  color: var(--cb-text-muted);
-  margin: 0;
-}
-.welcome-actions {
-  display: flex;
-  gap: 8px;
-  flex-shrink: 0;
-}
-
-/* ── Section ── */
-.drive-section { padding: 8px 28px 0; }
-.section-head {
-  font-size: 16px;
-  font-weight: 700;
-  color: var(--cb-text);
-  letter-spacing: -0.2px;
-  margin: 0 0 14px;
-}
-.section-head-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 14px;
-}
-.section-head-row .section-head { margin-bottom: 0; }
-.section-head-left { display: flex; align-items: center; gap: 12px; }
-
-/* ── Quick Access ── */
-.quick-scroll {
-  display: flex;
-  gap: 12px;
-  overflow-x: auto;
-  padding-bottom: 4px;
-}
-.quick-card {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 14px 18px;
-  border: 1px solid var(--cb-border);
-  border-radius: var(--cb-radius);
-  background: var(--cb-surface);
-  cursor: pointer;
-  flex-shrink: 0;
-  min-width: 190px;
-  transition: all var(--cb-transition-fast);
-}
-.quick-card:hover {
-  border-color: var(--cb-border-strong);
-  transform: translateY(-2px);
-  box-shadow: var(--cb-shadow-sm);
-}
-.qc-icon {
-  width: 42px; height: 42px;
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--qc-color) 12%, transparent);
-  color: var(--qc-color);
-  display: flex; align-items: center; justify-content: center;
-  flex-shrink: 0;
-}
-.qc-info strong { display: block; font-size: 13px; font-weight: 600; color: var(--cb-text); margin-bottom: 2px; }
-.qc-info span { font-size: 11px; color: var(--cb-text-muted); }
-
 /* ── Files ── */
-.drive-files { flex: 1; overflow: auto; padding: 16px 28px 32px; }
-.drive-files.has-welcome { padding-top: 8px; }
+.drive-workspace { flex: 1; min-height: 0; display: flex; overflow: hidden; }
+.drive-files { flex: 1; min-width: 0; overflow: auto; padding: 20px 28px 32px; }
+
+.file-details {
+  width: clamp(280px, 24vw, 340px);
+  flex-shrink: 0;
+  padding: 18px 20px 28px;
+  overflow-y: auto;
+  background: var(--cb-surface);
+  border-left: 1px solid var(--cb-border);
+  box-shadow: -10px 0 24px rgba(15, 23, 42, .025);
+}
+.details-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
+.details-head strong { color: var(--cb-text); font-size: 14px; }
+.details-head button {
+  width: 30px; height: 30px; padding: 0; border: 0; border-radius: 7px;
+  display: grid; place-items: center; background: transparent; color: var(--cb-text-muted); cursor: pointer;
+}
+.details-head button:hover { background: var(--cb-bg-alt); color: var(--cb-text); }
+.details-preview {
+  height: 180px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: var(--cb-bg-alt);
+  border: 1px solid var(--cb-border-light);
+  border-radius: var(--cb-radius);
+}
+.details-preview.folder { background: #fffbf0; }
+.details-preview img { width: 100%; height: 100%; object-fit: contain; }
+.file-details h2 {
+  margin: 16px 0;
+  overflow: hidden;
+  color: var(--cb-text);
+  font-size: 16px;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.details-actions { display: flex; flex-wrap: wrap; gap: 8px; padding-bottom: 20px; border-bottom: 1px solid var(--cb-border-light); }
+.details-actions .el-button + .el-button { margin-left: 0; }
+.details-meta { margin: 18px 0 0; }
+.details-meta > div { display: grid; grid-template-columns: 74px minmax(0, 1fr); gap: 12px; padding: 8px 0; }
+.details-meta dt { color: var(--cb-text-muted); font-size: 12px; }
+.details-meta dd { margin: 0; color: var(--cb-text-secondary); font-size: 12px; line-height: 1.5; word-break: break-word; }
 
 .drive-pagination {
   display: flex;
@@ -1097,7 +1064,7 @@ watch(() => store.state.file.needRefresh, val => {
 .preview-video { width: 100%; max-height: 520px; background: #000; }
 .preview-audio { width: 100%; margin: 16px 0; }
 .preview-frame { width: 100%; height: 520px; border: 0; }
-.preview-unsupported { text-align: center; padding: 60px 0; color: var(--cb-text-mute); }
+.preview-unsupported { text-align: center; padding: 60px 0; color: var(--cb-text-muted); }
 .preview-markdown {
   max-height: 520px;
   overflow-y: auto;

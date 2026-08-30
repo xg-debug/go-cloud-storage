@@ -2,7 +2,6 @@ package cache
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"sync"
@@ -23,14 +22,22 @@ func InitRedis(cfg *config.RedisConfig) error {
 	// sync.Once 保证闭包内的代码只会执行一次，但闭包本身没有返回值。闭包内的 return 只是退出当前闭包的执行，而不是退出外层函数
 	once.Do(func() {
 		if !cfg.Enabled {
-			initErr = errors.New("Redis is disabled in config")
-			return // // 只是退出闭包once.Do()，不是退出InitRedis函数
+			// Redis 关闭不等于启动失败：服务可降级运行。
+			// 依赖 Redis 的功能（refresh token 持久化、分片上传会话、限流计数）将不可用，
+			// 各调用方需对 GetClient() 判空。
+			globalClient = nil
+			initErr = nil
+			return
 		}
 		globalClient = redis.NewClient(&redis.Options{
-			Addr: fmt.Sprintf("%s:%d", cfg.Host, cfg.Port),
-			Password: cfg.Password,
-			DB:       cfg.DB,
-			PoolSize: cfg.PoolSize,
+			Addr:         fmt.Sprintf("%s:%d", cfg.Host, cfg.Port),
+			Password:     cfg.Password,
+			DB:           cfg.DB,
+			PoolSize:     cfg.PoolSize,
+			DialTimeout:  3 * time.Second,
+			ReadTimeout:  3 * time.Second,
+			WriteTimeout: 3 * time.Second,
+			MaxRetries:   2,
 		})
 
 		// 测试连接

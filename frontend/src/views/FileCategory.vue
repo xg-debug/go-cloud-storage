@@ -75,7 +75,7 @@
 import { ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Delete, Download, Grid, List, Loading, Warning } from '@element-plus/icons-vue'
+import { Delete, Document, Download, FolderOpened, Grid, Headset, List, Loading, Picture, VideoCamera, Warning } from '@element-plus/icons-vue'
 import { getFilesByCategory, deleteFile } from '@/api/file'
 import EmptyState from '@/components/EmptyState.vue'
 import { useFileActions } from '@/composables/useFileActions'
@@ -92,14 +92,14 @@ const deleteTarget = ref({})
 const deleting = ref(false)
 
 const categories = [
-  { type: 'image', name: '图片', icon: 'Picture', color: '#EC4899', extensions: ['jpg','jpeg','png','gif','bmp','webp','svg'] },
-  { type: 'video', name: '视频', icon: 'VideoCamera', color: '#EF4444', extensions: ['mp4','avi','mov','wmv','flv','mkv','webm'] },
-  { type: 'audio', name: '音频', icon: 'Headset', color: '#8B5CF6', extensions: ['mp3','wav','flac','aac','ogg'] },
-  { type: 'document', name: '文档', icon: 'Document', color: '#2F6BFF', extensions: ['pdf','doc','docx','xls','xlsx','ppt','pptx','txt'] }
+  { type: 'image', name: '图片', icon: Picture, color: '#EC4899', extensions: ['jpg','jpeg','png','gif','bmp','webp','svg'] },
+  { type: 'video', name: '视频', icon: VideoCamera, color: '#EF4444', extensions: ['mp4','avi','mov','wmv','flv','mkv','webm'] },
+  { type: 'audio', name: '音频', icon: Headset, color: '#8B5CF6', extensions: ['mp3','wav','flac','aac','ogg'] },
+  { type: 'document', name: '文档', icon: Document, color: '#2F6BFF', extensions: ['pdf','doc','docx','xls','xlsx','ppt','pptx','txt'] }
 ]
 const catMap = Object.fromEntries(categories.map(c => [c.type, c]))
 const catName = t => catMap[t]?.name || ''
-const catIcon = t => catMap[t]?.icon || 'FolderOpened'
+const catIcon = t => catMap[t]?.icon || FolderOpened
 const catColor = t => catMap[t]?.color || '#2F6BFF'
 const catBg = t => ({ image: '#FDF2F8', video: '#FEF2F2', audio: '#F5F3FF', document: '#EEF4FF' }[t] || '#F8F9FB')
 

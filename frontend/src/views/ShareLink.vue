@@ -80,21 +80,10 @@ const extractCode = ref('')
 const verifying = ref(false)
 const downloading = ref(false)
 
-const CACHE_KEY = `share_${token}`
-
+// 注意：不缓存 shareInfo —— 其中包含有效期 30 分钟的预签名 URL，
+// 缓存过期后刷新页面会导致预览 403。每次进入页面都重新拉取最新 URL。
 onMounted(() => {
   if (!token) { error.value = '无效的分享链接'; loading.value = false; return }
-  // Restore cached share info to avoid re-incrementing access count on refresh
-  const cached = sessionStorage.getItem(CACHE_KEY)
-  if (cached) {
-    try {
-      const data = JSON.parse(cached)
-      shareInfo.value = data
-      needCode.value = false
-      loading.value = false
-      return
-    } catch { console.warn('Cache parse failed, reloading') }
-  }
   loadShareInfo()
 })
 
@@ -103,9 +92,6 @@ const loadShareInfo = async () => {
   try {
     const data = await accessShare(token, '')
     shareInfo.value = data; needCode.value = !!data.needCode
-    if (!data.needCode && data.fileName) {
-      sessionStorage.setItem(CACHE_KEY, JSON.stringify(data))
-    }
   } catch (err) {
     const msg = err.message || '获取分享信息失败'
     if (msg.includes('过期')) error.value = '分享链接已过期'
@@ -120,7 +106,6 @@ const verifyCode = async () => {
   try {
     const data = await accessShare(token, extractCode.value)
     shareInfo.value = data; needCode.value = false
-    if (data.fileName) sessionStorage.setItem(CACHE_KEY, JSON.stringify(data))
   }
   catch (err) { ElMessage.error(err.message || '提取码错误') }
   finally { verifying.value = false }

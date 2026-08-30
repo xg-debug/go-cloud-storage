@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"errors"
 	"go-cloud-storage/backend/internal/models"
 	"go-cloud-storage/backend/internal/models/dto"
@@ -61,6 +62,7 @@ func (s favoriteService) GetFavorites(userId, page, pageSize int) ([]dto.Favorit
 			fullPath = "/" + file.Name
 		}
 
+		fileURL, _ := s.fileService.ResolveFileURLs(context.Background(), file)
 		result = append(result, dto.FavoriteDTO{
 			Id:        f.FileId,
 			FileId:    f.FileId,
@@ -70,7 +72,7 @@ func (s favoriteService) GetFavorites(userId, page, pageSize int) ([]dto.Favorit
 			Size:      file.Size,
 			SizeStr:   file.SizeStr,
 			Extension: file.FileExtension,
-			FileURL:   file.FileURL,
+			FileURL:   fileURL,
 			CreatedAt: f.CreatedAt.Format("2006-01-02 15:04:05"),
 		})
 	}

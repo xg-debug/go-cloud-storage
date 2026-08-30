@@ -1,7 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import Container from '@/views/Container.vue'
-import { ElMessage } from 'element-plus'
 import store from '@/store'
+import { fetchProfile, refreshSession } from '@/services/authSession'
 
 const routes = [
   {
@@ -24,7 +23,7 @@ const routes = [
   },
   {
     path: '/',
-    component: Container,
+    component: () => import('@/views/Container.vue'),
     meta: { requiresAuth: true },
     children: [
       { path: '', name: 'MyDrive', component: () => import('@/views/MyDrive.vue'), meta: { title: '全部文件' } },
@@ -57,15 +56,39 @@ const router = createRouter({
   routes
 })
 
-router.beforeEach((to, from, next) => {
+async function ensureAuthenticated() {
+  if (store.state.authChecked) {
+    return store.state.isAuthenticated
+  }
+
+  try {
+    const profile = await fetchProfile()
+    store.commit('setUserInfo', profile)
+    store.commit('setAuthChecked', true)
+    return true
+  } catch {
+    try {
+      await refreshSession()
+      const profile = await fetchProfile()
+      store.commit('setUserInfo', profile)
+      store.commit('setAuthChecked', true)
+      return true
+    } catch {
+      store.commit('clearAuth')
+      return false
+    }
+  }
+}
+
+router.beforeEach(async (to, from, next) => {
   document.title = to.meta.title ? `${to.meta.title} - CloudBox` : 'CloudBox'
   const requiresAuth = to.matched.some(record => record.meta.requiresAuth)
-  const token = store.state.token || localStorage.getItem('token')
+  const shouldCheckAuth = requiresAuth || to.path === '/login'
+  const authenticated = shouldCheckAuth ? await ensureAuthenticated() : store.state.isAuthenticated
 
-  if (requiresAuth && !token) {
-    ElMessage.warning('请先登录')
+  if (requiresAuth && !authenticated) {
     next({ path: '/login' })
-  } else if (to.path === '/login' && token) {
+  } else if (to.path === '/login' && authenticated) {
     next({ path: '/' })
   } else {
     next()

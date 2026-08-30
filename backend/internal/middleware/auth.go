@@ -29,6 +29,9 @@ func JWTAuthMiddleware() gin.HandlerFunc {
 			tokenString = c.Query("token")
 		}
 		if tokenString == "" {
+			tokenString, _ = c.Cookie("access_token")
+		}
+		if tokenString == "" {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
 				"code":      utils.CodeUnauthorized,
 				"message":   "未登录或登录已过期",
@@ -37,9 +40,9 @@ func JWTAuthMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		claims, err := utils.ParseToken(tokenString)
+		claims, err := utils.ParseTokenWithType(tokenString, "access")
 		if err != nil {
-			c.SetCookie("token", "", -1, "/", "", false, true)
+			c.SetCookie("access_token", "", -1, "/", "", false, true)
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
 				"code":      utils.CodeTokenExpired,
 				"message":   "令牌无效或已过期",

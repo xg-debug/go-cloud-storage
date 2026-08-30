@@ -20,22 +20,22 @@ type User struct {
 
 // File 文件模型
 type File struct {
-	Id            string `gorm:"type:varchar(40);primaryKey" json:"id"`                     // UUID或OSS标识
-	UserId        int    `gorm:"not null" json:"user_id"`                                   // 用户ID
-	Name          string `gorm:"size:255;not null" json:"name"`                             // 原始文件名
-	Size          int64  `gorm:"not null" json:"size"`                                      // 字节大小
+	Id            string `gorm:"type:varchar(40);primaryKey" json:"id"`   // UUID或OSS标识
+	UserId        int    `gorm:"not null;index:idx_user_hash,priority:1;index:idx_user_deleted,priority:1" json:"user_id"` // 用户ID
+	Name          string `gorm:"size:255;not null" json:"name"`           // 原始文件名
+	Size          int64  `gorm:"not null" json:"size"`                    // 字节大小
 	SizeStr       string `gorm:"column:size_str;type:varchar(20);not null" json:"size_str"` // 可读大小，如2.8MB
-	IsDir         bool   `gorm:"default:false;not null" json:"is_dir"`                      // 是否为目录
-	FileExtension string `gorm:"size:20;not null" json:"file_extension"`                    // 文件扩展名
+	IsDir         bool   `gorm:"default:false;not null" json:"is_dir"`    // 是否为目录
+	FileExtension string `gorm:"size:20;not null" json:"file_extension"`  // 文件扩展名
 	FileURL       string `gorm:"column:file_url;not null" json:"file_url"`
 	ThumbnailURL  string `gorm:"column:thumbnail_url" json:"thumbnail_url"`
 
 	// 存储信息
-	OssObjectKey string `gorm:"size:1024;not null" json:"-"`       // OSS对象键（不暴露给前端）
-	FileHash     string `gorm:"size:64;not null" json:"file_hash"` // SHA256哈希值
+	OssObjectKey string `gorm:"size:1024;not null" json:"-"`                                    // OSS对象键（不暴露给前端）
+	FileHash     string `gorm:"size:64;not null;index:idx_file_hash;index:idx_user_hash,priority:2" json:"file_hash"` // SHA256哈希值
 
-	ParentId  sql.NullString `gorm:"type:varchar(40)" json:"parent_id"` // 父目录ID（指针类型允许NULL）
-	IsDeleted bool           `gorm:"default:false" json:"is_deleted"`   // 软删除标志
+	ParentId  sql.NullString `gorm:"type:varchar(40)" json:"parent_id"`                              // 父目录ID（指针类型允许NULL）
+	IsDeleted bool           `gorm:"default:false;index:idx_user_deleted,priority:2" json:"is_deleted"` // 软删除标志
 
 	CreatedAt time.Time `gorm:"default:CURRENT_TIMESTAMP" json:"created_at"`
 	UpdatedAt time.Time `gorm:"default:CURRENT_TIMESTAMP" json:"updated_at"`

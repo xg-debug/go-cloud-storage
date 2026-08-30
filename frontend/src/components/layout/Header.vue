@@ -136,6 +136,7 @@ import { logout } from '@/api/auth'
 import { getNotifications, markAsRead, markAllAsRead } from '@/api/notification'
 import { getSearchHistory, deleteSearchHistory } from '@/api/file'
 import FileUploadDialog from '@/components/FileUploadDialog.vue'
+import { buildApiUrl } from '@/config/runtime'
 
 const emit = defineEmits(['toggle-sidebar', 'toggle-upload-queue'])
 
@@ -238,13 +239,12 @@ async function handleLogout() {
 }
 
 let sseSource = null
+let sseReconnectTimer = null
+let sseStopped = false
 
 function startSSE() {
-  const token = store.state.token
-  if (!token) return
-  const url = new URL('/notification/stream', 'http://localhost:8081')
-  url.searchParams.set('token', token)
-  sseSource = new EventSource(url.toString())
+  if (sseStopped) return
+  sseSource = new EventSource(buildApiUrl('/notification/stream'), { withCredentials: true })
   sseSource.addEventListener('notification', e => {
     try {
       const data = JSON.parse(e.data)
@@ -256,16 +256,21 @@ function startSSE() {
   })
   sseSource.onerror = () => {
     sseSource?.close()
-    setTimeout(startSSE, 30000) // 30秒后重连
+    sseSource = null
+    clearTimeout(sseReconnectTimer)
+    if (!sseStopped) sseReconnectTimer = setTimeout(startSSE, 30000)
   }
 }
 
 function stopSSE() {
+  sseStopped = true
+  clearTimeout(sseReconnectTimer)
+  sseReconnectTimer = null
   sseSource?.close()
   sseSource = null
 }
 
-onMounted(() => { loadNotifications(); loadSearchHistory(); startSSE() })
+onMounted(() => { sseStopped = false; loadNotifications(); loadSearchHistory(); startSSE() })
 onUnmounted(() => { stopSSE(); clearTimeout(hideTimer) })
 </script>
 

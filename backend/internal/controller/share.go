@@ -168,16 +168,30 @@ func (c *ShareController) AccessShare(ctx *gin.Context) {
 }
 
 // DownloadSharedFile 下载分享的文件
+// 与 AccessShare 使用同一套暴力破解防护：提取码错误 5 次后按 token+IP 锁定 15 分钟
 func (c *ShareController) DownloadSharedFile(ctx *gin.Context) {
 	shareToken := ctx.Param("token")
 	extractionCode := ctx.Query("code")
+	clientIP := ctx.ClientIP()
+
+	if c.bruteProtector.IsLocked(shareToken, clientIP) {
+		slog.Warn("share download locked due to brute force", "token", shareToken, "ip", clientIP)
+		utils.Fail(ctx, 429, "尝试次数过多，请15分钟后再试")
+		return
+	}
 
 	downloadURL, err := c.shareService.DownloadSharedFile(shareToken, extractionCode)
 	if err != nil {
+		if errors.Is(err, services.ErrExtractCodeWrong) {
+			if locked := c.bruteProtector.RecordFailed(shareToken, clientIP); locked {
+				slog.Warn("share download brute force lock triggered", "token", shareToken, "ip", clientIP)
+			}
+		}
 		slog.Error("下载分享文件失败", "error", err)
 		utils.Fail(ctx, 400, "下载失败")
 		return
 	}
 
+	c.bruteProtector.Reset(shareToken, clientIP)
 	utils.Success(ctx, downloadURL)
 }

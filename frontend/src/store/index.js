@@ -10,20 +10,24 @@ const store =  createStore({
     },
     state: {
         userInfo: null,
-        token: localStorage.getItem('token') || null,
+        isAuthenticated: false,
+        authChecked: false,
     },
     mutations: {
-        setToken(state, token) {
-            state.token = token
-            localStorage.setItem('token', token)
+        setAuthenticated(state, value) {
+            state.isAuthenticated = value
+        },
+        setAuthChecked(state, value) {
+            state.authChecked = value
         },
         setUserInfo(state, userInfo) {
             state.userInfo = userInfo
+            state.isAuthenticated = !!userInfo
         },
         clearAuth(state) {
-            state.token = null
+            state.isAuthenticated = false
+            state.authChecked = true
             state.userInfo = null
-            localStorage.removeItem('token')
         }
     }
 })

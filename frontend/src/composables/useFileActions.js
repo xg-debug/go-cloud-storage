@@ -55,11 +55,11 @@ export function useFileActions() {
 
   function getFileType(extension) {
     if (!extension) return 'other'
-    const ext = extension.toLowerCase()
+    const ext = extension.toLowerCase().replace(/^\./, '')
     if (['jpg','jpeg','png','gif','bmp','webp','svg'].includes(ext)) return 'image'
     if (['mp4','avi','mov','wmv','flv','mkv','webm'].includes(ext)) return 'video'
     if (['mp3','wav','flac','aac','ogg'].includes(ext)) return 'audio'
-    if (['pdf','doc','docx','xls','xlsx','ppt','pptx','txt'].includes(ext)) return 'document'
+    if (['pdf','doc','docx','xls','xlsx','ppt','pptx','txt','md','csv','json'].includes(ext)) return 'document'
     return 'other'
   }
 

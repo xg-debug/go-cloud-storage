@@ -164,7 +164,13 @@ func (c *NotificationController) NotificationSSE(ctx *gin.Context) {
 	ctx.Writer.Header().Set("Connection", "keep-alive")
 	ctx.Writer.Header().Set("X-Accel-Buffering", "no")
 
-	client := c.sseBroker.Subscribe(userId, clientId)
+	client, err := c.sseBroker.Subscribe(userId, clientId)
+	if err != nil {
+		// 连接数超限：向前端推送 error 事件后关闭（前端可稍后重连）
+		fmt.Fprintf(ctx.Writer, "event: error\ndata: %s\n\n", err.Error())
+		ctx.Writer.Flush()
+		return
+	}
 	defer c.sseBroker.Unsubscribe(userId, clientId)
 
 	// Send initial heartbeat (SSE comment line)

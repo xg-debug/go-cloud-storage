@@ -21,6 +21,13 @@ import (
 	"gorm.io/gorm"
 )
 
+const (
+	// 对外返回的预签名 URL 有效期：文件 30 分钟、缩略图 24 小时。
+	// 每次列表/详情请求都会重新签名，因此无需担心长期失效。
+	presignedFileURLTTL  = 30 * time.Minute
+	presignedThumbURLTTL = 24 * time.Hour
+)
+
 type FileItem struct {
 	Id           string `json:"id"`
 	Name         string `json:"name"`
@@ -113,6 +120,8 @@ type FileService interface {
 	MoveFile(ctx context.Context, userId int, fileId, targetFolderId string) error
 	CopyFile(ctx context.Context, userId int, fileId, targetFolderId string) error
 
+	ResolveFileURLs(ctx context.Context, file *models.File) (string, string)
+
 	Download(ctx context.Context, userId int, fileId string) (io.ReadCloser, *models.File, error)
 	DownloadRange(ctx context.Context, userId int, fileId string, start, end int64) (io.ReadCloser, *models.File, int64, error)
 	GetObjectSize(ctx context.Context, userId int, fileId string) (int64, error)
@@ -128,11 +137,12 @@ type fileService struct {
 	redis            *redis.Client
 	fileRepo         repositories.FileRepository
 	storageQuotaRepo repositories.StorageQuotaRepository
+	shareRepo        repositories.ShareRepository
 	minio            *miniosrv.MinioService
 }
 
-func NewFileService(db *gorm.DB, redis *redis.Client, repo repositories.FileRepository, storageQuotaRepo repositories.StorageQuotaRepository, minio *miniosrv.MinioService) FileService {
-	return &fileService{db: db, redis: redis, fileRepo: repo, storageQuotaRepo: storageQuotaRepo, minio: minio}
+func NewFileService(db *gorm.DB, redis *redis.Client, repo repositories.FileRepository, storageQuotaRepo repositories.StorageQuotaRepository, shareRepo repositories.ShareRepository, minio *miniosrv.MinioService) FileService {
+	return &fileService{db: db, redis: redis, fileRepo: repo, storageQuotaRepo: storageQuotaRepo, shareRepo: shareRepo, minio: minio}
 }
 
 func (s *fileService) GetFileById(fileId string) (*models.File, error) {
@@ -144,20 +154,30 @@ func (s *fileService) GetFiles(ctx context.Context, userId int, parentId string,
 	if err != nil {
 		return nil, 0, err
 	}
+
+	// 一次性批量统计文件夹内文件数，避免 N+1 查询
+	folderCounts := map[string]int64{}
+	var folderIds []string
+	for i := range files {
+		if files[i].IsDir {
+			folderIds = append(folderIds, files[i].Id)
+		}
+	}
+	if len(folderIds) > 0 {
+		if counts, cntErr := s.fileRepo.CountFilesInFolders(ctx, userId, folderIds); cntErr == nil {
+			folderCounts = counts
+		} else {
+			slog.Warn("CountFilesInFolders failed", "error", cntErr)
+		}
+	}
+
 	var fileList []FileItem
 	for _, file := range files {
 		parentId := ""
 		if file.ParentId.Valid {
 			parentId = file.ParentId.String
 		}
-		var fileCount int64
-		var cntErr error
-		if file.IsDir {
-			fileCount, cntErr = s.fileRepo.CountFilesInFolder(ctx, userId, file.Id)
-			if cntErr != nil {
-				slog.Warn("CountFilesInFolder failed", "folderId", file.Id, "error", cntErr)
-			}
-		}
+		fileURL, thumbURL := s.ResolveFileURLs(ctx, &file)
 		fileList = append(fileList, FileItem{
 			Id:           file.Id,
 			Name:         file.Name,
@@ -167,12 +187,23 @@ func (s *fileService) GetFiles(ctx context.Context, userId int, parentId string,
 			SizeStr:      file.SizeStr,
 			Extension:    file.FileExtension,
 			Modified:     file.UpdatedAt.Format("2006-01-02 15:04:05"),
-			FileURL:      file.FileURL,
-			ThumbnailURL: file.ThumbnailURL,
-			FileCount:    fileCount,
+			FileURL:      fileURL,
+			ThumbnailURL: thumbURL,
+			FileCount:    folderCounts[file.Id],
 		})
 	}
 	return fileList, total, nil
+}
+
+// ResolveFileURLs 为文件生成短期有效的预签名访问 URL（私有桶下对外一律不返回永久直链）。
+// 文件夹或未上传对象返回空串。
+func (s *fileService) ResolveFileURLs(ctx context.Context, file *models.File) (string, string) {
+	if file == nil || file.IsDir || file.OssObjectKey == "" {
+		return "", ""
+	}
+	fileURL, _ := s.minio.PresignedGetPreviewURL(ctx, file.OssObjectKey, presignedFileURLTTL)
+	thumbURL, _ := s.minio.PresignThumbnailURL(ctx, file.OssObjectKey, presignedThumbURLTTL)
+	return fileURL, thumbURL
 }
 
 func (s *fileService) CreateFolder(userId int, folderName string, parentId string) (*models.File, error) {
@@ -251,6 +282,14 @@ func (s *fileService) Delete(fileId string, userId int) error {
 				return err
 			}
 
+			// 删除即撤销分享：文件进回收站后其分享链接立即失效，
+			// 防止回收站恢复后旧分享（含旧提取码）自动复活。
+			if s.shareRepo != nil {
+				if err := s.shareRepo.DeleteBatch(tx, deletedIds); err != nil {
+					return err
+				}
+			}
+
 			for _, id := range deletedIds {
 				if err := s.fileRepo.AddToRecycle(tx, &models.RecycleBin{
 					FileId:    id,
@@ -264,6 +303,13 @@ func (s *fileService) Delete(fileId string, userId int) error {
 		} else {
 			if err := s.fileRepo.SoftDeleteFile(tx, userId, fileId); err != nil {
 				return err
+			}
+
+			// 删除即撤销分享（同上）
+			if s.shareRepo != nil {
+				if err := s.shareRepo.DeleteBatch(tx, []string{fileId}); err != nil {
+					return err
+				}
 			}
 
 			if err := s.fileRepo.AddToRecycle(tx, &models.RecycleBin{
@@ -331,6 +377,7 @@ func (s *fileService) GetRecentFiles(userId int, timeRange string) ([]*RecentFil
 		if f.ParentId.Valid {
 			parentId = f.ParentId.String
 		}
+		fileURL, thumbURL := s.ResolveFileURLs(context.Background(), &f)
 		resultMap[day].Files = append(resultMap[day].Files, FileBrief{
 			Id:           f.Id,
 			Name:         f.Name,
@@ -339,8 +386,8 @@ func (s *fileService) GetRecentFiles(userId int, timeRange string) ([]*RecentFil
 			Size:         f.Size,
 			SizeStr:      f.SizeStr,
 			Extension:    f.FileExtension,
-			FileURL:      f.FileURL,
-			ThumbnailURL: f.ThumbnailURL,
+			FileURL:      fileURL,
+			ThumbnailURL: thumbURL,
 			CreatedAt:    f.CreatedAt.Format("2006-01-02 15:04:05"),
 			Modified:     f.UpdatedAt.Format("15:04"),
 		})
@@ -403,12 +450,16 @@ func (s *fileService) PreviewFile(userId int, fileId string) (*FilePreview, erro
 	// 判断文件类型和是否可预览
 	canPreview, previewType := getPreviewType(file.FileExtension)
 
-	// 为可预览类型生成 inline 预签名 URL（防止浏览器弹出下载）
-	previewFileURL := file.FileURL
-	if canPreview {
-		if u, err := s.minio.PresignedGetPreviewURL(context.Background(), file.OssObjectKey, 30*time.Minute); err == nil {
+	// 私有桶：一律返回 inline 预签名 URL（可预览类型可防止浏览器弹出下载）
+	previewFileURL := ""
+	if !file.IsDir && file.OssObjectKey != "" {
+		if u, err := s.minio.PresignedGetPreviewURL(context.Background(), file.OssObjectKey, presignedFileURLTTL); err == nil {
 			previewFileURL = u
 		}
+	}
+	thumbURL := ""
+	if !file.IsDir && file.OssObjectKey != "" {
+		thumbURL, _ = s.minio.PresignThumbnailURL(context.Background(), file.OssObjectKey, presignedThumbURLTTL)
 	}
 
 	// Office 文档：用预签名 URL 构建 Office Online 查看链接
@@ -425,7 +476,7 @@ func (s *fileService) PreviewFile(userId int, fileId string) (*FilePreview, erro
 		SizeStr:          file.SizeStr,
 		Extension:        file.FileExtension,
 		FileURL:          previewFileURL,
-		ThumbnailURL:     file.ThumbnailURL,
+		ThumbnailURL:     thumbURL,
 		CanPreview:       canPreview,
 		PreviewType:      previewType,
 		OfficePreviewURL: officePreviewURL,
@@ -491,6 +542,7 @@ func (s *fileService) SearchFiles(userId int, keyword, parentId string, page, pa
 		if file.ParentId.Valid {
 			parentId = file.ParentId.String
 		}
+		fileURL, thumbURL := s.ResolveFileURLs(context.Background(), &file)
 		fileItems = append(fileItems, FileItem{
 			Id:           file.Id,
 			Name:         file.Name,
@@ -501,8 +553,8 @@ func (s *fileService) SearchFiles(userId int, keyword, parentId string, page, pa
 			Extension:    file.FileExtension,
 			CreatedAt:    file.CreatedAt.Format("2006-01-02 15:04:05"),
 			Modified:     file.UpdatedAt.Format("2006-01-02 15:04:05"),
-			FileURL:      file.FileURL,
-			ThumbnailURL: file.ThumbnailURL,
+			FileURL:      fileURL,
+			ThumbnailURL: thumbURL,
 		})
 	}
 

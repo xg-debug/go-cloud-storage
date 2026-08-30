@@ -22,6 +22,12 @@ backend/.cache/
 .env.local
 *.log
 
+# Backend 配置文件含敏感凭据，一律不入库；只提交 *.example.yaml 模板
+backend/conf/*.yaml
+backend/conf/*.yml
+!backend/conf/*.example.yaml
+!backend/conf/*.example.yml
+
 # Documentation (design docs, architecture notes)
 docs/
 

@@ -49,10 +49,11 @@ func main() {
 	}
 
 	// 初始化 RabbitMQ 客户端
+	// 注意：MQ 不可用时不阻塞启动，回收站清理自动降级为定时扫描
 	rabbitClient, err := mq.NewRabbitMQClient(&cfg.RabbitMQ)
 	if err != nil {
-		slog.Error("RabbitMQ 初始化失败", "error", err)
-		panic(err)
+		slog.Warn("RabbitMQ 不可用，回收站过期清理将降级为定时扫描", "error", err)
+		rabbitClient = nil
 	}
 	defer func() {
 		if rabbitClient != nil {

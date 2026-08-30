@@ -15,6 +15,7 @@ func AutoMigrate(db *gorm.DB) error {
 		&models.Share{},
 		&models.RecycleBin{},
 		&models.StorageQuota{},
-		&models.Notification{}, // 添加通知模型
+		&models.Notification{},       // 添加通知模型
+		&models.PasswordResetToken{}, // 密码重置令牌（原遗漏）
 	)
 }

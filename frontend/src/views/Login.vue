@@ -40,7 +40,7 @@
         <!-- Form stack: both occupy same space, no layout jump when switching -->
         <div class="form-stack">
           <!-- Login -->
-          <div class="auth-form" :class="{ active: tab === 'login' }">
+          <div v-show="tab === 'login'" class="auth-form">
             <div class="form-header">
               <h2>欢迎回来</h2>
               <p>登录你的 CloudBox 账户</p>
@@ -83,7 +83,7 @@
           </div>
 
           <!-- Register -->
-          <div class="auth-form" :class="{ active: tab === 'register' }">
+          <div v-show="tab === 'register'" class="auth-form">
             <div class="form-header">
               <h2>创建账号</h2>
               <p>注册即获 10GB 免费空间</p>
@@ -108,7 +108,7 @@
                 <el-input
                   v-model="registerForm.password"
                   type="password"
-                  placeholder="密码（大小写字母+数字，6位以上）"
+                  placeholder="密码（大小写字母+数字，8位以上）"
                   :prefix-icon="Lock"
                   size="large"
                   show-password
@@ -149,7 +149,7 @@
 import { computed, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { login, register, storeToken } from '@/api/auth'
+import { login, register } from '@/api/auth'
 import { useStore } from 'vuex'
 import { Clock, Folder, Lock, Message, Share, User } from '@element-plus/icons-vue'
 
@@ -158,7 +158,7 @@ const store = useStore()
 const tab = ref('login')
 const loading = ref(false)
 const rememberMe = ref(false)
-const termsAccepted = ref(true)
+const termsAccepted = ref(false)
 
 const loginForm = reactive({ account: '', password: '' })
 const registerForm = reactive({ email: '', password: '', password_confirm: '' })
@@ -168,7 +168,7 @@ const registerFormRef = ref()
 const passwordScore = computed(() => {
   const v = registerForm.password || ''
   let s = 0
-  if (v.length >= 6) s++
+  if (v.length >= 8) s++
   if (/[a-z]/.test(v) && /[A-Z]/.test(v)) s++
   if (/\d/.test(v)) s++
   return s
@@ -183,7 +183,7 @@ const loginRules = {
 
 const validatePassword = (_, v, cb) => {
   if (!v) return cb(new Error('请输入密码'))
-  if (v.length < 6) return cb(new Error('至少6个字符'))
+  if (v.length < 8) return cb(new Error('至少8个字符'))
   if (!/[a-z]/.test(v) || !/[A-Z]/.test(v) || !/\d/.test(v)) return cb(new Error('需包含大小写字母和数字'))
   cb()
 }
@@ -202,10 +202,9 @@ async function handleLogin() {
   if (!ok) return
   loading.value = true
   try {
-    const res = await login(loginForm)
-    storeToken(res.token, rememberMe.value)
-    store.commit('setToken', res.token)
+    const res = await login({ ...loginForm, remember: rememberMe.value })
     store.commit('setUserInfo', res.user_info)
+    store.commit('setAuthChecked', true)
     ElMessage.success('登录成功')
     router.push('/')
   } catch { ElMessage.error('登录失败') } finally { loading.value = false }
@@ -339,21 +338,10 @@ async function handleRegister() {
 
 /* ── Form stack (prevents height jump when switching) ── */
 .form-stack {
-  position: relative;
-  min-height: 380px;
+  min-height: 430px;
 }
 .auth-form {
-  position: absolute;
-  top: 0; left: 0; width: 100%;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity .25s var(--cb-ease), transform .25s var(--cb-ease);
-  transform: translateY(8px);
-}
-.auth-form.active {
-  opacity: 1;
-  pointer-events: auto;
-  transform: translateY(0);
+  width: 100%;
 }
 
 /* ── Input overrides ── */

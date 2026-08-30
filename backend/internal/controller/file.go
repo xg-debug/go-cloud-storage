@@ -211,16 +211,11 @@ func (c *FileController) PreviewFile(ctx *gin.Context) {
 
 	// PDF 使用后端代理流式传输，确保 Content-Disposition: inline 生效
 	if previewData.PreviewType == "pdf" {
-		token := ""
-		if auth := ctx.GetHeader("Authorization"); strings.HasPrefix(auth, "Bearer ") {
-			token = auth[7:]
-		}
 		scheme := "http"
 		if ctx.Request.TLS != nil || ctx.GetHeader("X-Forwarded-Proto") == "https" {
 			scheme = "https"
 		}
-		proxyURL := fmt.Sprintf("%s://%s/file/preview-stream/%s?token=%s",
-			scheme, ctx.Request.Host, fileId, url.QueryEscape(token))
+		proxyURL := fmt.Sprintf("%s://%s/file/preview-stream/%s", scheme, ctx.Request.Host, fileId)
 		previewData.FileURL = proxyURL
 	}
 
@@ -231,7 +226,31 @@ func (c *FileController) PreviewStream(ctx *gin.Context) {
 	fileId := ctx.Param("fileId")
 	userId := ctx.GetInt("userId")
 
-	reader, fileInfo, err := c.fileService.PreviewStream(ctx, userId, fileId)
+	objSize, err := c.fileService.GetObjectSize(ctx, userId, fileId)
+	if err != nil {
+		utils.Fail(ctx, http.StatusBadRequest, "获取文件信息失败")
+		return
+	}
+
+	// 支持 Range 请求：视频/PDF 预览可拖动进度、断点续传
+	start, end := int64(0), objSize-1
+	statusCode := http.StatusOK
+	if rangeHeader := ctx.GetHeader("Range"); rangeHeader != "" {
+		s, e, rangeStatus, rErr := parseSingleRange(rangeHeader, objSize)
+		if rErr != nil {
+			if rangeStatus == http.StatusRequestedRangeNotSatisfiable {
+				ctx.Header("Content-Range", fmt.Sprintf("bytes */%d", objSize))
+				ctx.Status(http.StatusRequestedRangeNotSatisfiable)
+				return
+			}
+			utils.Fail(ctx, http.StatusBadRequest, "无效的 Range 头")
+			return
+		}
+		start, end = s, e
+		statusCode = http.StatusPartialContent
+	}
+
+	reader, fileInfo, _, err := c.fileService.DownloadRange(ctx, userId, fileId, start, end)
 	if err != nil {
 		slog.Error("获取文件流失败", "error", err)
 		utils.Fail(ctx, http.StatusBadRequest, "获取文件流失败")
@@ -243,6 +262,11 @@ func (c *FileController) PreviewStream(ctx *gin.Context) {
 	ctx.Header("Content-Type", contentType)
 	ctx.Header("Content-Disposition", "inline; filename=\""+url.QueryEscape(fileInfo.Name)+"\"")
 	ctx.Header("Accept-Ranges", "bytes")
+	ctx.Header("Content-Length", fmt.Sprintf("%d", end-start+1))
+	if statusCode == http.StatusPartialContent {
+		ctx.Header("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, objSize))
+	}
+	ctx.Status(statusCode)
 	io.Copy(ctx.Writer, reader)
 }
 

@@ -50,16 +50,32 @@ func NewShareService(shareRepo repositories.ShareRepository, fileRepo repositori
 }
 
 func (s *shareService) CreateShare(userId int, fileId string, expireDays int, extractionCode string) (*models.Share, error) {
-	// 1. 检查文件是否存在
+	// 0. 参数校验
+	if expireDays < 0 || expireDays > 365 {
+		return nil, errors.New("有效期必须在0-365天之间")
+	}
+	extractionCode = strings.TrimSpace(extractionCode)
+	if extractionCode != "" && (len(extractionCode) < 4 || len(extractionCode) > 20) {
+		return nil, errors.New("提取码长度须为4-20个字符（不填表示无提取码）")
+	}
+
+	// 1. 检查文件是否存在（且必须是文件，文件夹分享暂不支持）
 	file, err := s.fileRepo.GetUserFileByID(userId, fileId)
 	if err != nil || file == nil {
 		return nil, errors.New("文件不存在")
 	}
+	if file.IsDir {
+		return nil, errors.New("暂不支持分享文件夹")
+	}
 
-	// 2. 检查是否已经分享过
+	// 2. 检查是否已经分享过；已过期的旧分享作废后重建
 	isShared, existShare := s.shareRepo.IsShared(fileId)
 	if isShared {
-		return existShare, nil
+		if existShare.ExpireTime != nil && existShare.ExpireTime.Before(time.Now()) {
+			_ = s.shareRepo.Delete(nil, existShare.Id)
+		} else {
+			return existShare, nil
+		}
 	}
 
 	// 3. 生成分享Token
@@ -293,11 +309,14 @@ func (s *shareService) AccessShare(shareToken string, inputCode string) (*ShareA
 		slog.Error("更新访问计数失败", "error", err, "shareId", share.Id)
 	}
 
-	previewURL := file.FileURL
-	if canPreview && s.minio != nil {
-		if u, err := s.minio.PresignedGetPreviewURL(context.Background(), file.OssObjectKey, 30*time.Minute); err == nil {
+	// 私有桶：一律返回短期预签名 URL，绝不外泄永久直链（分享取消/过期后 URL 自动失效）
+	previewURL := ""
+	thumbURL := ""
+	if !file.IsDir && file.OssObjectKey != "" && s.minio != nil {
+		if u, err := s.minio.PresignedGetPreviewURL(context.Background(), file.OssObjectKey, presignedFileURLTTL); err == nil {
 			previewURL = u
 		}
+		thumbURL, _ = s.minio.PresignThumbnailURL(context.Background(), file.OssObjectKey, presignedThumbURLTTL)
 	}
 	officePreviewURL := buildShareOfficePreviewURL(previewURL)
 
@@ -310,7 +329,7 @@ func (s *shareService) AccessShare(shareToken string, inputCode string) (*ShareA
 		ExpireAt:         share.ExpireTime,
 		DownloadUrl:      downloadURL,
 		FileURL:          previewURL,
-		ThumbnailURL:     file.ThumbnailURL,
+		ThumbnailURL:     thumbURL,
 		CanPreview:       canPreview,
 		PreviewType:      previewType,
 		OfficePreviewURL: officePreviewURL,
@@ -356,6 +375,14 @@ func (s *shareService) UpdateShare(shareID int, userID int, extractionCode strin
 		return errors.New("无权限操作此分享")
 	}
 
+	if expireDays < 0 || expireDays > 365 {
+		return errors.New("有效期必须在0-365天之间")
+	}
+	extractionCode = strings.TrimSpace(extractionCode)
+	if extractionCode != "" && (len(extractionCode) < 4 || len(extractionCode) > 20) {
+		return errors.New("提取码长度须为4-20个字符（不填表示无提取码）")
+	}
+
 	// Calculate expireTime
 	var expireTime *time.Time
 	if expireDays > 0 {
@@ -364,31 +391,8 @@ func (s *shareService) UpdateShare(shareID int, userID int, extractionCode strin
 	}
 	// If expireDays == 0, expireTime is nil (permanent)
 
-	// Handle extractionCode
+	// extractionCode 为空字符串表示移除提取码（更新为 NULL）
 	var code *string
-	if extractionCode != "" {
-		code = &extractionCode
-	} else {
-		// If empty string, pass pointer to empty string? Or nil?
-		// Logic: If user wants to remove code, they send empty string.
-		// Repo uses *string. If nil, it might ignore update?
-		// Wait, repo: updates := map... "extraction_code": code.
-		// If code is nil, GORM map update with nil value -> sets to NULL.
-		// So if extractionCode is "", code should be nil?
-		// No, if I want to set it to NULL (no code), I should pass nil?
-		// Or if I pass pointer to "", does it set empty string?
-		// DB column is likely varchar. Empty string is valid.
-		// But usually we treat empty string as "no code".
-		// Let's assume we pass pointer to empty string if we want empty string.
-		// If we want NULL, we pass nil.
-		// Let's assume empty string means "no code" in logic, so in DB it can be NULL or "".
-		// GORM: if I pass `nil` to map, it updates column to NULL.
-		// If I pass `&""`, it updates to `""`.
-		// Let's stick to `nil` for no code.
-		code = nil
-	}
-
-	// Wait, if extractionCode is provided (not empty), we use it.
 	if extractionCode != "" {
 		code = &extractionCode
 	}

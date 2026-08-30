@@ -33,9 +33,11 @@ type JWTConfig struct {
 }
 
 type ServerConfig struct {
-	Port        int    `yaml:"port"`
-	Env         string `yaml:"env"`
-	StoragePath string `yaml:"storagePath"`
+	Port           int      `yaml:"port"`
+	Env            string   `yaml:"env"`
+	StoragePath    string   `yaml:"storagePath"`
+	PublicBaseURL  string   `yaml:"publicBaseURL"`  // 对外访问地址，用于生成密码重置链接等（默认 http://localhost:8080）
+	AllowedOrigins []string `yaml:"allowedOrigins"` // 允许携带认证 Cookie 的 Web 来源
 }
 
 type DatabaseConfig struct {
@@ -128,10 +130,15 @@ func LoadConfig() (*Config, error) {
 	v.BindEnv("minio.accessKeyID", "GCS_MINIO_ACCESS_KEY")
 	v.BindEnv("minio.secretAccessKey", "GCS_MINIO_SECRET_KEY")
 	v.BindEnv("jwt.secret", "GCS_JWT_SECRET")
+	v.BindEnv("smtp.password", "GCS_SMTP_PASSWORD")
+	v.BindEnv("rabbitmq.url", "GCS_RABBITMQ_URL")
+	v.BindEnv("aliyun.accessSecret", "GCS_ALIYUN_ACCESS_SECRET")
 
 	v.SetDefault("security.defaultQuotaGB", 10)
 	v.SetDefault("security.maxFileSizeMB", 500)
 	v.SetDefault("security.rateLimitRPS", 50)
+	v.SetDefault("server.publicBaseURL", "http://localhost:8080")
+	v.SetDefault("server.allowedOrigins", []string{"http://localhost:8080", "http://127.0.0.1:8080"})
 
 	// 读取配置文件
 	if err := v.ReadInConfig(); err != nil {
@@ -161,6 +168,12 @@ func validateConfig(cfg *Config) error {
 	}
 	if cfg.Server.StoragePath == "" {
 		return errors.New("server storage path is required")
+	}
+	if len(cfg.Server.AllowedOrigins) == 0 {
+		return errors.New("server.allowedOrigins must contain at least one trusted web origin")
+	}
+	if cfg.JWT.Secret != "" && len(cfg.JWT.Secret) < 32 {
+		return errors.New("jwt.secret must be at least 32 bytes when configured")
 	}
 	// 安全配置默认值
 	if cfg.Security.DefaultQuotaGB <= 0 {

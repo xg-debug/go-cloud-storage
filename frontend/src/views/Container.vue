@@ -15,16 +15,11 @@
         />
       </header>
 
-      <!-- Content + right panel -->
+      <!-- Content workspace -->
       <div class="app-body">
         <main class="app-content">
           <router-view />
         </main>
-
-        <!-- Right info panel (shown on file pages) -->
-        <aside v-if="showRightPanel" class="app-right-panel">
-          <RightPanel />
-        </aside>
       </div>
     </div>
 
@@ -38,19 +33,18 @@
           <el-icon :size="36"><Upload /></el-icon>
         </div>
         <h2>松开即可上传</h2>
-        <p>支持任意文件类型，单文件最大 5GB</p>
+        <p>文件类型和大小以当前上传规则为准</p>
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { useStore } from 'vuex'
 import LayoutHeader from '@/components/layout/Header.vue'
 import LayoutSidebar from '@/components/layout/Sidebar.vue'
-import RightPanel from '@/components/layout/RightPanel.vue'
 import UploadQueuePanel from '@/components/UploadQueuePanel.vue'
 import { Upload } from '@element-plus/icons-vue'
 
@@ -59,12 +53,6 @@ const store = useStore()
 const sidebarCollapsed = ref(false)
 const isDragging = ref(false)
 const uploadQueuePanel = ref(null)
-
-// Only show right panel on main file pages
-const showRightPanel = computed(() => {
-  const name = route.name
-  return ['MyDrive', 'Recent', 'Starred', 'FileCategory', 'FileCategoryType'].includes(name)
-})
 
 let dragCounter = 0
 
@@ -158,14 +146,6 @@ onUnmounted(() => {
   background: var(--cb-bg);
 }
 
-.app-right-panel {
-  width: var(--cb-right-panel-w);
-  flex-shrink: 0;
-  border-left: 1px solid var(--cb-border);
-  background: var(--cb-surface);
-  overflow-y: auto;
-}
-
 /* Global drop overlay */
 .drop-overlay {
   position: fixed;
@@ -204,10 +184,4 @@ onUnmounted(() => {
   font-size: 14px; opacity: 0.7; margin: 0;
 }
 
-@media (max-width: 1200px) {
-  .app-right-panel { display: none; }
-}
-@media (max-width: 768px) {
-  .app-sidebar:not(.collapsed) { width: var(--cb-sidebar-w); }
-}
 </style>

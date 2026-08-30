@@ -1,6 +1,9 @@
 package utils
 
 import (
+	"crypto/rand"
+	"encoding/hex"
+	"log/slog"
 	"os"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -9,14 +12,29 @@ import (
 
 var JWTSecret []byte
 
+// InitJWTSecret 初始化 JWT 签名密钥。
+// 优先级：配置文件 jwt.secret > 环境变量 JWT_SECRET。
+// 配置的密钥必须 >= 32 字节，否则拒绝启动（防止弱密钥被伪造 token）。
+// 两者都未配置时（仅限开发），生成随机临时密钥并告警——重启后所有 token 失效。
 func InitJWTSecret(cfgSecret string) {
 	if cfgSecret != "" {
+		if len(cfgSecret) < 32 {
+			panic("jwt secret too weak: configure a secret of at least 32 bytes (jwt.secret or GCS_JWT_SECRET)")
+		}
 		JWTSecret = []byte(cfgSecret)
-	} else if envSecret := os.Getenv("JWT_SECRET"); envSecret != "" {
-		JWTSecret = []byte(envSecret)
-	} else {
-		JWTSecret = []byte("cdq123") // fallback for development
+		return
 	}
+	if envSecret := os.Getenv("JWT_SECRET"); len(envSecret) >= 32 {
+		JWTSecret = []byte(envSecret)
+		return
+	}
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		panic("failed to generate ephemeral jwt secret: " + err.Error())
+	}
+	JWTSecret = []byte(hex.EncodeToString(buf))
+	slog.Warn("JWT secret not configured; generated an ephemeral random secret. " +
+		"All tokens will be invalidated on restart. Set GCS_JWT_SECRET or jwt.secret (>=32 bytes) in production.")
 }
 
 type Claims struct {

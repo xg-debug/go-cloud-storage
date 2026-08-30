@@ -5,11 +5,11 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"go-cloud-storage/backend/infrastructure/minio"
 	"go-cloud-storage/backend/internal/models"
 	"go-cloud-storage/backend/internal/models/vo"
-	"go-cloud-storage/backend/infrastructure/minio"
-	"go-cloud-storage/backend/pkg/utils"
 	"go-cloud-storage/backend/internal/repositories"
+	"go-cloud-storage/backend/pkg/utils"
 	"log/slog"
 	"math/rand"
 	"mime/multipart"
@@ -38,6 +38,7 @@ type userService struct {
 	quotaRepo    repositories.StorageQuotaRepository
 	minio        *minio.MinioService
 	emailService EmailSender
+	resetBaseURL string // 对外访问地址，用于生成密码重置链接
 }
 
 type EmailSender interface {
@@ -45,8 +46,8 @@ type EmailSender interface {
 }
 
 func NewUserService(db *gorm.DB, userRepo repositories.UserRepository, fileRepo repositories.FileRepository,
-	quotaRepo repositories.StorageQuotaRepository, minio *minio.MinioService, emailService EmailSender) UserService {
-	return &userService{db: db, userRepo: userRepo, fileRepo: fileRepo, quotaRepo: quotaRepo, minio: minio, emailService: emailService}
+	quotaRepo repositories.StorageQuotaRepository, minio *minio.MinioService, emailService EmailSender, resetBaseURL string) UserService {
+	return &userService{db: db, userRepo: userRepo, fileRepo: fileRepo, quotaRepo: quotaRepo, minio: minio, emailService: emailService, resetBaseURL: resetBaseURL}
 }
 
 func (s *userService) AuthenticateUser(account, password string) (*models.User, error) {
@@ -68,6 +69,9 @@ func (s *userService) RegisterUser(email, pwd, pwdConfirm string) error {
 	// 1.密码一致性验证
 	if pwd != pwdConfirm {
 		return errors.New("两次输入的密码不一致!")
+	}
+	if err := validatePassword(pwd); err != nil {
+		return err
 	}
 	// 2.检查邮箱是否已注册
 	if exist, _ := s.userRepo.EmailExists(email); exist {
@@ -91,7 +95,7 @@ func (s *userService) RegisterUser(email, pwd, pwdConfirm string) error {
 	}
 
 	return s.db.Transaction(func(tx *gorm.DB) error {
-		if err := s.userRepo.Insert(&user); err != nil {
+		if err := tx.Create(&user).Error; err != nil {
 			return errors.New("注册失败")
 		}
 
@@ -106,13 +110,13 @@ func (s *userService) RegisterUser(email, pwd, pwdConfirm string) error {
 			IsDeleted: false,
 			CreatedAt: time.Now(),
 		}
-		if err := s.fileRepo.InitFolder(rootFolder); err != nil {
+		if err := tx.Create(rootFolder).Error; err != nil {
 			return errors.New("初始化根目录失败")
 		}
 
 		// 回写 user 表中的 root_folder_id
 		user.RootFolderId = rootId
-		if err := s.userRepo.Update(&user); err != nil {
+		if err := tx.Model(&user).Update("root_folder_id", rootId).Error; err != nil {
 			return errors.New("回写root_folder_id失败")
 		}
 
@@ -124,7 +128,7 @@ func (s *userService) RegisterUser(email, pwd, pwdConfirm string) error {
 			CreatedAt: time.Now(),
 			UpdatedAt: time.Now(),
 		}
-		if err := s.quotaRepo.Create(storage); err != nil {
+		if err := tx.Create(storage).Error; err != nil {
 			return err
 		}
 		return nil
@@ -136,6 +140,11 @@ func (s *userService) GetProfile(userId int) (*vo.UserProfileResponse, error) {
 	if err != nil {
 		return nil, errors.New("获取当前用户信息失败")
 	}
+	// 私有桶下头像也需要预签名 URL（24h 有效，每次请求重新生成）
+	avatar := user.Avatar
+	if s.minio != nil {
+		avatar = s.minio.PresignAvatarURL(context.Background(), user.Avatar, 24*time.Hour)
+	}
 	profile := &vo.UserProfileResponse{
 		Id:       user.Id,
 		Username: user.Username,
@@ -146,7 +155,7 @@ func (s *userService) GetProfile(userId int) (*vo.UserProfileResponse, error) {
 			}
 			return ""
 		}(),
-		Avatar:       user.Avatar,
+		Avatar:       avatar,
 		OpenId:       user.OpenId,
 		RegisterTime: user.RegisterTime.Format("2006-01-02 15:04:05"),
 		RootFolderId: user.RootFolderId,
@@ -172,6 +181,9 @@ func (s *userService) ChangePassword(userId int, oldPassword, newPassword string
 	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(oldPassword)); err != nil {
 		return errors.New("旧密码错误")
 	}
+	if err := validatePassword(newPassword); err != nil {
+		return err
+	}
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
 	if err != nil {
 		return errors.New("密码加密失败")
@@ -181,8 +193,6 @@ func (s *userService) ChangePassword(userId int, oldPassword, newPassword string
 }
 
 func (s *userService) ForgotPassword(email string) error {
-	resetLink := ""
-
 	user, err := s.userRepo.GetUserInfoByEmail(email)
 	if err == nil {
 		token, tokenErr := utils.GenerateResetToken(user.Id, 30*time.Minute)
@@ -193,15 +203,16 @@ func (s *userService) ForgotPassword(email string) error {
 				ExpiresAt: time.Now().Add(30 * time.Minute),
 			}
 			if saveErr := s.userRepo.CreatePasswordResetToken(resetToken); saveErr == nil {
-				resetLink = fmt.Sprintf("http://localhost:8080/reset-password?token=%s", token)
+				base := strings.TrimRight(s.resetBaseURL, "/")
+				if base == "" {
+					base = "http://localhost:8080"
+				}
+				resetLink := base + "/reset-password?token=" + token
+				if sendErr := s.emailService.SendResetPasswordEmail(email, resetLink); sendErr != nil {
+					// 只记录错误，不记录含 token 的链接（防日志泄露）
+					slog.Warn("failed to send reset email", "email", email, "error", sendErr)
+				}
 			}
-		}
-	}
-
-	if resetLink != "" {
-		slog.Info("password reset link", "email", email, "link", resetLink)
-		if sendErr := s.emailService.SendResetPasswordEmail(email, resetLink); sendErr != nil {
-			slog.Warn("failed to send reset email, use link from server log", "error", sendErr)
 		}
 	}
 
@@ -219,8 +230,8 @@ func (s *userService) ResetPassword(token, newPassword string) error {
 		return errors.New("重置链接已过期")
 	}
 
-	if len(newPassword) < 6 {
-		return errors.New("密码至少6个字符")
+	if err := validatePassword(newPassword); err != nil {
+		return err
 	}
 
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
@@ -235,6 +246,30 @@ func (s *userService) ResetPassword(token, newPassword string) error {
 	return s.userRepo.MarkResetTokenUsed(resetToken.Id)
 }
 
+// validatePassword 密码强度校验：至少 8 位且同时包含大小写字母和数字
+func validatePassword(pwd string) error {
+	if len(pwd) < 8 {
+		return errors.New("密码至少8个字符")
+	}
+	hasLower := false
+	hasUpper := false
+	hasDigit := false
+	for _, c := range pwd {
+		switch {
+		case c >= 'a' && c <= 'z':
+			hasLower = true
+		case c >= 'A' && c <= 'Z':
+			hasUpper = true
+		case c >= '0' && c <= '9':
+			hasDigit = true
+		}
+	}
+	if !hasLower || !hasUpper || !hasDigit {
+		return errors.New("密码必须同时包含大小写字母和数字")
+	}
+	return nil
+}
+
 func (s *userService) UploadAvatar(ctx context.Context, userId int, file multipart.File, header *multipart.FileHeader) (string, error) {
 	// 上传OSS
 	avatarURL, err := s.minio.UploadAvatarFromStream(ctx, file, userId, header)
@@ -245,7 +280,8 @@ func (s *userService) UploadAvatar(ctx context.Context, userId int, file multipa
 	if err = s.userRepo.UpdateAvatarURL(userId, avatarURL); err != nil {
 		return "", fmt.Errorf("更新用户头像失败: %w", err)
 	}
-	return avatarURL, nil
+	// 私有桶下返回预签名 URL 供前端立即展示
+	return s.minio.PresignAvatarURL(ctx, avatarURL, 24*time.Hour), nil
 }
 
 // generateUsername 生成用户名

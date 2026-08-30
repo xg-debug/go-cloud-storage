@@ -1,0 +1,128 @@
+# ============================================================
+# Go Cloud Storage 配置模板（不含任何真实凭据）
+# 用法：复制为 go-cloud-storage.dev.yaml 并填入实际值。
+# 注意：backend/conf/*.yaml 已被 .gitignore 忽略，不会入库；
+#       敏感信息也可用环境变量注入（见下方 GCS_* 说明）。
+# ============================================================
+
+Server:
+  port: 8081
+  env: dev                    # dev | prod
+  storagePath: ./upload       # 本地存储路径（当前主要使用 MinIO，保留兼容）
+  publicBaseURL: "http://localhost:8080"   # 对外访问地址（生成密码重置链接等）
+  allowedOrigins:             # 仅列出可信 Web 来源；生产环境替换为实际域名
+    - "http://localhost:8080"
+    - "http://127.0.0.1:8080"
+
+Database:
+  host: 127.0.0.1
+  port: 3306
+  user: root
+  password: CHANGE_ME          # 或用环境变量 GCS_DB_PASSWORD
+  dbname: file-store
+  maxOpenConns: 100
+  maxIdleConns: 20
+  connMaxLifetime: 1h
+  connMaxIdleTime: 10m
+  logLevel: info               # silent | error | warn | info（生产建议 warn）
+
+Redis:
+  enabled: true                # 注意：disabled 时服务可启动，但刷新令牌/分片上传不可用
+  host: 127.0.0.1
+  port: 6379
+  password: CHANGE_ME          # 或用环境变量 GCS_REDIS_PASSWORD
+  db: 0
+  poolSize: 20
+
+rabbitmq:
+  enabled: false               # 关闭时回收站过期清理降级为定时扫描
+  url: "amqp://guest:guest@127.0.0.1:5672/"   # 或用环境变量 GCS_RABBITMQ_URL
+  exchange: "recycle.exchange"
+  queue: "recycle.expired.queue"
+  routingKey: "recycle.expired"
+  consumerTag: "recycle-cleanup-worker"
+  scanIntervalSeconds: 60
+
+# 阿里云 OSS（已废弃，当前存储走 MinIO，保留兼容）
+AliyunOss:
+  Host: ""
+  Bucket: ""
+  Endpoint: ""
+  AccessId: ""                 # 或用环境变量 GCS_ALIYUN_ACCESS_SECRET
+  AccessSecret: ""
+  Region: ""
+
+storageType: "minio"
+
+minio:
+  endpoint: "127.0.0.1:9000"
+  accessKeyID: "CHANGE_ME"     # 或用环境变量 GCS_MINIO_ACCESS_KEY
+  secretAccessKey: "CHANGE_ME" # 或用环境变量 GCS_MINIO_SECRET_KEY
+  bucket: "go-cloud-storage"
+  useSSL: false
+  region: "us-east-1"
+
+# JWT 签名密钥：至少 32 字节；建议用 `openssl rand -hex 32` 生成
+# 或用环境变量 GCS_JWT_SECRET。未配置时开发环境会生成临时密钥（重启失效）。
+jwt:
+  secret: "CHANGE_ME_32_BYTES_RANDOM_STRING_0000"
+
+smtp:
+  host: "smtp.example.com"
+  port: 587
+  username: "noreply@example.com"
+  password: "CHANGE_ME"        # 或用环境变量 GCS_SMTP_PASSWORD
+  from: "CloudBox <noreply@example.com>"
+
+# 安全配置
+security:
+  allowedExtensions:
+    - .jpg
+    - .jpeg
+    - .png
+    - .gif
+    - .bmp
+    - .webp
+    - .svg
+    - .mp4
+    - .avi
+    - .mov
+    - .wmv
+    - .flv
+    - .mkv
+    - .mp3
+    - .wav
+    - .flac
+    - .aac
+    - .ogg
+    - .pdf
+    - .doc
+    - .docx
+    - .xls
+    - .xlsx
+    - .ppt
+    - .pptx
+    - .txt
+    - .md
+    - .csv
+    - .json
+    - .xml
+    - .yaml
+    - .yml
+    - .zip
+    - .rar
+    - .7z
+    - .tar
+    - .gz
+    - .html
+    - .htm
+    - .css
+    - .js
+    - .ts
+    - .py
+    - .go
+    - .java
+    - .ncm
+  maxFileSizeMB: 500           # 单文件上限
+  rateLimitRPS: 50             # 每用户每秒请求数
+  defaultQuotaGB: 10           # 新用户默认配额

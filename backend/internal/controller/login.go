@@ -8,8 +8,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go-cloud-storage/backend/infrastructure/cache"
-	"go-cloud-storage/backend/pkg/utils"
 	"go-cloud-storage/backend/internal/services"
+	"go-cloud-storage/backend/pkg/utils"
 )
 
 type LoginController struct {
@@ -27,9 +27,7 @@ type LoginRequest struct {
 }
 
 type LoginResponse struct {
-	Token        string      `json:"token"`
-	RefreshToken string      `json:"refresh_token,omitempty"`
-	UserInfo     interface{} `json:"user_info"`
+	UserInfo interface{} `json:"user_info"`
 }
 
 type RegisterRequest struct {
@@ -76,26 +74,18 @@ func (c *LoginController) Login(ctx *gin.Context) {
 	refreshKey := fmt.Sprintf("user:%d:refresh_token", user.Id)
 
 	// 仅存储刷新令牌，访问令牌无需存储（无状态JWT）
-	err = rdb.Set(ctx.Request.Context(), refreshKey, refreshToken, refreshTokenExpire).Err()
-	if err != nil {
+	if rdb == nil {
+		// Redis 不可用时降级：签发令牌但跳过持久化（刷新接口将因无法校验而拒绝）
+		slog.Warn("redis unavailable, refresh token persistence skipped", "userId", user.Id)
+	} else if err = rdb.Set(ctx.Request.Context(), refreshKey, refreshToken, refreshTokenExpire).Err(); err != nil {
 		utils.Fail(ctx, http.StatusInternalServerError, "刷新令牌存储失败")
 		return
 	}
 
 	loginResp := LoginResponse{
-		Token:        accessToken,
-		RefreshToken: refreshToken,
-		UserInfo:     user,
+		UserInfo: user,
 	}
-	ctx.SetCookie(
-		"refresh_token",                   // cookie 名称
-		refreshToken,                      // cookie 值，即 refresh_token
-		int(refreshTokenExpire.Seconds()), // 过期时间，单位秒
-		"/",                               // 路径，通常设置根路径
-		"",                                // 域名，根据你的环境配置，localhost时可为空或""
-		true,                              // Secure，只允许HTTPS请求携带
-		true,                              // HttpOnly，前端JS无法读取，防止XSS窃取
-	)
+	setAuthCookies(ctx, accessToken, refreshToken, 2*time.Hour, refreshTokenExpire)
 	utils.Success(ctx, loginResp)
 }
 
@@ -112,8 +102,13 @@ func (c *LoginController) RefreshToken(ctx *gin.Context) {
 		return
 	}
 	// 检查refresh_token是否存在于Redis
+	rdb := cache.GetClient()
+	if rdb == nil {
+		utils.Fail(ctx, http.StatusUnauthorized, "RefreshToken已失效")
+		return
+	}
 	refreshKey := fmt.Sprintf("user:%d:refresh_token", claims.UserId)
-	storedToken, err := cache.GetClient().Get(ctx.Request.Context(), refreshKey).Result()
+	storedToken, err := rdb.Get(ctx.Request.Context(), refreshKey).Result()
 	if err != nil || storedToken != refreshToken {
 		utils.Fail(ctx, http.StatusUnauthorized, "RefreshToken已失效")
 		return
@@ -124,7 +119,9 @@ func (c *LoginController) RefreshToken(ctx *gin.Context) {
 		utils.Fail(ctx, http.StatusInternalServerError, "生成新令牌失败")
 		return
 	}
-	utils.Success(ctx, gin.H{"token": newToken})
+	setAccessCookie(ctx, newToken, 2*time.Hour)
+	setCSRFCookie(ctx)
+	utils.Success(ctx, gin.H{"authenticated": true})
 }
 
 func (c *LoginController) Register(ctx *gin.Context) {
@@ -147,9 +144,44 @@ func (c *LoginController) Logout(ctx *gin.Context) {
 	userId := ctx.GetInt("userId")
 	// 删除刷新令牌
 	refreshKey := fmt.Sprintf("user:%d:refresh_token", userId)
-	if err := cache.GetClient().Del(ctx.Request.Context(), refreshKey).Err(); err != nil {
-		slog.Error("删除refresh token缓存失败", "error", err)
+	if rdb := cache.GetClient(); rdb != nil {
+		if err := rdb.Del(ctx.Request.Context(), refreshKey).Err(); err != nil {
+			slog.Error("删除refresh token缓存失败", "error", err)
+		}
 	}
-	ctx.SetCookie("refresh_token", "", -1, "/", "", true, true) // 删除浏览器 Cookie
+	clearAuthCookies(ctx)
 	utils.Success(ctx, gin.H{"message": "退出成功"})
+}
+
+func setAuthCookies(ctx *gin.Context, accessToken, refreshToken string, accessTTL, refreshTTL time.Duration) {
+	setAccessCookie(ctx, accessToken, accessTTL)
+	setRefreshCookie(ctx, refreshToken, refreshTTL)
+	setCSRFCookie(ctx)
+}
+
+func setAccessCookie(ctx *gin.Context, token string, ttl time.Duration) {
+	setCookie(ctx, "access_token", token, int(ttl.Seconds()), true)
+}
+
+func setRefreshCookie(ctx *gin.Context, token string, ttl time.Duration) {
+	setCookie(ctx, "refresh_token", token, int(ttl.Seconds()), true)
+}
+
+func setCSRFCookie(ctx *gin.Context) {
+	setCookie(ctx, "csrf_token", utils.NewUUID(), int((24 * time.Hour).Seconds()), false)
+}
+
+func clearAuthCookies(ctx *gin.Context) {
+	setCookie(ctx, "access_token", "", -1, true)
+	setCookie(ctx, "refresh_token", "", -1, true)
+	setCookie(ctx, "csrf_token", "", -1, false)
+}
+
+func setCookie(ctx *gin.Context, name, value string, maxAge int, httpOnly bool) {
+	ctx.SetSameSite(http.SameSiteLaxMode)
+	ctx.SetCookie(name, value, maxAge, "/", "", isSecureRequest(ctx), httpOnly)
+}
+
+func isSecureRequest(ctx *gin.Context) bool {
+	return ctx.Request.TLS != nil || ctx.GetHeader("X-Forwarded-Proto") == "https"
 }

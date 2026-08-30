@@ -3,7 +3,6 @@ import App from './App.vue'
 import router from './router/index.js'
 import axios from 'axios'
 import store from './store/index.js'
-import { getProfile } from '@/api/user'
 
 // 引入全局css
 import './assets/cloud-ui.css'
@@ -11,28 +10,11 @@ import '@/assets/wxlogin/iconfont.css'
 import '@/assets/zfblogin/iconfont.css'
 import '@/assets/qqlogin/iconfont.css'
 
-import * as ElementPlusIconsVue from '@element-plus/icons-vue'
-
 const app = createApp(App)
 
-// 注册所有图标
-for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
-  app.component(key, component)
-}
-
-const token = localStorage.getItem('token')
-
-if (token) {
-  getProfile()
-    .then(res => {
-      store.commit('setUserInfo', res)
-    })
-    .catch(() => {
-      // token 无效了，清理
-      store.commit('setUserInfo', null)
-      localStorage.removeItem('token')
-    })
-}
+// 迁移到 HttpOnly Cookie 后，主动清理旧版本遗留的可读 JWT。
+localStorage.removeItem('token')
+sessionStorage.removeItem('token')
 
 // 全局挂载
 app.config.globalProperties.$axios = axios

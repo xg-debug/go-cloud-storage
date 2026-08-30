@@ -130,11 +130,27 @@ func (s *fileService) InitChunkUpload(ctx context.Context, userId int, fileName,
 	if chunkSize <= 0 {
 		chunkSize = defaultUploadChunkSize
 	}
+	// 分片参数强校验：防止恶意客户端用极小分片制造海量 Redis 字段（内存 DoS），
+	// 或超过 MinIO 单次 Multipart Upload 的 10000 片上限。
+	const (
+		minChunkSize int64 = 1 * 1024 * 1024      // 1MB
+		maxChunkSize int64 = 50 * 1024 * 1024     // 50MB
+		maxChunks          = 10000                // MinIO/S3 硬上限
+	)
+	if chunkSize < minChunkSize {
+		return nil, fmt.Errorf("分片大小过小（最小 %dMB）", minChunkSize/1024/1024)
+	}
+	if chunkSize > maxChunkSize {
+		return nil, fmt.Errorf("分片大小过大（最大 %dMB）", maxChunkSize/1024/1024)
+	}
 	if totalChunks <= 0 && fileSize > 0 {
 		totalChunks = int((fileSize + chunkSize - 1) / chunkSize)
 	}
 	if fileSize <= 0 || totalChunks <= 0 {
 		return nil, errors.New("文件大小或分片数量无效")
+	}
+	if totalChunks > maxChunks {
+		return nil, fmt.Errorf("分片数量过多（最多 %d 片），请增大分片大小", maxChunks)
 	}
 
 	// 1.秒传检查：仅在当前用户范围内匹配已有文件
@@ -230,16 +246,26 @@ func (s *fileService) InitChunkUpload(ctx context.Context, userId int, fileName,
 			if err := createSession(); err != nil {
 				return nil, err
 			}
-		} else if err := s.redis.HSet(ctx, sessionKey,
-			"fileName", fileName,
-			"parentId", parentId,
-			"fileSize", strconv.FormatInt(fileSize, 10),
-			"chunkSize", strconv.FormatInt(chunkSize, 10),
-			"totalChunks", strconv.Itoa(totalChunks),
-		).Err(); err != nil {
-			return nil, err
-		} else if err := s.refreshChunkUploadSession(ctx, sessionKey); err != nil {
-			return nil, err
+		} else {
+			// 会话冲突检查：同一用户对相同内容(hash)的上传会话只能有一个。
+			// 若 fileName/parentId 与已有会话不一致，说明该文件正在上传到其他位置，
+			// 直接复用会导致分片互相污染、合并失败。
+			storedName, _ := s.redis.HGet(ctx, sessionKey, "fileName").Result()
+			storedParent, _ := s.redis.HGet(ctx, sessionKey, "parentId").Result()
+			if storedName != "" && (storedName != fileName || storedParent != parentId) {
+				return nil, errors.New("相同内容的文件正在上传到其他位置，请稍后重试或先取消该上传")
+			}
+			if err := s.redis.HSet(ctx, sessionKey,
+				"fileName", fileName,
+				"parentId", parentId,
+				"fileSize", strconv.FormatInt(fileSize, 10),
+				"chunkSize", strconv.FormatInt(chunkSize, 10),
+				"totalChunks", strconv.Itoa(totalChunks),
+			).Err(); err != nil {
+				return nil, err
+			} else if err := s.refreshChunkUploadSession(ctx, sessionKey); err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -345,9 +371,10 @@ func (s *fileService) MergeChunks(ctx context.Context, userId int, fileHash, fil
 
 	sessionKey := fmt.Sprintf("upload:%d:%s", userId, fileHash)
 
-	// 分布式锁
+	// 分布式锁：TTL 必须覆盖完整的合并流程（含合并后整文件 SHA-256 校验，
+	// 大文件全量下载校验可能超过 30 秒），防止锁过期后第二个合并请求并发进入。
 	lockKey := fmt.Sprintf("upload:%d:%s:lock", userId, fileHash)
-	locked, err := s.redis.SetNX(ctx, lockKey, "1", 30*time.Second).Result()
+	locked, err := s.redis.SetNX(ctx, lockKey, "1", 10*time.Minute).Result()
 	if err != nil || !locked {
 		return nil, errors.New("合并正在进行中，请稍后重试")
 	}

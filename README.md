@@ -1,210 +1,252 @@
-# Go Cloud Storage
+<div align="center">
+  <img src="frontend/public/img/icons/android-chrome-192x192.png" width="88" alt="CloudBox logo">
+  <h1>Go Cloud Storage</h1>
+  <p><strong>CloudBox —— 一个面向 Web 的现代化私有云盘。</strong></p>
+  <p>使用 Go、Vue 3 与 MinIO 构建，覆盖文件上传、在线预览、搜索、分享、回收站和实时通知。</p>
 
-<p align="center">
-  <strong>高性能私有云存储系统</strong> — 前后端分离，支持大文件分片上传、秒传、实时通知、文件分享与协作
-</p>
+  <p>
+    <img src="https://img.shields.io/badge/Go-1.25.6-00ADD8?logo=go&logoColor=white" alt="Go 1.25.6">
+    <img src="https://img.shields.io/badge/Vue-3.5.17-42B883?logo=vuedotjs&logoColor=white" alt="Vue 3.5.17">
+    <img src="https://img.shields.io/badge/Gin-1.12-008ECF" alt="Gin 1.12">
+    <img src="https://img.shields.io/badge/Element_Plus-2.10-409EFF?logo=element&logoColor=white" alt="Element Plus 2.10">
+    <img src="https://img.shields.io/badge/Platform-Web-2563EB" alt="Web only">
+  </p>
 
-<p align="center">
-  <img src="https://img.shields.io/badge/Go-1.25-00ADD8?logo=go" alt="Go version">
-  <img src="https://img.shields.io/badge/Vue-3.5-4FC08D?logo=vuedotjs" alt="Vue version">
-  <img src="https://img.shields.io/badge/MySQL-8+-4479A1?logo=mysql" alt="MySQL">
-  <img src="https://img.shields.io/badge/Redis-7+-DC382D?logo=redis" alt="Redis">
-  <img src="https://img.shields.io/badge/MinIO-latest-E05E43?logo=minio" alt="MinIO">
-  <img src="https://img.shields.io/badge/license-MIT-blue" alt="License">
-</p>
+  <p>
+    <a href="#界面预览">界面预览</a> ·
+    <a href="#功能亮点">功能亮点</a> ·
+    <a href="#快速开始">快速开始</a> ·
+    <a href="#架构">架构</a> ·
+    <a href="#api-概览">API</a>
+  </p>
+</div>
 
-## 预览
+## 项目简介
 
-| 文件管理 | 个人中心 | 分享管理 |
-|:---:|:---:|:---:|
-| ![文件管理](image/image1.png) | ![个人中心](image/image6.png) | ![分享管理](image/image3.png) |
+Go Cloud Storage 是一个前后端分离的私有云存储项目，产品界面名称为 **CloudBox**。它以桌面 Web 文件工作区为核心，后端负责认证、文件元数据、对象存储编排与权限校验，前端提供网格/列表浏览、详情面板、上传队列和预览体验。
 
-| 收藏夹 | 回收站 | 登录注册 |
-|:---:|:---:|:---:|
-| ![收藏夹](image/image4.png) | ![回收站](image/image5.png) | ![登录注册](image/image7.png) |
+项目适合用于学习完整的云盘业务链路、自托管实验以及在此基础上继续开发。目前仅维护 **Web 桌面端**，不包含移动端页面或移动端适配承诺。
 
-## 功能
+## 界面预览
 
-- **用户认证** — 注册 / 登录 / JWT Token 刷新 / 退出，密码强度校验
-- **文件管理** — 文件夹树、拖拽移动、复制、重命名、删除
-- **大文件上传** — 分片初始化 → 并发上传 → 合并，支持断点续传与秒传
-- **文件预览** — 图片轮播、视频/音频播放、Markdown 渲染、PDF 内嵌预览、文本/代码高亮
-- **搜索** — 全文搜索（MySQL ngram 索引支持中文），搜索历史（Redis ZSet）
-- **下载** — Range 分段下载（>100MB 走 MinIO 预签名直链），下载信息面板
-- **收藏与分类** — 收藏夹管理，按文件类型（图片/视频/文档/其他）分类浏览
-- **分享** — 创建分享链接（提取码 + 有效期 + 下载权限），提取码暴力破解防护
-- **回收站** — 软删除、单个/批量恢复、自动过期清理（RabbitMQ 延迟队列）
-- **存储统计** — 环形图容量展示，按文件类型分别统计，实时刷新
-- **实时通知** — SSE 服务端推送，分享/系统通知即时到达
-- **安全机制** — API 速率限制、文件类型白名单、文件大小上限、上传校验
-- **键盘快捷键** — 支持 `Ctrl+F` 搜索、`Ctrl+O` 上传等快捷操作
+### 文件工作区
+
+网格与列表双视图、文件详情、排序、搜索、上传和批量操作集中在同一个桌面工作区中。
+
+![文件工作区与详情面板](image/cloudbox-workspace.jpg)
+
+### 登录与注册
+
+登录、注册、忘记密码与重置密码使用统一的认证体验。
+
+![CloudBox 登录页](image/cloudbox-login.jpg)
+
+> 截图基于当前代码的 1440 × 900 桌面 Web 界面生成；示例文件和容量数据仅用于展示。
+
+## 功能亮点
+
+| 能力 | 说明 |
+| --- | --- |
+| 文件工作区 | 文件夹导航、网格/列表视图、排序、多选、拖拽移动、复制、重命名和删除 |
+| 大文件上传 | 10 MiB 阈值自动切换分片上传，支持并发分片、进度、暂停/继续、取消与秒传 |
+| 在线预览 | 支持图片轮播、音视频、PDF、文本和 Markdown；Markdown 内容经 DOMPurify 清洗 |
+| 搜索与整理 | 文件搜索、搜索历史、最近访问、类型分类、收藏夹和重复文件检测 |
+| 安全分享 | 分享链接、可选提取码、有效期、下载权限以及提取码暴力破解防护 |
+| 回收站 | 软删除、单个/批量恢复、永久删除以及 7 天过期清理 |
+| 下载 | 普通下载、Range 分段下载、预签名直链和批量 ZIP 下载 |
+| 实时体验 | SSE 通知、上传队列、存储配额展示、浅色/深色主题和常用快捷键 |
+| 账户安全 | HttpOnly Cookie 会话、Access/Refresh Token、CSRF 校验、接口限流和密码重置 |
+
+常用快捷键：`Ctrl/Cmd + U` 上传、`Ctrl/Cmd + F` 搜索、`Ctrl/Cmd + A` 全选，按 `?` 查看快捷键帮助。
+
+## 架构
+
+```mermaid
+flowchart LR
+    Web["Vue 3 Web"] -->|"同源 /api"| API["Gin API"]
+    API --> Service["Service 业务层"]
+    Service --> Repo["Repository 数据层"]
+    Repo --> MySQL[("MySQL")]
+    Service --> Redis[("Redis")]
+    Service --> MinIO[("MinIO")]
+    Service -. "可选：过期清理" .-> RabbitMQ[("RabbitMQ")]
+    API -->|"SSE"| Web
+```
+
+- **MySQL** 保存用户、文件、收藏、分享、回收站、配额与通知等业务数据。
+- **MinIO** 保存私有文件对象；预览、下载和分享通过受控接口或短期预签名 URL 访问。
+- **Redis** 保存刷新令牌、分片上传会话、限流状态和搜索历史。
+- **RabbitMQ** 可选；启用后用于回收站过期任务，关闭时自动降级为定时扫描。
 
 ## 技术栈
 
 | 层级 | 技术 |
-|:---|:---|
-| 后端框架 | Go 1.25 · Gin · GORM |
-| 数据库 | MySQL 8 · Redis 7 |
-| 对象存储 | MinIO（S3 兼容） |
-| 消息队列 | RabbitMQ（可选，关闭后回收站使用定时扫描） |
-| 前端框架 | Vue 3 · Vue Router · Vuex · Element Plus |
-| 构建工具 | Vue CLI 5 · npm |
-
-## 项目结构
-
-```
-go-cloud-storage/
-├── backend/
-│   ├── cmd/main.go                 # 启动入口
-│   ├── conf/                       # YAML 配置文件
-│   ├── infrastructure/             # 基础设施层
-│   │   ├── cache/                  #   Redis 客户端
-│   │   ├── minio/                  #   MinIO 客户端（分片/缩略图/预签名）
-│   │   ├── mq/                     #   RabbitMQ 客户端
-│   │   └── mysql/                  #   MySQL 连接
-│   ├── internal/
-│   │   ├── controller/             # HTTP 接口层
-│   │   ├── services/               # 业务编排层
-│   │   ├── repositories/           # 数据访问层
-│   │   ├── models/                 # 数据模型与 DTO
-│   │   ├── middleware/             # JWT / 限流 / 暴力破解防护
-│   │   └── router/                 # 依赖装配与路由注册
-│   └── pkg/
-│       ├── config/                 # 配置加载（Viper）
-│       ├── logger/                 # 结构化日志（slog）
-│       └── utils/                  # JWT / 响应封装 / 格式化
-├── front/
-│   └── src/
-│       ├── api/                    # 后端 API 封装
-│       ├── components/layout/      # 布局组件（Header/Sidebar/RightPanel）
-│       ├── router/                 # 前端路由
-│       ├── store/modules/          # Vuex 状态模块
-│       ├── utils/                  # 请求拦截器、工具函数
-│       └── views/                  # 页面视图
-├── image/                          # README 截图
-├── db.sql                          # 数据库初始化脚本
-└── README.md
-```
+| --- | --- |
+| Web | Vue 3、Vue Router 4、Vuex 4、Element Plus、Axios |
+| 内容与上传 | Marked、DOMPurify、SparkMD5 |
+| API | Go 1.25.6、Gin、GORM、Viper、slog |
+| 数据 | MySQL 8、Redis、MinIO、RabbitMQ（可选） |
+| 工程化 | Vue CLI 5、Go Modules、npm |
 
 ## 快速开始
 
 ### 环境要求
 
-| 依赖 | 版本 |
-|:---|:---|
-| Go | ≥ 1.25 |
-| Node.js | ≥ 18（推荐 24） |
-| MySQL | ≥ 8.0 |
-| Redis | ≥ 7.0 |
-| MinIO | latest |
-| RabbitMQ | 3.x（可选） |
+| 依赖 | 建议版本 | 是否必需 |
+| --- | --- | --- |
+| Go | 与 `backend/go.mod` 一致（当前 1.25.6） | 是 |
+| Node.js | 20 或更高 | 是 |
+| MySQL | 8.0 或更高 | 是 |
+| MinIO | 兼容当前 MinIO Go SDK 的版本 | 是 |
+| Redis | 6.0 或更高 | 推荐；关闭后刷新令牌和分片上传不可用 |
+| RabbitMQ | 3.x | 否 |
 
-### 1. 初始化数据库
+### 1. 获取代码
 
 ```bash
-mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS \`file-store\` DEFAULT CHARACTER SET utf8mb4;"
+git clone https://github.com/xg-debug/go-cloud-storage.git
+cd go-cloud-storage
+```
+
+### 2. 初始化数据库
+
+```bash
+mysql -u root -p -e 'CREATE DATABASE IF NOT EXISTS `file-store` DEFAULT CHARACTER SET utf8mb4;'
 mysql -u root -p file-store < db.sql
 ```
 
-为提高中文搜索准确性，创建 ngram 全文索引：
+如需优化中文文件名搜索，可额外创建 ngram 全文索引：
 
 ```sql
 ALTER TABLE `file` ADD FULLTEXT INDEX `ft_name` (`name`) WITH PARSER ngram;
 ```
 
-### 2. 配置后端
+### 3. 配置后端
 
-编辑 `backend/conf/go-cloud-storage.dev.yaml`，按实际环境修改：
-
-```yaml
-Server:
-  port: 8081
-
-Database:
-  host: 127.0.0.1
-  port: 3306
-  user: root
-  password: your_password
-  dbname: file-store
-
-Redis:
-  host: 127.0.0.1
-  port: 6379
-  password: your_password
-
-minio:
-  endpoint: "127.0.0.1:9000"
-  accessKeyID: "minioadmin"
-  secretAccessKey: "minioadmin"
-  bucket: "go-cloud-storage"
-  useSSL: false
-
-rabbitmq:
-  enabled: false   # 不使用可关闭
+```bash
+cp backend/conf/go-cloud-storage.dev.example.yaml backend/conf/go-cloud-storage.dev.yaml
 ```
 
-### 3. 启动后端
+编辑复制后的配置文件，至少填写 MySQL、MinIO 与 JWT 配置。项目会在 MinIO 中自动检查并创建 Bucket；生产环境应使用随机密钥，并通过环境变量注入敏感值：
+
+| 环境变量 | 用途 |
+| --- | --- |
+| `GCS_DB_PASSWORD` | MySQL 密码 |
+| `GCS_REDIS_PASSWORD` | Redis 密码 |
+| `GCS_MINIO_ACCESS_KEY` / `GCS_MINIO_SECRET_KEY` | MinIO 凭据 |
+| `GCS_JWT_SECRET` | JWT 签名密钥，至少 32 字节 |
+| `GCS_SMTP_PASSWORD` | SMTP 密码 |
+| `GCS_RABBITMQ_URL` | RabbitMQ 连接地址 |
+
+完整字段及默认值见 [`backend/conf/go-cloud-storage.dev.example.yaml`](backend/conf/go-cloud-storage.dev.example.yaml)。
+
+### 4. 启动后端
+
+确认 MySQL、MinIO 以及配置中启用的 Redis/RabbitMQ 已运行，然后执行：
 
 ```bash
 cd backend
-go mod tidy
+go mod download
 go run ./cmd
 ```
 
-服务默认运行在 `http://localhost:8081`。
+API 默认监听 `http://localhost:8081`。
 
-### 4. 启动前端
+### 5. 启动前端
+
+打开另一个终端：
 
 ```bash
-cd front
-npm install
+cd frontend
+npm ci
+cp .env.example .env.local
 npm run serve
 ```
 
-浏览器打开 `http://localhost:8080`。
+浏览器访问 `http://localhost:8080`。开发环境默认使用 `/api` 同源路径，并由 Vue Dev Server 代理到 `http://localhost:8081`；如需修改目标服务，请调整 `.env.local`：
 
-> 前端 API 地址在 `front/src/utils/request.js` 中配置，默认指向 `http://localhost:8081`。
+```dotenv
+VUE_APP_API_BASE_URL=/api
+VUE_APP_DEV_API_TARGET=http://localhost:8081
+```
+
+## 项目结构
+
+```text
+go-cloud-storage/
+├── backend/
+│   ├── cmd/                    # 服务入口
+│   ├── conf/                   # 无密钥配置模板与本地配置
+│   ├── infrastructure/         # MySQL、Redis、MinIO、RabbitMQ、邮件
+│   ├── internal/
+│   │   ├── controller/         # HTTP 控制器
+│   │   ├── middleware/         # 认证、CSRF、限流、Request ID
+│   │   ├── repositories/       # 数据访问与事务
+│   │   ├── services/           # 文件、用户、分享等业务逻辑
+│   │   └── models/             # 数据模型与 DTO
+│   ├── migrations/             # 增量迁移与 GORM 迁移定义
+│   └── pkg/                    # 配置、日志与通用工具
+├── frontend/
+│   ├── public/                 # 静态资源与 PWA 图标
+│   └── src/
+│       ├── api/                # API 调用封装
+│       ├── components/         # 布局与业务组件
+│       ├── composables/        # 文件操作组合逻辑
+│       ├── config/             # Web 运行时配置
+│       ├── services/           # 认证会话服务
+│       ├── store/              # Vuex 状态与上传队列
+│       └── views/              # 页面视图
+├── image/                      # README 界面截图
+├── scripts/perf/               # 性能测试脚本
+├── db.sql                      # 脱敏后的数据库结构
+└── README.md
+```
 
 ## API 概览
 
-| 模块 | 端点 | 说明 |
-|:---|:---|:---|
-| 认证 | `POST /login` `/register` `/refresh-token` `/logout` | 登录、注册、刷新令牌、退出 |
-| 用户 | `GET /me` `PUT /user/update` `/password` `/avatar` `/stats` | 个人信息、密码修改、头像上传、统计 |
-| 文件 | `POST /file/list` `/upload` `/create-folder` `/search` | 列表、上传、创建文件夹、搜索 |
-| 分片 | `POST /file/chunk/init` `/upload` `/merge` `/cancel` | 大文件分片上传 |
-| 预览 | `GET /file/preview/:id` `/preview-stream/:id` | 文件预览（含 PDF 代理流） |
-| 下载 | `GET /file/download/:id` `/download-info/:id` | 下载、下载策略信息 |
-| 操作 | `POST /file/move` `/copy` `/rename` `DELETE /file/:id` | 移动、复制、重命名、删除 |
-| 收藏 | `GET/POST/DELETE /favorite` | 收藏管理 |
-| 分类 | `POST /category/files` | 按类型分类浏览 |
-| 回收站 | `GET /recycle` `PUT /recycle/:id/restore` `DELETE /recycle` | 列表、恢复、删除/清空 |
-| 分享 | `POST /share` `GET /share` `PUT /share/:id` | 创建、列表、更新 |
-| 公开 | `GET /s/:token` `/s/:token/download` | 公开访问分享 |
-| 通知 | `GET /notification/stream` `GET /notification` | SSE 实时推送、通知列表 |
-| 搜索历史 | `GET/DELETE /file/search/history` | 搜索历史管理 |
+| 模块 | 主要接口 |
+| --- | --- |
+| 认证 | `POST /login`、`/register`、`/refresh-token`、`/logout`，`GET /me` |
+| 用户 | `PUT /user/update`、`/user/password`，`POST /user/avatar`，`GET /user/stats` |
+| 文件 | `/file/list`、`/upload`、`/create-folder`、`/move`、`/copy`、`/rename`、`/search` |
+| 分片上传 | `/file/chunk/init`、`/upload`、`/merge`、`/cancel`、`/progress` |
+| 预览与下载 | `GET /file/preview/:id`、`/preview-stream/:id`、`/download/:id`，`POST /download-batch` |
+| 收藏与分类 | `/favorite`、`/category/files`、`/file/recent`、`/file/duplicates` |
+| 回收站 | `/recycle` 及单个/批量恢复、永久删除接口 |
+| 分享 | `/share` 管理接口，`/s/:token` 公开访问与下载 |
+| 通知 | `/notification` 管理接口与 `/notification/stream` SSE 流 |
 
-## 架构设计
+所有受保护接口均经过 JWT 认证、CSRF 校验与速率限制。公开分享接口按 IP 限流，并对提取码错误进行额外保护。
 
+## 安全说明
+
+- Access Token 与 Refresh Token 默认写入 `HttpOnly` Cookie，写操作同时校验 CSRF Token。
+- MinIO Bucket 强制保持私有，外部访问使用受控接口或短期预签名 URL。
+- Markdown 预览在插入 DOM 前使用 DOMPurify 清洗，降低存储型 XSS 风险。
+- 日志只记录请求路径而不记录查询字符串，避免令牌等敏感参数进入日志。
+- 配置模板不含真实凭据；`backend/conf/*.yaml` 与本地 `.env*` 不应提交到仓库。
+
+部署到公网前，还应配置 HTTPS、反向代理可信来源、独立数据库账号、强随机密钥、备份策略和对象存储生命周期策略。
+
+## 开发与验证
+
+```bash
+# 后端
+cd backend
+go test ./...
+go vet ./...
+
+# 前端
+cd frontend
+npm run build
 ```
-┌──────────────┐     ┌──────────────────────────────┐     ┌───────────┐
-│   Vue 3      │────▶│  Gin API Server              │────▶│  MySQL    │
-│   SPA        │     │                              │     │  (主存储)  │
-└──────────────┘     │  Controller → Service → Repo  │     └───────────┘
-                     │                              │
-                     │  ┌────────┐  ┌───────────┐  │     ┌───────────┐
-                     │  │ MinIO  │  │  Redis    │  │     │  RabbitMQ │
-                     │  │(对象存储)│  │(缓存/会话) │  │     │(延迟清理) │
-                     │  └────────┘  └───────────┘  │     └───────────┘
-                     └──────────────────────────────┘
-```
 
-- **分片上传** — 前端 SparkMD5 计算文件指纹，Redis 维护上传会话与分片 ETag，MinIO Core API 完成分片合并
-- **秒传** — 文件指纹命中已有记录时，直接复用 MinIO 对象创建新记录，无需重复上传
-- **PDF 预览** — 后端代理流式传输，显式 `Content-Disposition: inline`，避免浏览器弹出下载
-- **Office 预览** — 依赖 Microsoft Office Online 服务，需 MinIO 公网可达，当前默认关闭
-- **回收站** — 软删除 + 7 天过期，RabbitMQ 延迟消息驱动清理，关闭时降级为定时扫描
+性能测试入口位于 [`scripts/perf/README.md`](scripts/perf/README.md)。提交变更时请保持配置模板无密钥，并为涉及事务、权限或文件生命周期的修改补充相应验证。
 
-## License
+## 参与贡献
 
-MIT
+欢迎通过 [Issues](https://github.com/xg-debug/go-cloud-storage/issues) 报告问题或提出建议，也欢迎提交 Pull Request。建议在 PR 中说明变更动机、验证方式；界面调整请附桌面 Web 截图。
+
+## 许可证
+
+当前仓库尚未提交许可证文件。在许可证明确之前，仓库公开可见不等于自动授予复制、修改或分发权限。

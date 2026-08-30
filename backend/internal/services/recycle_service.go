@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"go-cloud-storage/backend/internal/models"
 	"go-cloud-storage/backend/internal/repositories"
 
 	"gorm.io/gorm"
@@ -110,31 +111,46 @@ func (s *recycleService) ClearRecycles(ctx context.Context, userId int) error {
 }
 func (s *recycleService) RestoreOne(userId int, fileId string) error {
 	return s.db.Transaction(func(tx *gorm.DB) error {
-		if err := s.verifyOwnership(tx, userId, []string{fileId}); err != nil {
-			return err
-		}
-		if err := s.recycleRepo.DeleteOne(tx, fileId); err != nil {
-			return err
-		}
-		if err := s.fileRepo.MarkAsNotDeleted(tx, []string{fileId}, nil); err != nil {
-			return err
-		}
-		return nil
+		return s.restoreItems(tx, userId, []string{fileId})
 	})
 }
 func (s *recycleService) RestoreSelected(userId int, fileIds []string) error {
 	return s.db.Transaction(func(tx *gorm.DB) error {
-		if err := s.verifyOwnership(tx, userId, fileIds); err != nil {
-			return err
-		}
-		if err := s.recycleRepo.DeleteBatch(tx, fileIds); err != nil {
-			return err
-		}
-		if err := s.fileRepo.MarkAsNotDeleted(tx, fileIds, nil); err != nil {
-			return err
-		}
-		return nil
+		return s.restoreItems(tx, userId, fileIds)
 	})
+}
+
+// restoreItems 恢复回收站项目。文件夹会递归恢复整棵子树（子文件一并出回收站），
+// 避免子文件滞留回收站中被 7 天过期清理而丢失。
+func (s *recycleService) restoreItems(tx *gorm.DB, userId int, fileIds []string) error {
+	if err := s.verifyOwnership(tx, userId, fileIds); err != nil {
+		return err
+	}
+
+	var recycleIDs []string // 需要删除的回收站记录（含子项）
+	var fileIDs []string    // 普通文件（非目录），需要单独标记未删除
+
+	for _, fid := range fileIds {
+		var f models.File
+		if err := tx.Select("id, is_dir").Where("id = ?", fid).First(&f).Error; err != nil {
+			return err
+		}
+		if f.IsDir {
+			ids, err := s.fileRepo.RestoreSubtree(tx, fid)
+			if err != nil {
+				return err
+			}
+			recycleIDs = append(recycleIDs, ids...)
+		} else {
+			fileIDs = append(fileIDs, fid)
+			recycleIDs = append(recycleIDs, fid)
+		}
+	}
+
+	if err := s.fileRepo.MarkAsNotDeleted(tx, fileIDs, nil); err != nil {
+		return err
+	}
+	return s.recycleRepo.DeleteBatch(tx, recycleIDs)
 }
 
 func (s *recycleService) verifyOwnership(tx *gorm.DB, userId int, fileIds []string) error {

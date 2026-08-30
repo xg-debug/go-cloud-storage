@@ -57,6 +57,10 @@ func (r *storageQuotaRepo) UpdateUsedSpace(tx *gorm.DB, userID int, deltaSize in
 		return result.Error
 	}
 	if result.RowsAffected == 0 {
+		if deltaSize < 0 {
+			// 负增量且无配额记录（或已钳制为 0）时视为成功：没有可回退的配额
+			return nil
+		}
 		return errors.New("存储空间不足")
 	}
 	return nil

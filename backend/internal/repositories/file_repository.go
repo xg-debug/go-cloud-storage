@@ -53,6 +53,9 @@ type FileRepository interface {
 
 	GetAllFolders(ctx context.Context, userId int) ([]models.File, error)
 	CountFilesInFolder(ctx context.Context, userId int, folderId string) (int64, error)
+	CountFilesInFolders(ctx context.Context, userId int, folderIds []string) (map[string]int64, error)
+	RestoreSubtree(db *gorm.DB, folderId string) ([]string, error)
+	SumSubtreeSize(ctx context.Context, folderId string) (int64, error)
 	UpdateParent(ctx context.Context, userId int, id, parentId string) error
 	IsSubFolder(ctx context.Context, userId int, sourceId, targetId string) (bool, error)
 	GetAncestorNames(ctx context.Context, fileId string) ([]string, error)
@@ -149,7 +152,8 @@ func (r *fileRepo) GetFilesByCategory(ctx context.Context, userId int, fileType 
 
 func (r *fileRepo) GetRecentFiles(userId int, since time.Time) ([]models.File, error) {
 	var files []models.File
-	if err := r.db.Where("user_id = ? AND is_dir = ? AND is_deleted = ? AND updated_at >= ?", userId, false, false, since).Order("updated_at DESC").Find(&files).Error; err != nil {
+	// 加 LIMIT 防止大用户一次拉全量（最近文件视图只展示前 500 条足够）
+	if err := r.db.Where("user_id = ? AND is_dir = ? AND is_deleted = ? AND updated_at >= ?", userId, false, false, since).Order("updated_at DESC").Limit(500).Find(&files).Error; err != nil {
 		return nil, err
 	}
 	return files, nil
@@ -195,17 +199,19 @@ func (r *fileRepo) GetObjectKeysByIds(fileIds []string) ([]string, error) {
 	return objectKeys, err
 }
 
-// GetObjectKeysByIdsExcludeRefs 返回 objectKeys 中去掉被其他未删除文件引用的 key
-// excludeFileIds 是即将被永久删除的文件 ID，不计入引用检查
+// GetObjectKeysByIdsExcludeRefs 返回 objectKeys 中去掉仍被其他文件引用的 key。
+// excludeFileIds 是即将被永久删除的文件 ID，不计入引用检查。
+// 注意：不能过滤 is_deleted=0 —— 软删行（回收站中的文件）仍引用对象，
+// 若忽略它们，跨用户秒传共享的对象可能在他人恢复文件前被误删。
 func (r *fileRepo) GetObjectKeysByIdsExcludeRefs(fileIds []string, keys []string) ([]string, error) {
 	if len(keys) == 0 {
 		return nil, nil
 	}
-	// 查询这些 key 中仍被其他非删除文件引用的
+	// 查询这些 key 中仍被其他（未物理删除的）文件引用的
 	var stillReferenced []string
 	err := r.db.Model(&models.File{}).
 		Select("oss_object_key").
-		Where("oss_object_key IN ? AND is_deleted = 0 AND id NOT IN ?", keys, fileIds).
+		Where("oss_object_key IN ? AND id NOT IN ?", keys, fileIds).
 		Group("oss_object_key").
 		Pluck("oss_object_key", &stillReferenced).Error
 	if err != nil {
@@ -430,6 +436,78 @@ func (r *fileRepo) CountFilesInFolder(ctx context.Context, userId int, folderId 
 		Where("user_id = ? AND parent_id = ? AND is_deleted = ?", userId, folderId, false).
 		Count(&count).Error
 	return count, err
+}
+
+// CountFilesInFolders 一次查询多个文件夹的直接文件数（消除列表页 N+1 查询）
+func (r *fileRepo) CountFilesInFolders(ctx context.Context, userId int, folderIds []string) (map[string]int64, error) {
+	result := make(map[string]int64, len(folderIds))
+	if len(folderIds) == 0 {
+		return result, nil
+	}
+	type row struct {
+		ParentId string
+		Cnt      int64
+	}
+	var rows []row
+	err := r.db.WithContext(ctx).Model(&models.File{}).
+		Select("parent_id, COUNT(*) as cnt").
+		Where("user_id = ? AND parent_id IN ? AND is_deleted = ?", userId, folderIds, false).
+		Group("parent_id").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	for _, rw := range rows {
+		result[rw.ParentId] = rw.Cnt
+	}
+	return result, nil
+}
+
+// RestoreSubtree 递归恢复文件夹及其全部子孙（is_deleted -> 0），返回受影响的所有文件 ID。
+// 用于回收站"恢复文件夹"时同时恢复整棵子树，避免子文件滞留在回收站中被过期清理。
+func (r *fileRepo) RestoreSubtree(db *gorm.DB, folderId string) ([]string, error) {
+	var ids []string
+	err := db.Raw(`
+		WITH RECURSIVE descendants AS (
+			SELECT id FROM file WHERE id = ?
+			UNION ALL
+			SELECT f.id FROM file f
+			INNER JOIN descendants d ON f.parent_id = d.id
+		)
+		SELECT id FROM descendants
+	`, folderId).Scan(&ids).Error
+	if err != nil {
+		return nil, err
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	if err := db.Model(&models.File{}).
+		Where("id IN ?", ids).
+		Updates(map[string]interface{}{"is_deleted": false}).Error; err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+// SumSubtreeSize 计算文件夹子树内所有文件的字节数之和（用于复制前配额预检）
+func (r *fileRepo) SumSubtreeSize(ctx context.Context, folderId string) (int64, error) {
+	var total sql.NullInt64
+	err := r.db.WithContext(ctx).Raw(`
+		WITH RECURSIVE descendants AS (
+			SELECT id FROM file WHERE id = ?
+			UNION ALL
+			SELECT f.id FROM file f
+			INNER JOIN descendants d ON f.parent_id = d.id
+		)
+		SELECT COALESCE(SUM(f2.size), 0) FROM file f2
+		INNER JOIN descendants d ON f2.id = d.id
+		WHERE f2.is_dir = 0 AND f2.is_deleted = 0
+	`, folderId).Scan(&total).Error
+	if err != nil {
+		return 0, err
+	}
+	return total.Int64, nil
 }
 
 func (r *fileRepo) GetAllFolders(ctx context.Context, userId int) ([]models.File, error) {

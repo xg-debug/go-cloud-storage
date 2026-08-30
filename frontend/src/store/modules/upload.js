@@ -20,6 +20,11 @@ function getAbortSignal(state, taskId) {
   return state.tasks.find(t => t.id === taskId)?.cancelController?.signal
 }
 
+// 上传请求统一静默错误（业务错误由队列面板展示，避免 toast 刷屏）
+function silentConfig(state, taskId) {
+  return { signal: getAbortSignal(state, taskId), silentError: true }
+}
+
 async function calcSHA256(file, state, taskId, commit, progressStart = 0, progressSpan = 5) {
   return sha256File(file, {
     chunkSize: HASH_CHUNK_SIZE,
@@ -120,7 +125,8 @@ export default {
         } else {
           await dispatch('uploadNormal', taskId)
         }
-        commit('UPDATE_TASK', { id: taskId, updates: { status: 'completed', progress: 100, file: null } })
+        // 成功后释放大对象与分片列表引用（仅保留任务摘要用于展示）
+        commit('UPDATE_TASK', { id: taskId, updates: { status: 'completed', progress: 100, file: null, uploadedChunks: [], cancelController: null } })
       } catch (err) {
         const latestTask = state.tasks.find(t => t.id === taskId)
         if (latestTask?.status === 'paused') {
@@ -155,7 +161,7 @@ export default {
           if (!t || t.status === 'paused' || t.status === 'cancelled') return
           const pct = 5 + Math.round((e.loaded * 95) / e.total)
           commit('UPDATE_TASK', { id: taskId, updates: { progress: pct } })
-        }, { signal: getAbortSignal(state, taskId) }).then(() => resolve()).catch(reject)
+        }, silentConfig(state, taskId)).then(() => resolve()).catch(reject)
       })
     },
 
@@ -184,7 +190,7 @@ export default {
         fileSize: task.fileSize,
         chunkSize: CHUNK_SIZE,
         totalChunks: Math.ceil(task.fileSize / CHUNK_SIZE)
-      }, { signal: getAbortSignal(state, taskId) })
+      }, silentConfig(state, taskId))
 
       checkState()
 
@@ -193,66 +199,98 @@ export default {
         return
       }
 
-      const uploaded = new Set(initRes.uploadedChunks || [])
+      // 服务端返回已上传分片（断点续传：会话内/页面内重试时跳过已传分片）
+      const uploadedSet = new Set(initRes.uploadedChunks || [])
       const totalChunks = Math.ceil(task.fileSize / CHUNK_SIZE)
-      commit('UPDATE_TASK', { id: taskId, updates: { totalChunks, uploadedChunks: [...uploaded] } })
+      commit('UPDATE_TASK', { id: taskId, updates: { totalChunks, uploadedChunks: [...uploadedSet] } })
 
       // Build chunk list: skip already-uploaded
       const pendingChunks = []
       for (let i = 0; i < totalChunks; i++) {
-        if (!uploaded.has(i)) pendingChunks.push(i)
+        if (!uploadedSet.has(i)) pendingChunks.push(i)
       }
 
-      let finishedCount = uploaded.size
+      let finishedCount = uploadedSet.size
       const updateProgress = () => {
         commit('UPDATE_TASK', { id: taskId, updates: { progress: 5 + Math.round((finishedCount / totalChunks) * 90) } })
       }
       updateProgress()
+
+      // 单个分片上传（含瞬时错误自动重试）
+      const uploadChunkWithRetry = async (form) => {
+        const maxRetries = 2
+        const delays = [1000, 3000]
+        for (let attempt = 0; ; attempt++) {
+          try {
+            await chunkUploadPart(form, () => {}, silentConfig(state, taskId))
+            return
+          } catch (e) {
+            checkState() // 暂停/取消优先于重试
+            if (isAbortError(e) || e?.message === 'paused' || e?.message === 'cancelled') throw e
+            if (attempt >= maxRetries) throw e
+            await new Promise(res => setTimeout(res, delays[attempt]))
+            checkState()
+          }
+        }
+      }
 
       // Upload with concurrency limit
       let activeCount = 0
       let chunkIdx = 0
       let stopped = false
 
-      await new Promise((resolve, reject) => {
-        const uploadNext = async () => {
-          while (!stopped && chunkIdx < pendingChunks.length && activeCount < MAX_CONCURRENT_CHUNKS) {
-            const idx = pendingChunks[chunkIdx++]
-            activeCount++
+      // 关键修复：所有分片已上传（仅剩合并）时不能进入并发循环，
+      // 否则 Promise 永不 resolve，任务卡死并阻塞整个上传队列。
+      if (pendingChunks.length > 0) {
+        await new Promise((resolve, reject) => {
+          const uploadNext = async () => {
+            while (!stopped && chunkIdx < pendingChunks.length && activeCount < MAX_CONCURRENT_CHUNKS) {
+              const idx = pendingChunks[chunkIdx++]
+              activeCount++
 
-            const doChunk = async () => {
-              try {
-                checkState()
-                const start = idx * CHUNK_SIZE
-                const end = Math.min(task.file.size, start + CHUNK_SIZE)
-                const chunk = task.file.slice(start, end)
+              const doChunk = async () => {
+                try {
+                  checkState()
+                  const start = idx * CHUNK_SIZE
+                  const end = Math.min(task.file.size, start + CHUNK_SIZE)
+                  const chunk = task.file.slice(start, end)
 
-                const form = new FormData()
-                form.append('fileHash', fileHash)
-                form.append('chunkIndex', idx)
-                form.append('chunk', chunk)
+                  const form = new FormData()
+                  form.append('fileHash', fileHash)
+                  form.append('chunkIndex', idx)
+                  form.append('chunk', chunk)
 
-                await chunkUploadPart(form, () => {}, { signal: getAbortSignal(state, taskId) })
+                  await uploadChunkWithRetry(form)
 
-                checkState()
-                finishedCount++
-                updateProgress()
-                commit('UPDATE_TASK', { id: taskId, updates: { uploadedChunks: [...state.tasks.find(t => t.id === taskId).uploadedChunks, idx] } })
-              } catch (e) {
-                stopped = true
-                reject(e)
-                return
-              } finally {
-                activeCount--
-                if (!stopped && chunkIdx < pendingChunks.length) uploadNext()
-                else if (activeCount === 0 && !stopped) resolve()
+                  checkState()
+                  uploadedSet.add(idx)
+                  finishedCount++
+                  updateProgress()
+                  commit('UPDATE_TASK', {
+                    id: taskId,
+                    updates: { uploadedChunks: [...uploadedSet].sort((a, b) => a - b) }
+                  })
+                } catch (e) {
+                  // 最终失败：取消在途分片，避免继续浪费带宽
+                  const t = state.tasks.find(t => t.id === taskId)
+                  if (t && t.status !== 'paused' && t.status !== 'cancelled') {
+                    t.cancelController?.abort()
+                  }
+                  stopped = true
+                  reject(e)
+                  return
+                } finally {
+                  activeCount--
+                  if (!stopped && chunkIdx < pendingChunks.length) uploadNext()
+                  else if (activeCount === 0 && !stopped) resolve()
+                }
               }
+              doChunk()
             }
-            doChunk()
           }
-        }
-        uploadNext()
-      })
+          uploadNext()
+        })
+      }
 
       checkState()
 
@@ -265,7 +303,7 @@ export default {
         parentId: task.parentId,
         totalChunks,
         chunkSize: CHUNK_SIZE
-      }, { signal: getAbortSignal(state, taskId) })
+      }, silentConfig(state, taskId))
 
       checkState()
       commit('UPDATE_TASK', { id: taskId, updates: { progress: 100 } })
@@ -300,14 +338,21 @@ export default {
         task.cancelController.abort()
       }
 
-      commit('UPDATE_TASK', { id: taskId, updates: { status: 'cancelled', file: null, cancelController: null } })
+      // 注意：不置空 file —— 取消后用户可能重试，需要保留文件引用。
+      // 文件引用在任务成功完成或从队列移除时才释放。
+      commit('UPDATE_TASK', { id: taskId, updates: { status: 'cancelled', cancelController: null } })
       dispatch('processQueue')
     },
 
     retryTask({ commit, state, dispatch }, taskId) {
       const task = state.tasks.find(t => t.id === taskId)
       if (!task || (task.status !== 'failed' && task.status !== 'cancelled')) return
-      commit('UPDATE_TASK', { id: taskId, updates: { status: 'pending', progress: 0, error: null, uploadedChunks: [], fileHash: '' } })
+      if (!task.file) {
+        // 兜底：文件引用已丢失（如页面刷新后遗留的任务）
+        commit('UPDATE_TASK', { id: taskId, updates: { status: 'failed', error: '原文件不可用，请重新添加后再上传' } })
+        return
+      }
+      commit('UPDATE_TASK', { id: taskId, updates: { status: 'pending', progress: 0, error: null, uploadedChunks: [], fileHash: '', cancelController: null } })
       dispatch('processQueue')
     },
 
