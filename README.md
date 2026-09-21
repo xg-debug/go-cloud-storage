@@ -1,3 +1,5 @@
+
+
 <div align="center">
   <img src="frontend/public/img/icons/android-chrome-192x192.png" width="88" alt="CloudBox logo">
   <h1>Go Cloud Storage</h1>
@@ -98,7 +100,7 @@ flowchart LR
 | Node.js | 20 或更高 | 是 |
 | MySQL | 8.0 或更高 | 是 |
 | MinIO | 兼容当前 MinIO Go SDK 的版本 | 是 |
-| Redis | 6.0 或更高 | 推荐；关闭后刷新令牌和分片上传不可用 |
+| Redis | 6.0 或更高 | 推荐；关闭后刷新令牌、分片上传和限流不可用 |
 | RabbitMQ | 3.x | 否 |
 
 ### 1. 获取代码
