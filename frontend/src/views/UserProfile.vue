@@ -135,8 +135,10 @@ import { ElMessage } from 'element-plus'
 import { Camera, Check, Clock, Key, Lock, Message, Phone, PieChart, User } from '@element-plus/icons-vue'
 import { updateProfile, uploadAvatar, getUserStats, updatePassword } from '@/api/user'
 import { formatSize } from '@/utils/format'
+import { useRouter } from 'vue-router'
 
 const store = useStore()
+const router = useRouter()
 const user = computed(() => store.state.userInfo)
 
 const profileForm = reactive({ username: '', phone: '' })
@@ -232,7 +234,9 @@ async function changePassword() {
   changingPwd.value = true
   try {
     await updatePassword({ oldPassword: pwdForm.oldPassword, newPassword: pwdForm.newPassword })
-    ElMessage.success('密码已修改')
+    ElMessage.success('密码已修改，请重新登录')
+    store.commit('clearAuth')
+    await router.replace('/login')
     Object.assign(pwdForm, { oldPassword: '', newPassword: '', confirmPassword: '' })
   } catch { ElMessage.error('修改密码失败') } finally { changingPwd.value = false }
 }

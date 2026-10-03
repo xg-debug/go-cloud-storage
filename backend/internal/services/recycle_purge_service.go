@@ -3,6 +3,9 @@ package services
 import (
 	"context"
 	"fmt"
+	"go-cloud-storage/backend/internal/models"
+	"gorm.io/gorm/clause"
+	"time"
 
 	"go-cloud-storage/backend/infrastructure/minio"
 	"go-cloud-storage/backend/internal/repositories"
@@ -12,6 +15,7 @@ import (
 
 type RecyclePurgeService interface {
 	PurgeOne(ctx context.Context, fileID string) error
+	PurgeExpired(ctx context.Context, fileIDs []string) error
 	PurgeFiles(ctx context.Context, fileIDs []string) error
 }
 
@@ -50,44 +54,76 @@ func (s *recyclePurgeService) PurgeOne(ctx context.Context, fileID string) error
 }
 
 func (s *recyclePurgeService) PurgeFiles(ctx context.Context, fileIDs []string) error {
+	return s.purgeFiles(ctx, fileIDs, false)
+}
+
+func (s *recyclePurgeService) PurgeExpired(ctx context.Context, fileIDs []string) error {
+	return s.purgeFiles(ctx, fileIDs, true)
+}
+
+func (s *recyclePurgeService) purgeFiles(ctx context.Context, fileIDs []string, expiredOnly bool) error {
 	if len(fileIDs) == 0 {
 		return nil
 	}
-
-	allFileIDs, err := s.expandDescendantIDs(ctx, fileIDs)
-	if err != nil {
+	// Discover owners before opening the transaction. Both restore and purge lock
+	// these user rows, then re-read current recycle state (never trust a queued ID).
+	var owners []int
+	if err := s.db.WithContext(ctx).Model(&models.File{}).Where("id IN ?", fileIDs).Distinct().Order("user_id").Pluck("user_id", &owners).Error; err != nil {
 		return err
 	}
-	if len(allFileIDs) == 0 {
+	if len(owners) == 0 {
 		return nil
 	}
-
-	files, err := s.fileRepo.GetFileByIds(allFileIDs)
-	if err != nil {
-		return err
-	}
-
-	objectKeys := make([]string, 0, len(files))
-	releasedByUser := make(map[int]int64)
-	for _, file := range files {
-		if file.IsDir {
-			continue
+	var keysToDelete []string
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var users []models.User
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id IN ?", owners).Order("id").Find(&users).Error; err != nil {
+			return err
 		}
-		if file.OssObjectKey != "" {
-			objectKeys = append(objectKeys, file.OssObjectKey)
+		var roots []string
+		query := tx.Table("recycle_bin AS rb").Joins("JOIN file f ON f.id = rb.file_id").
+			Where("rb.file_id IN ? AND f.is_deleted = ?", fileIDs, true)
+		if expiredOnly {
+			query = query.Where("rb.expire_at <= ?", time.Now())
 		}
-		if file.Size > 0 {
-			releasedByUser[file.UserId] += file.Size
+		if err := query.Pluck("rb.file_id", &roots).Error; err != nil {
+			return err
 		}
-	}
-
-	// 跨用户秒传场景：同一个 MinIO 对象可能被多个用户引用，只删除无人引用的对象
-	keysToDelete, err := s.fileRepo.GetObjectKeysByIdsExcludeRefs(allFileIDs, objectKeys)
-	if err != nil {
-		return err
-	}
-
-	err = s.db.Transaction(func(tx *gorm.DB) error {
+		if len(roots) == 0 {
+			return nil
+		} // restored, already purged, or re-deleted with a new expiry
+		var allFileIDs []string
+		if err := tx.Raw(`
+   WITH RECURSIVE descendants AS (
+    SELECT id FROM file WHERE id IN ?
+    UNION ALL SELECT f.id FROM file f INNER JOIN descendants d ON f.parent_id = d.id
+   ) SELECT DISTINCT id FROM descendants`, roots).Scan(&allFileIDs).Error; err != nil {
+			return err
+		}
+		var files []models.File
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id IN ?", allFileIDs).Find(&files).Error; err != nil {
+			return err
+		}
+		keys := make([]string, 0, len(files))
+		released := make(map[int]int64)
+		for _, file := range files {
+			// Fail closed: FK cascades must never remove a live descendant.
+			if !file.IsDeleted {
+				return fmt.Errorf("目录包含已恢复文件，请先移动或恢复父目录")
+			}
+			if file.IsDir {
+				continue
+			}
+			if file.OssObjectKey != "" {
+				keys = append(keys, file.OssObjectKey)
+			}
+			released[file.UserId] += file.Size
+		}
+		var err error
+		keysToDelete, err = repositories.NewFileRepository(tx).GetObjectKeysByIdsExcludeRefs(allFileIDs, keys)
+		if err != nil {
+			return err
+		}
 		if err := s.recycleRepo.DeleteBatch(tx, allFileIDs); err != nil {
 			return err
 		}
@@ -100,8 +136,8 @@ func (s *recyclePurgeService) PurgeFiles(ctx context.Context, fileIDs []string) 
 		if err := s.fileRepo.DeletePermanent(tx, allFileIDs); err != nil {
 			return err
 		}
-		for userID, released := range releasedByUser {
-			if err := s.quotaRepo.UpdateUsedSpace(tx, userID, -released); err != nil {
+		for userID, size := range released {
+			if err := s.quotaRepo.UpdateUsedSpace(tx, userID, -size); err != nil {
 				return err
 			}
 		}
@@ -110,27 +146,10 @@ func (s *recyclePurgeService) PurgeFiles(ctx context.Context, fileIDs []string) 
 	if err != nil {
 		return err
 	}
-
-	if len(keysToDelete) == 0 {
-		return nil
+	if len(keysToDelete) > 0 {
+		if err := s.minio.DeleteFiles(ctx, keysToDelete); err != nil {
+			return fmt.Errorf("delete minio objects failed: %w", err)
+		}
 	}
-	if err := s.minio.DeleteFiles(ctx, keysToDelete); err != nil {
-		return fmt.Errorf("delete minio objects failed: %w", err)
-	}
-
 	return nil
-}
-
-func (s *recyclePurgeService) expandDescendantIDs(ctx context.Context, fileIDs []string) ([]string, error) {
-	var ids []string
-	err := s.db.WithContext(ctx).Raw(`
-		WITH RECURSIVE descendants AS (
-			SELECT id FROM file WHERE id IN ?
-			UNION ALL
-			SELECT f.id FROM file f
-			INNER JOIN descendants d ON f.parent_id = d.id
-		)
-		SELECT DISTINCT id FROM descendants
-	`, fileIDs).Scan(&ids).Error
-	return ids, err
 }

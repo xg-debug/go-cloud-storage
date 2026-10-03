@@ -1,5 +1,4 @@
 import axios from 'axios'
-import {ElMessage} from 'element-plus'
 import router from '@/router'
 import store from '@/store'
 import { API_BASE_URL } from '@/config/runtime'
@@ -12,6 +11,12 @@ const service = axios.create({
 })
 
 const unsafeMethods = new Set(['post', 'put', 'patch', 'delete'])
+
+function showMessage(type, message) {
+    import('element-plus').then(({ ElMessage }) => {
+        ElMessage[type](message)
+    }).catch(() => {})
+}
 
 function getCookie(name) {
     const prefix = `${name}=`
@@ -48,7 +53,7 @@ service.interceptors.response.use(response => {
             if (originalRequest.silentError) {
                 return Promise.reject(new Error(res.message || 'Error'))
             }
-            ElMessage.error(res.message || 'Error')
+            showMessage('error', res.message || 'Error')
             return Promise.reject(new Error(res.message || 'Error'))
         }
         return res.data
@@ -76,7 +81,7 @@ service.interceptors.response.use(response => {
             } catch (refreshError) {
                 // 刷新失败：彻底清除
                 store.commit('clearAuth')
-                ElMessage.error('登录已过期, 请重新登录')
+                showMessage('error', '登录已过期, 请重新登录')
                 router.push('/login')
                 return Promise.reject(refreshError)
             }
@@ -91,9 +96,9 @@ service.interceptors.response.use(response => {
 
         // 对于404错误，显示更友好的提示
         if (error.response && error.response.status === 404) {
-            ElMessage.warning('暂无数据')
+            showMessage('warning', '暂无数据')
         } else {
-            ElMessage.error(error.message || '请求错误')
+            showMessage('error', error.message || '请求错误')
         }
 
         return Promise.reject(error)

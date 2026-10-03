@@ -46,6 +46,10 @@
           <iframe v-else-if="shareInfo.previewType === 'pdf'" :src="shareInfo.fileUrl" class="preview-frame" frameborder="0" />
           <iframe v-else-if="shareInfo.previewType === 'office'" :src="shareInfo.officePreviewUrl" class="preview-frame" frameborder="0" />
           <iframe v-else-if="shareInfo.previewType === 'text'" :src="shareInfo.fileUrl" class="preview-frame" frameborder="0" />
+          <div v-else-if="shareInfo.previewType === 'markdown'" class="preview-markdown" v-loading="markdownLoading">
+            <p v-if="previewError" role="alert">{{ previewError }}</p>
+            <div v-else v-html="markdownHtml"></div>
+          </div>
         </div>
 
         <div class="actions">
@@ -59,12 +63,13 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { accessShare, downloadSharedFile } from '@/api/share'
 import { ElMessage } from 'element-plus'
 import { Loading, CircleCloseFilled, Lock, Download, Document, Picture, VideoCamera, Headset, Files } from '@element-plus/icons-vue'
 import { formatSize } from '@/utils/format'
+import { renderMarkdown } from '@/utils/markdown'
 
 const route = useRoute()
 const raw = route.params.token || ''
@@ -79,6 +84,27 @@ const shareInfo = ref(null)
 const extractCode = ref('')
 const verifying = ref(false)
 const downloading = ref(false)
+const markdownHtml = ref('')
+const markdownLoading = ref(false)
+const previewError = ref('')
+
+watch(shareInfo, async (info, _, onCleanup) => {
+  markdownHtml.value = ''; previewError.value = ''; markdownLoading.value = false
+  if (!info || info.needCode || !info.canPreview || info.previewType !== 'markdown') return
+  const controller = new AbortController()
+  onCleanup(() => controller.abort())
+  markdownLoading.value = true
+  try {
+    const response = await fetch(info.fileUrl, { signal: controller.signal })
+    if (!response.ok) throw new Error('预览加载失败')
+    const source = await response.text()
+    if (!controller.signal.aborted) markdownHtml.value = renderMarkdown(source)
+  } catch (err) {
+    if (!controller.signal.aborted) previewError.value = '预览加载失败，请刷新页面或下载文件查看'
+  } finally {
+    if (!controller.signal.aborted) markdownLoading.value = false
+  }
+})
 
 // 注意：不缓存 shareInfo —— 其中包含有效期 30 分钟的预签名 URL，
 // 缓存过期后刷新页面会导致预览 403。每次进入页面都重新拉取最新 URL。
@@ -166,6 +192,9 @@ const getFileIconColor = (type) => ({ image: '#EC4899', video: '#EF4444', audio:
 .preview-media { width: 100%; max-height: 520px; background: #000; }
 .preview-audio { width: 100%; margin: 20px; }
 .preview-frame { width: 100%; height: 520px; border: 0; }
+.preview-markdown { min-height: 100px; max-height: 520px; overflow: auto; padding: 24px; text-align: left; line-height: 1.7; overflow-wrap: anywhere; }
+.preview-markdown :deep(img) { max-width: 100%; }
+.preview-markdown :deep(pre) { overflow-x: auto; padding: 12px; background: var(--cb-surface); }
 
 .actions { display: flex; justify-content: center; }
 .download-btn { width: 100%; max-width: 240px; border-radius: var(--cb-radius-sm); }

@@ -1,7 +1,9 @@
 package utils
 
 import (
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"log/slog"
 	"os"
@@ -38,26 +40,35 @@ func InitJWTSecret(cfgSecret string) {
 }
 
 type Claims struct {
-	UserId int    `json:"userId"`
-	Type   string `json:"type"` // token类型：access/refresh
+	CredentialVersion string `json:"cv,omitempty"`
+	UserId            int    `json:"userId"`
+	Type              string `json:"type"` // token类型：access/refresh
 	jwt.RegisteredClaims
 }
 
 // GenerateAccessToken 生成访问令牌（短期有效）
-func GenerateAccessToken(userId int, expireTime time.Duration) (string, error) {
-	return generateToken(userId, "access", expireTime)
+func GenerateAccessToken(userId int, expireTime time.Duration, version string) (string, error) {
+	return generateToken(userId, "access", expireTime, version)
 }
 
 // GenerateRefreshToken 生成刷新令牌（长期有效）
-func GenerateRefreshToken(userId int, expireTime time.Duration) (string, error) {
-	return generateToken(userId, "refresh", expireTime)
+func GenerateRefreshToken(userId int, expireTime time.Duration, version string) (string, error) {
+	return generateToken(userId, "refresh", expireTime, version)
+}
+
+// CredentialVersion binds sessions to the password without exposing its bcrypt hash.
+func CredentialVersion(passwordHash string) string {
+	mac := hmac.New(sha256.New, JWTSecret)
+	mac.Write([]byte("session-version:" + passwordHash))
+	return hex.EncodeToString(mac.Sum(nil))
 }
 
 // GenerateToken 通用生成 JWT Token
-func generateToken(userId int, tokenType string, expireTime time.Duration) (string, error) {
+func generateToken(userId int, tokenType string, expireTime time.Duration, version string) (string, error) {
 	claims := &Claims{
-		UserId: userId,
-		Type:   tokenType,
+		CredentialVersion: version,
+		UserId:            userId,
+		Type:              tokenType,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(expireTime)), // 过期时间
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
@@ -86,9 +97,14 @@ func ParseToken(tokenString string) (*Claims, error) {
 	return nil, jwt.ErrTokenInvalidClaims
 }
 
-// GenerateResetToken 生成密码重置令牌
+// GenerateResetToken 生成密码重置令牌。
+// 重置链接只需要一个数据库可查的高熵 opaque token，避免 JWT 过长超过 password_reset_token.token(128)。
 func GenerateResetToken(userId int, expireTime time.Duration) (string, error) {
-	return generateToken(userId, "reset", expireTime)
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(buf), nil
 }
 
 // ParseTokenWithType 解析并验证特定类型的Token

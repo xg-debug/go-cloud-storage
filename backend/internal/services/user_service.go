@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"crypto/hmac"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -18,9 +19,11 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type UserService interface {
+	ValidateSession(userId int, version string) error
 	AuthenticateUser(account, password string) (*models.User, error)
 	RegisterUser(email, pwd, pwdConfirm string) error
 	GetProfile(userId int) (*vo.UserProfileResponse, error)
@@ -63,6 +66,14 @@ func (s *userService) AuthenticateUser(account, password string) (*models.User, 
 
 	// 3.返回用户ID
 	return user, nil
+}
+
+func (s *userService) ValidateSession(userId int, version string) error {
+	user, err := s.userRepo.GetUserInfoById(userId)
+	if err != nil || user == nil || version == "" || !hmac.Equal([]byte(version), []byte(utils.CredentialVersion(user.Password))) {
+		return errors.New("登录已失效，请重新登录")
+	}
+	return nil
 }
 
 func (s *userService) RegisterUser(email, pwd, pwdConfirm string) error {
@@ -170,7 +181,7 @@ func (s *userService) UpdateUserInfo(userId int, username, phone string) error {
 	}
 	user.Username = username
 	user.Phone = &phone
-	return s.userRepo.Update(user)
+	return s.db.Model(&models.User{}).Where("id = ?", userId).Updates(map[string]interface{}{"username": user.Username, "phone": user.Phone}).Error
 }
 
 func (s *userService) ChangePassword(userId int, oldPassword, newPassword string) error {
@@ -188,8 +199,16 @@ func (s *userService) ChangePassword(userId int, oldPassword, newPassword string
 	if err != nil {
 		return errors.New("密码加密失败")
 	}
-	user.Password = string(hashedPassword)
-	return s.userRepo.Update(user)
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&models.User{}).Where("id = ? AND password = ?", userId, user.Password).Update("password", string(hashedPassword))
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return errors.New("密码已发生变更，请重新登录")
+		}
+		return tx.Model(&models.PasswordResetToken{}).Where("user_id = ? AND used = ?", userId, false).Update("used", true).Error
+	})
 }
 
 func (s *userService) ForgotPassword(email string) error {
@@ -239,11 +258,23 @@ func (s *userService) ResetPassword(token, newPassword string) error {
 		return errors.New("密码加密失败")
 	}
 
-	if err := s.userRepo.UpdatePassword(resetToken.UserId, string(hashedPassword)); err != nil {
-		return errors.New("更新密码失败")
-	}
-
-	return s.userRepo.MarkResetTokenUsed(resetToken.Id)
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		var user models.User
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&user, resetToken.UserId).Error; err != nil {
+			return err
+		}
+		result := tx.Model(&models.PasswordResetToken{}).Where("id = ? AND used = ? AND expires_at > ?", resetToken.Id, false, time.Now()).Update("used", true)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return errors.New("重置链接已失效")
+		}
+		if err := tx.Model(&user).Update("password", string(hashedPassword)).Error; err != nil {
+			return err
+		}
+		return tx.Model(&models.PasswordResetToken{}).Where("user_id = ? AND used = ?", user.Id, false).Update("used", true).Error
+	})
 }
 
 // validatePassword 密码强度校验：至少 8 位且同时包含大小写字母和数字

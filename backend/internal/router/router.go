@@ -74,21 +74,25 @@ func SetUpRouter(db *gorm.DB, minioService *minio.MinioService, rabbitClient *mq
 	emailService := email.NewEmailService(cfg.SMTP.Host, cfg.SMTP.Port, cfg.SMTP.Username, cfg.SMTP.Password, cfg.SMTP.From)
 
 	// 初始化服务
+	sseBroker := services.NewSSEBroker()
+	notificationService := services.NewNotificationService(notificationRepo, sseBroker)
 	userService := services.NewUserService(db, userRepo, fileRepo, storageQuotaRepo, minioService, emailService, cfg.Server.PublicBaseURL)
 	fileService := services.NewFileService(db, cache.GetClient(), fileRepo, storageQuotaRepo, shareRepo, minioService)
 	fileService.StartChunkUploadCleanup(context.Background())
 	recyclePurgeService := services.NewRecyclePurgeService(db, minioService, recycleRepo, fileRepo, shareRepo, favoriteRepo, storageQuotaRepo)
-	recycleService := services.NewRecycleService(db, recycleRepo, fileRepo, recyclePurgeService, rabbitClient)
+	var recyclePublisher services.RecycleJobPublisher
+	if rabbitClient != nil {
+		recyclePublisher = rabbitClient
+	}
+	recycleService := services.NewRecycleService(db, recycleRepo, fileRepo, recyclePurgeService, recyclePublisher)
 	favoriteService := services.NewFavoriteService(favoriteRepo, fileRepo, fileService)
 	categoryService := services.NewCategoryService(db, fileRepo, fileService)
-	shareService := services.NewShareService(shareRepo, fileRepo, minioService)
+	shareService := services.NewShareService(shareRepo, fileRepo, minioService, notificationService)
 	statsService := services.NewStatsService(fileRepo, storageQuotaRepo, shareRepo)
 	storageQuotaService := services.NewStorageQuotaService(storageQuotaRepo)
-	sseBroker := services.NewSSEBroker()
-	notificationService := services.NewNotificationService(notificationRepo, sseBroker)
 
 	loginCtrl := controller.NewLoginController(userService)
-	fileCtrl := controller.NewFileController(fileService, cfg)
+	fileCtrl := controller.NewFileController(fileService, cfg, notificationService)
 	userCtrl := controller.NewUserController(userService)
 	recycleCtrl := controller.NewRecycleController(recycleService)
 	favoriteCtrl := controller.NewFavoriteController(favoriteService)
@@ -98,9 +102,7 @@ func SetUpRouter(db *gorm.DB, minioService *minio.MinioService, rabbitClient *mq
 	statsCtrl := controller.NewStatsController(statsService, storageQuotaService)
 	notificationCtrl := controller.NewNotificationController(notificationService, sseBroker)
 
-	if rabbitClient != nil {
-		startRecycleCleanupWorkers(recycleService, rabbitClient, mqCfg)
-	}
+	startRecycleCleanupWorkers(recycleService, rabbitClient, mqCfg)
 
 	ginServer.POST("/login", middleware.NewIPRateLimiter(10, time.Minute), loginCtrl.Login)
 	ginServer.POST("/register", middleware.NewIPRateLimiter(5, time.Minute), loginCtrl.Register)
@@ -109,14 +111,14 @@ func SetUpRouter(db *gorm.DB, minioService *minio.MinioService, rabbitClient *mq
 	ginServer.POST("/reset-password", middleware.NewIPRateLimiter(5, 10*time.Minute), userCtrl.ResetPassword)
 
 	authGroup := ginServer.Group("")
-	authGroup.Use(middleware.JWTAuthMiddleware())
+	authGroup.Use(middleware.JWTAuthMiddleware(userService.ValidateSession))
 	authGroup.Use(middleware.CSRFMiddleware())
 	authGroup.Use(middleware.RateLimitMiddleware())
 	authGroup.GET("/me", userCtrl.GetProfile)
 	authGroup.POST("/logout", loginCtrl.Logout)
 
 	user := ginServer.Group("user")
-	user.Use(middleware.JWTAuthMiddleware())
+	user.Use(middleware.JWTAuthMiddleware(userService.ValidateSession))
 	user.Use(middleware.CSRFMiddleware())
 	user.Use(middleware.RateLimitMiddleware())
 	{
@@ -128,7 +130,7 @@ func SetUpRouter(db *gorm.DB, minioService *minio.MinioService, rabbitClient *mq
 	}
 
 	file := ginServer.Group("file")
-	file.Use(middleware.JWTAuthMiddleware()) // 为路由组注册中间件
+	file.Use(middleware.JWTAuthMiddleware(userService.ValidateSession))
 	file.Use(middleware.CSRFMiddleware())
 	file.Use(middleware.RateLimitMiddleware())
 	{
@@ -162,7 +164,7 @@ func SetUpRouter(db *gorm.DB, minioService *minio.MinioService, rabbitClient *mq
 	}
 
 	favorite := ginServer.Group("favorite")
-	favorite.Use(middleware.JWTAuthMiddleware())
+	favorite.Use(middleware.JWTAuthMiddleware(userService.ValidateSession))
 	favorite.Use(middleware.CSRFMiddleware())
 	favorite.Use(middleware.RateLimitMiddleware())
 	{
@@ -172,7 +174,7 @@ func SetUpRouter(db *gorm.DB, minioService *minio.MinioService, rabbitClient *mq
 	}
 
 	recycle := ginServer.Group("recycle")
-	recycle.Use(middleware.JWTAuthMiddleware()) // 为路由组注册中间件
+	recycle.Use(middleware.JWTAuthMiddleware(userService.ValidateSession))
 	recycle.Use(middleware.CSRFMiddleware())
 	recycle.Use(middleware.RateLimitMiddleware())
 	{
@@ -188,7 +190,7 @@ func SetUpRouter(db *gorm.DB, minioService *minio.MinioService, rabbitClient *mq
 
 	// 分类路由
 	category := ginServer.Group("category")
-	category.Use(middleware.JWTAuthMiddleware())
+	category.Use(middleware.JWTAuthMiddleware(userService.ValidateSession))
 	category.Use(middleware.CSRFMiddleware())
 	category.Use(middleware.RateLimitMiddleware())
 	{
@@ -197,7 +199,7 @@ func SetUpRouter(db *gorm.DB, minioService *minio.MinioService, rabbitClient *mq
 
 	// 分享路由
 	share := ginServer.Group("share")
-	share.Use(middleware.JWTAuthMiddleware())
+	share.Use(middleware.JWTAuthMiddleware(userService.ValidateSession))
 	share.Use(middleware.CSRFMiddleware())
 	share.Use(middleware.RateLimitMiddleware())
 	{
@@ -210,7 +212,7 @@ func SetUpRouter(db *gorm.DB, minioService *minio.MinioService, rabbitClient *mq
 
 	// 通知路由
 	notification := ginServer.Group("notification")
-	notification.Use(middleware.JWTAuthMiddleware())
+	notification.Use(middleware.JWTAuthMiddleware(userService.ValidateSession))
 	notification.Use(middleware.CSRFMiddleware())
 	notification.Use(middleware.RateLimitMiddleware())
 	{
@@ -238,8 +240,11 @@ func startRecycleCleanupWorkers(recycleService services.RecycleService, rabbitCl
 	ctx := context.Background()
 
 	go func() {
+		if rabbitClient == nil {
+			return
+		}
 		if err := rabbitClient.ConsumeExpiredFilePurge(ctx, func(ctx context.Context, fileID string) error {
-			return recycleService.DeleteSelected(ctx, 0, []string{fileID})
+			return recycleService.PurgeExpired(ctx, []string{fileID})
 		}); err != nil {
 			slog.Error("recycle cleanup consumer exited", "error", err)
 		}

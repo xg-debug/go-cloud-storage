@@ -25,6 +25,7 @@ const store =  createStore({
             state.isAuthenticated = !!userInfo
         },
         clearAuth(state) {
+            if (state.upload) upload.mutations.CLEAR_ALL(state.upload)
             state.isAuthenticated = false
             state.authChecked = true
             state.userInfo = null

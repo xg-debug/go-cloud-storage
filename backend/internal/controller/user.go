@@ -71,7 +71,8 @@ func (c *UserController) UpdatePassword(ctx *gin.Context) {
 		utils.Fail(ctx, http.StatusInternalServerError, "修改密码失败")
 		return
 	}
-	utils.Success(ctx, gin.H{"message": "修改密码成功"})
+	clearAuthCookies(ctx)
+	utils.Success(ctx, gin.H{"message": "修改密码成功，请重新登录"})
 }
 
 // ForgotPassword 忘记密码 - 发送重置邮件
@@ -103,6 +104,7 @@ func (c *UserController) ResetPassword(ctx *gin.Context) {
 		utils.Fail(ctx, http.StatusBadRequest, "重置密码失败")
 		return
 	}
+	clearAuthCookies(ctx)
 	utils.Success(ctx, gin.H{"message": "密码重置成功，请登录"})
 }
 

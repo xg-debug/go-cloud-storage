@@ -1,4 +1,5 @@
 import request from '@/utils/request'
+import { buildApiUrl } from '@/config/runtime'
 
 // 文件列表：获取指定父目录下的文件/文件夹
 export const listFiles = (data) => {
@@ -24,7 +25,7 @@ export const previewFile = (fileId) => {
     return request({
         url: `/file/preview/${fileId}`,
         method: 'get'
-    })
+    }).then(data => data.proxy_path ? { ...data, file_url: buildApiUrl(data.proxy_path) } : data)
 }
 
 // 文件下载：获取下载链接或者直接触发下载

@@ -41,7 +41,7 @@
 
     <!-- Search banner -->
     <div v-if="isSearching" class="drive-search-banner">
-      搜索 "{{ searchKeyword }}" 找到 {{ fileList.length }} 个结果
+      搜索 "{{ searchKeyword }}" 找到 {{ total }} 个结果
       <el-button type="primary" link size="small" @click="clearSearch(); loadFiles()">清除搜索</el-button>
     </div>
 
@@ -97,7 +97,7 @@
               <el-icon :size="40"><Folder /></el-icon>
             </template>
             <template v-else-if="item.thumbnail_url">
-              <img :src="item.thumbnail_url" :alt="item.name" />
+              <img :src="item.thumbnail_url" :alt="item.name" @error="item.thumbnail_url = ''" />
             </template>
             <template v-else>
               <el-icon :size="40" :color="getFileIconColor(item.name, false)">
@@ -112,7 +112,7 @@
             <div class="fc-meta" @mouseenter="hoveredId = item.id" @mouseleave="hoveredId = null">
               <span>{{ item.size_str || '-' }}</span>
               <span class="fc-dot">·</span>
-              <span>{{ formatTime(item.updated_at || item.created_at) }}</span>
+              <span>{{ formatTime(item.updated_at || item.modified || item.created_at) }}</span>
             </div>
           </div>
         </article>
@@ -162,7 +162,7 @@
       </div>
 
       <!-- Pagination -->
-      <div v-if="total > pageSize && !isSearching" class="drive-pagination">
+      <div v-if="total > pageSize" class="drive-pagination">
         <el-pagination
           background layout="prev, pager, next, total"
           :total="total" :page-size="pageSize" v-model:current-page="currentPage"
@@ -171,7 +171,7 @@
       </div>
 
       <!-- Empty -->
-      <EmptyState v-if="!loading && fileList.length === 0 && !isSearching" :icon="Folder" title="此文件夹为空" description="拖拽文件到此处或点击上传按钮" />
+      <EmptyState v-if="!loading && fileList.length === 0" :icon="Folder" :title="isSearching ? '没有找到匹配文件' : '此文件夹为空'" :description="isSearching ? '试试其他关键词' : '拖拽文件到此处或点击上传按钮'" />
       </div>
 
       <aside v-if="selectedFile" class="file-details" aria-label="文件详情">
@@ -180,7 +180,7 @@
           <button type="button" title="关闭详情" @click="selectedIds = []"><el-icon><Close /></el-icon></button>
         </div>
         <div class="details-preview" :class="{ folder: selectedFile.is_dir }">
-          <img v-if="!selectedFile.is_dir && selectedFile.thumbnail_url" :src="selectedFile.thumbnail_url" :alt="selectedFile.name" />
+          <img v-if="!selectedFile.is_dir && selectedFile.thumbnail_url" :src="selectedFile.thumbnail_url" :alt="selectedFile.name" @error="selectedFile.thumbnail_url = ''" />
           <el-icon v-else :size="52" :color="getFileIconColor(selectedFile.name, selectedFile.is_dir)">
             <component :is="getFileIcon(selectedFile.name, selectedFile.is_dir)" />
           </el-icon>
@@ -194,7 +194,7 @@
         <dl class="details-meta">
           <div><dt>类型</dt><dd>{{ selectedFile.is_dir ? '文件夹' : selectedFileType }}</dd></div>
           <div><dt>大小</dt><dd>{{ selectedFile.size_str || '-' }}</dd></div>
-          <div><dt>修改时间</dt><dd>{{ formatTime(selectedFile.updated_at || selectedFile.created_at) }}</dd></div>
+          <div><dt>修改时间</dt><dd>{{ formatTime(selectedFile.updated_at || selectedFile.modified || selectedFile.created_at) }}</dd></div>
           <div><dt>所在位置</dt><dd>{{ currentPath.length ? `我的文件 / ${currentPath.join(' / ')}` : '我的文件' }}</dd></div>
         </dl>
       </aside>
@@ -330,8 +330,7 @@ import CreateShareDialog from '@/components/CreateShareDialog.vue'
 import FileUploadDialog from '@/components/FileUploadDialog.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import { useFileActions } from '@/composables/useFileActions'
-import { marked } from 'marked'
-import DOMPurify from 'dompurify'
+import { renderMarkdown } from '@/utils/markdown'
 
 const { download: doDownload, getFileType, isImage, formatTime } = useFileActions()
 
@@ -501,23 +500,55 @@ const previewTitle = computed(() => {
 })
 
 // ── Load files ──
+let listRequestId = 0
 async function loadFiles() {
+  const requestId = ++listRequestId
   loading.value = true
 	try {
-		const res = await listFiles({ parentId: currentParentId.value, sortBy: sortBy.value, sortOrder: sortOrder.value, page: currentPage.value, pageSize: pageSize.value })
+		const res = isSearching.value
+      ? await searchFiles({ keyword: searchKeyword.value, page: currentPage.value, pageSize: pageSize.value })
+      : await listFiles({ parentId: currentParentId.value, sortBy: sortBy.value, sortOrder: sortOrder.value, page: currentPage.value, pageSize: pageSize.value })
+		if (requestId !== listRequestId) return
 		fileList.value = res.list || []
 		total.value = res.total || 0
 		selectedIds.value = []
-  } catch { ElMessage.error('加载文件列表失败') }
-  finally { loading.value = false }
+  } catch { if (requestId === listRequestId) ElMessage.error('加载文件列表失败') }
+  finally { if (requestId === listRequestId) loading.value = false }
 }
 
-function handleOpen(item) {
+function findFolderPath(nodes, targetId, path = []) {
+  for (const node of nodes || []) {
+    const nextPath = [...path, node]
+    if (node.id === targetId) return nextPath
+    const found = findFolderPath(node.children, targetId, nextPath)
+    if (found) return found
+  }
+  return null
+}
+
+async function resolveFolderPath(folder) {
+  const rootId = store.state.userInfo?.rootFolderId || ''
+  try {
+    const res = await getFolderTree()
+    const path = findFolderPath(res.list || [], folder.id)
+    if (!path) return null
+    const visiblePath = path.filter(node => node.id !== rootId)
+    return {
+      ids: [rootId, ...visiblePath.map(node => node.id)],
+      names: visiblePath.map(node => node.name)
+    }
+  } catch {
+    return null
+  }
+}
+
+async function handleOpen(item) {
   if (item.is_dir) {
+    const resolvedPath = isSearching.value ? await resolveFolderPath(item) : null
     searchKeyword.value = ''; isSearching.value = false
     currentParentId.value = item.id
-    currentPath.value = [...currentPath.value, item.name]
-    pathIdStack.value = [...pathIdStack.value, item.id]
+    currentPath.value = resolvedPath ? resolvedPath.names : [...currentPath.value, item.name]
+    pathIdStack.value = resolvedPath ? resolvedPath.ids : [...pathIdStack.value, item.id]
     currentPage.value = 1
     loadFiles()
   } else { handlePreview(item) }
@@ -593,7 +624,6 @@ async function confirmRename() {
 
 async function handlePreview(item, idx) {
   if (!item || item.is_dir) return
-  loading.value = true
 
   previewLoading.value = true; previewVisible.value = true; previewData.value = null; markdownHtml.value = ''
 
@@ -606,15 +636,12 @@ async function handlePreview(item, idx) {
     if (!d.can_preview) ElMessage.warning('不支持在线预览')
     if (d.preview_type === 'markdown' && d.file_url) {
       const res = await fetch(d.file_url)
+      if (!res.ok) throw new Error('预览加载失败')
       const text = await res.text()
-      markdownHtml.value = DOMPurify.sanitize(marked(text), {
-        USE_PROFILES: { html: true },
-        FORBID_TAGS: ['style', 'form'],
-        FORBID_ATTR: ['style']
-      })
+      markdownHtml.value = renderMarkdown(text)
     }
   } catch { previewVisible.value = false; ElMessage.error('预览失败') }
-  finally { previewLoading.value = false; loading.value = false }
+  finally { previewLoading.value = false }
 }
 
 async function navImage(dir) {
@@ -746,11 +773,12 @@ function onSearchInput() {
   }, 300)
 }
 async function performSearch(kw) {
-  isSearching.value = true
-  try { const res = await searchFiles({ keyword: kw, parentId: currentParentId.value, page: 1, pageSize: 100 }); fileList.value = res.list || []; total.value = fileList.value.length }
-  catch { ElMessage.error('搜索失败') }
+  searchKeyword.value = String(kw).trim()
+  isSearching.value = !!searchKeyword.value
+  currentPage.value = 1
+  await loadFiles()
 }
-function clearSearch() { searchKeyword.value = ''; isSearching.value = false }
+function clearSearch() { ++listRequestId; clearTimeout(searchTimer); searchKeyword.value = ''; isSearching.value = false; currentPage.value = 1 }
 function handleUploadSuccess() { loadFiles(); store.commit('file/setNeedRefreshStorage', true) }
 
 // ── Helpers ──

@@ -24,12 +24,25 @@ import (
 const normalUploadMaxSize int64 = 10 * 1024 * 1024
 
 type FileController struct {
+	notifier    UploadNotifier
 	fileService services.FileService
 	securityCfg config.SecurityConfig
 }
 
-func NewFileController(service services.FileService, cfg *config.Config) *FileController {
-	return &FileController{fileService: service, securityCfg: cfg.Security}
+type UploadNotifier interface {
+	CreateUploadCompleteNotification(uint, string) error
+}
+
+func NewFileController(service services.FileService, cfg *config.Config, notifier UploadNotifier) *FileController {
+	return &FileController{fileService: service, securityCfg: cfg.Security, notifier: notifier}
+}
+
+func (c *FileController) notifyUpload(userID int, name string) {
+	if c.notifier != nil {
+		if err := c.notifier.CreateUploadCompleteNotification(uint(userID), name); err != nil {
+			slog.Warn("upload succeeded but notification failed", "userID", userID, "error", err)
+		}
+	}
 }
 
 // GetFilesRequest Gin 对 JSON 解析时，json:"xxx" 的名字要和 前端传的字段一致，且大小写敏感。
@@ -150,6 +163,7 @@ func (c *FileController) UploadFile(ctx *gin.Context) {
 		utils.Fail(ctx, http.StatusInternalServerError, "上传文件失败")
 		return
 	}
+	c.notifyUpload(userId, file.Name)
 	utils.Success(ctx, file)
 }
 
@@ -211,12 +225,8 @@ func (c *FileController) PreviewFile(ctx *gin.Context) {
 
 	// PDF 使用后端代理流式传输，确保 Content-Disposition: inline 生效
 	if previewData.PreviewType == "pdf" {
-		scheme := "http"
-		if ctx.Request.TLS != nil || ctx.GetHeader("X-Forwarded-Proto") == "https" {
-			scheme = "https"
-		}
-		proxyURL := fmt.Sprintf("%s://%s/file/preview-stream/%s", scheme, ctx.Request.Host, fileId)
-		previewData.FileURL = proxyURL
+		previewData.ProxyPath = "/file/preview-stream/" + url.PathEscape(fileId)
+		previewData.FileURL = previewData.ProxyPath
 	}
 
 	utils.Success(ctx, previewData)
@@ -343,6 +353,9 @@ func (c *FileController) ChunkUploadInit(ctx *gin.Context) {
 		return
 	}
 
+	if finished, _ := resp["finished"].(bool); finished {
+		c.notifyUpload(userId, req.FileName)
+	}
 	utils.Success(ctx, resp)
 }
 
@@ -424,6 +437,7 @@ func (c *FileController) ChunkUploadMerge(ctx *gin.Context) {
 		return
 	}
 	// 返回完整的文件对象/仅返回 URL
+	c.notifyUpload(userId, file.Name)
 	utils.Success(ctx, file)
 }
 

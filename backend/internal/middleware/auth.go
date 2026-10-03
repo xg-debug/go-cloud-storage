@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-func JWTAuthMiddleware() gin.HandlerFunc {
+func JWTAuthMiddleware(validateSession func(int, string) error) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
 		tokenString := ""
@@ -41,6 +41,9 @@ func JWTAuthMiddleware() gin.HandlerFunc {
 		}
 
 		claims, err := utils.ParseTokenWithType(tokenString, "access")
+		if err == nil {
+			err = validateSession(claims.UserId, claims.CredentialVersion)
+		}
 		if err != nil {
 			c.SetCookie("access_token", "", -1, "/", "", false, true)
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
@@ -52,6 +55,12 @@ func JWTAuthMiddleware() gin.HandlerFunc {
 		}
 
 		c.Set("userId", int(claims.UserId))
+		c.Set("validateSession", func() error {
+			if _, err := utils.ParseTokenWithType(tokenString, "access"); err != nil {
+				return err
+			}
+			return validateSession(claims.UserId, claims.CredentialVersion)
+		})
 		c.Next()
 	}
 }

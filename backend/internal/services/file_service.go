@@ -19,6 +19,7 @@ import (
 	"github.com/go-redis/redis/v8"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 const (
@@ -64,6 +65,7 @@ type FileBrief struct {
 }
 
 type FilePreview struct {
+	ProxyPath        string `json:"proxy_path,omitempty"`
 	Id               string `json:"id"`
 	Name             string `json:"name"`
 	Size             int64  `json:"size"`
@@ -186,6 +188,7 @@ func (s *fileService) GetFiles(ctx context.Context, userId int, parentId string,
 			Size:         file.Size,
 			SizeStr:      file.SizeStr,
 			Extension:    file.FileExtension,
+			CreatedAt:    file.CreatedAt.Format("2006-01-02 15:04:05"),
 			Modified:     file.UpdatedAt.Format("2006-01-02 15:04:05"),
 			FileURL:      fileURL,
 			ThumbnailURL: thumbURL,
@@ -198,11 +201,14 @@ func (s *fileService) GetFiles(ctx context.Context, userId int, parentId string,
 // ResolveFileURLs 为文件生成短期有效的预签名访问 URL（私有桶下对外一律不返回永久直链）。
 // 文件夹或未上传对象返回空串。
 func (s *fileService) ResolveFileURLs(ctx context.Context, file *models.File) (string, string) {
-	if file == nil || file.IsDir || file.OssObjectKey == "" {
+	if file == nil || file.IsDir || file.OssObjectKey == "" || s.minio == nil {
 		return "", ""
 	}
 	fileURL, _ := s.minio.PresignedGetPreviewURL(ctx, file.OssObjectKey, presignedFileURLTTL)
-	thumbURL, _ := s.minio.PresignThumbnailURL(ctx, file.OssObjectKey, presignedThumbURLTTL)
+	var thumbURL string
+	if file.ThumbnailURL != "" && file.ThumbnailURL != file.FileURL {
+		thumbURL = s.minio.PresignStoredObjectURL(ctx, file.ThumbnailURL, presignedThumbURLTTL)
+	}
 	return fileURL, thumbURL
 }
 
@@ -276,6 +282,13 @@ func (s *fileService) Delete(fileId string, userId int) error {
 	}
 
 	return s.db.Transaction(func(tx *gorm.DB) error {
+		var owner models.User
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&owner, userId).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("id = ? AND user_id = ? AND is_deleted = ?", fileId, userId, false).First(&file).Error; err != nil {
+			return err
+		}
 		if file.IsDir {
 			deletedIds, err := s.fileRepo.SoftDeleteFolder(tx, userId, fileId)
 			if err != nil {
@@ -452,14 +465,14 @@ func (s *fileService) PreviewFile(userId int, fileId string) (*FilePreview, erro
 
 	// 私有桶：一律返回 inline 预签名 URL（可预览类型可防止浏览器弹出下载）
 	previewFileURL := ""
-	if !file.IsDir && file.OssObjectKey != "" {
+	if !file.IsDir && file.OssObjectKey != "" && s.minio != nil {
 		if u, err := s.minio.PresignedGetPreviewURL(context.Background(), file.OssObjectKey, presignedFileURLTTL); err == nil {
 			previewFileURL = u
 		}
 	}
 	thumbURL := ""
-	if !file.IsDir && file.OssObjectKey != "" {
-		thumbURL, _ = s.minio.PresignThumbnailURL(context.Background(), file.OssObjectKey, presignedThumbURLTTL)
+	if !file.IsDir && file.OssObjectKey != "" && s.minio != nil && file.ThumbnailURL != "" && file.ThumbnailURL != file.FileURL {
+		thumbURL = s.minio.PresignStoredObjectURL(context.Background(), file.ThumbnailURL, presignedThumbURLTTL)
 	}
 
 	// Office 文档：用预签名 URL 构建 Office Online 查看链接

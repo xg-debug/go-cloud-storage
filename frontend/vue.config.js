@@ -14,6 +14,10 @@ module.exports = defineConfig({
     }
   },
   configureWebpack: {
+    performance: {
+      maxEntrypointSize: 300 * 1024,
+      maxAssetSize: 300 * 1024
+    },
     optimization: {
       runtimeChunk: 'single',
       splitChunks: {
@@ -27,8 +31,12 @@ module.exports = defineConfig({
           },
           elementPlus: {
             name: 'chunk-element-plus',
-            test: /[\\/]node_modules[\\/](element-plus)[\\/]/,
+            test: module => module.resource &&
+              /[\\/]node_modules[\\/]element-plus[\\/]/.test(module.resource) &&
+              !/\.css$/.test(module.resource),
             priority: 30,
+            chunks: 'async',
+            maxSize: 180 * 1024,
             reuseExistingChunk: true
           },
           elementPlusIcons: {
@@ -48,12 +56,18 @@ module.exports = defineConfig({
     },
     plugins: [
       AutoImport({
-        resolvers: [ElementPlusResolver()],
+        resolvers: [ElementPlusResolver({ importStyle: 'css' })],
       }),
       Components({
-        resolvers: [ElementPlusResolver()],
+        resolvers: [ElementPlusResolver({ importStyle: 'css' })],
       }),
     ],
+  },
+  chainWebpack: config => {
+    config.plugin('extract-css').tap(args => {
+      args[0].ignoreOrder = true
+      return args
+    })
   },
   css: {
     loaderOptions: {

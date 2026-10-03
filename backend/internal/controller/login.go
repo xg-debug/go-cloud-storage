@@ -51,6 +51,7 @@ func (c *LoginController) Login(ctx *gin.Context) {
 		utils.Fail(ctx, http.StatusUnauthorized, "认证失败")
 		return
 	}
+	version := utils.CredentialVersion(user.Password)
 	user.Password = ""
 
 	// 根据记住我设置不同过期时间
@@ -62,12 +63,16 @@ func (c *LoginController) Login(ctx *gin.Context) {
 	}
 
 	// 生成JWT Token
-	accessToken, err := utils.GenerateAccessToken(user.Id, 2*time.Hour)
+	accessToken, err := utils.GenerateAccessToken(user.Id, 2*time.Hour, version)
 	if err != nil {
 		utils.Fail(ctx, http.StatusInternalServerError, "生成访问令牌失败")
 		return
 	}
-	refreshToken, err := utils.GenerateRefreshToken(user.Id, refreshTokenExpire)
+	refreshToken, err := utils.GenerateRefreshToken(user.Id, refreshTokenExpire, version)
+	if err != nil {
+		utils.Fail(ctx, http.StatusInternalServerError, "生成刷新令牌失败")
+		return
+	}
 
 	// 存入redis
 	rdb := cache.GetClient()
@@ -102,6 +107,11 @@ func (c *LoginController) RefreshToken(ctx *gin.Context) {
 		return
 	}
 	// 检查refresh_token是否存在于Redis
+	if err := c.userService.ValidateSession(claims.UserId, claims.CredentialVersion); err != nil {
+		clearAuthCookies(ctx)
+		utils.Fail(ctx, http.StatusUnauthorized, "登录已失效，请重新登录")
+		return
+	}
 	rdb := cache.GetClient()
 	if rdb == nil {
 		utils.Fail(ctx, http.StatusUnauthorized, "RefreshToken已失效")
@@ -114,7 +124,7 @@ func (c *LoginController) RefreshToken(ctx *gin.Context) {
 		return
 	}
 	// 生成新的 访问令牌（始终2小时）
-	newToken, err := utils.GenerateAccessToken(claims.UserId, 2*time.Hour)
+	newToken, err := utils.GenerateAccessToken(claims.UserId, 2*time.Hour, claims.CredentialVersion)
 	if err != nil {
 		utils.Fail(ctx, http.StatusInternalServerError, "生成新令牌失败")
 		return

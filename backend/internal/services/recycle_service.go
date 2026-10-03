@@ -8,6 +8,7 @@ import (
 	"go-cloud-storage/backend/internal/repositories"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 const defaultExpiredJobScanLimit = 200
@@ -24,6 +25,7 @@ type RecycleService interface {
 	RestoreOne(userId int, fileId string) error
 	RestoreSelected(userId int, fileIds []string) error
 	DispatchExpiredPurgeJobs(ctx context.Context, limit int) (int, error)
+	PurgeExpired(ctx context.Context, fileIDs []string) error
 }
 
 type recycleService struct {
@@ -123,6 +125,10 @@ func (s *recycleService) RestoreSelected(userId int, fileIds []string) error {
 // restoreItems 恢复回收站项目。文件夹会递归恢复整棵子树（子文件一并出回收站），
 // 避免子文件滞留回收站中被 7 天过期清理而丢失。
 func (s *recycleService) restoreItems(tx *gorm.DB, userId int, fileIds []string) error {
+	var owner models.User
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&owner, userId).Error; err != nil {
+		return err
+	}
 	if err := s.verifyOwnership(tx, userId, fileIds); err != nil {
 		return err
 	}
@@ -132,8 +138,28 @@ func (s *recycleService) restoreItems(tx *gorm.DB, userId int, fileIds []string)
 
 	for _, fid := range fileIds {
 		var f models.File
-		if err := tx.Select("id, is_dir").Where("id = ?", fid).First(&f).Error; err != nil {
+		if err := tx.Where("id = ?", fid).First(&f).Error; err != nil {
 			return err
+		}
+		if f.ParentId.Valid {
+			var parent models.File
+			err := tx.Where("id = ? AND is_deleted = ?", f.ParentId.String, false).First(&parent).Error
+			if err != nil && err != gorm.ErrRecordNotFound {
+				return err
+			}
+			if err == gorm.ErrRecordNotFound {
+				f.ParentId.String = owner.RootFolderId
+				if err := tx.Model(&f).Update("parent_id", owner.RootFolderId).Error; err != nil {
+					return err
+				}
+			}
+		}
+		var duplicates int64
+		if err := tx.Model(&models.File{}).Where("user_id = ? AND parent_id = ? AND name = ? AND is_deleted = ? AND id <> ?", userId, f.ParentId.String, f.Name, false, fid).Count(&duplicates).Error; err != nil {
+			return err
+		}
+		if duplicates > 0 {
+			return fmt.Errorf("恢复位置已存在同名文件：%s", f.Name)
 		}
 		if f.IsDir {
 			ids, err := s.fileRepo.RestoreSubtree(tx, fid)
@@ -178,7 +204,7 @@ func (s *recycleService) DispatchExpiredPurgeJobs(ctx context.Context, limit int
 	}
 
 	if s.publisher == nil {
-		if err := s.purge.PurgeFiles(ctx, fileIDs); err != nil {
+		if err := s.purge.PurgeExpired(ctx, fileIDs); err != nil {
 			return 0, err
 		}
 		return len(fileIDs), nil
@@ -190,4 +216,8 @@ func (s *recycleService) DispatchExpiredPurgeJobs(ctx context.Context, limit int
 		}
 	}
 	return len(fileIDs), nil
+}
+
+func (s *recycleService) PurgeExpired(ctx context.Context, fileIDs []string) error {
+	return s.purge.PurgeExpired(ctx, fileIDs)
 }

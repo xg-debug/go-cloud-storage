@@ -36,13 +36,19 @@ type ShareService interface {
 }
 
 type shareService struct {
+	notifier  ShareNotifier
 	shareRepo repositories.ShareRepository
 	fileRepo  repositories.FileRepository
 	minio     *miniosrv.MinioService
 }
 
-func NewShareService(shareRepo repositories.ShareRepository, fileRepo repositories.FileRepository, minio *miniosrv.MinioService) ShareService {
+type ShareNotifier interface {
+	CreateFileShareNotification(uint, string, string) error
+}
+
+func NewShareService(shareRepo repositories.ShareRepository, fileRepo repositories.FileRepository, minio *miniosrv.MinioService, notifier ShareNotifier) ShareService {
 	return &shareService{
+		notifier:  notifier,
 		shareRepo: shareRepo,
 		fileRepo:  fileRepo,
 		minio:     minio,
@@ -99,7 +105,16 @@ func (s *shareService) CreateShare(userId int, fileId string, expireDays int, ex
 		DownloadCount:  0,
 	}
 
-	return s.shareRepo.CreateShare(share)
+	created, err := s.shareRepo.CreateShare(share)
+	if err != nil {
+		return nil, err
+	}
+	if s.notifier != nil {
+		if err := s.notifier.CreateFileShareNotification(uint(userId), file.Name, created.ShareToken); err != nil {
+			slog.Warn("share created but notification failed", "userID", userId, "error", err)
+		}
+	}
+	return created, nil
 }
 
 type ShareItem struct {
@@ -316,7 +331,9 @@ func (s *shareService) AccessShare(shareToken string, inputCode string) (*ShareA
 		if u, err := s.minio.PresignedGetPreviewURL(context.Background(), file.OssObjectKey, presignedFileURLTTL); err == nil {
 			previewURL = u
 		}
-		thumbURL, _ = s.minio.PresignThumbnailURL(context.Background(), file.OssObjectKey, presignedThumbURLTTL)
+		if file.ThumbnailURL != "" && file.ThumbnailURL != file.FileURL {
+			thumbURL = s.minio.PresignStoredObjectURL(context.Background(), file.ThumbnailURL, presignedThumbURLTTL)
+		}
 	}
 	officePreviewURL := buildShareOfficePreviewURL(previewURL)
 

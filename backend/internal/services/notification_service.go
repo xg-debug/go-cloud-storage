@@ -136,7 +136,7 @@ func (s *NotificationService) CreateFileShareNotification(userID uint, fileName,
 		Title:   "文件分享成功",
 		Message: "您的文件 \"" + fileName + "\" 已成功创建分享链接",
 		Type:    "success",
-		Link:    "/shared-files",
+		Link:    "/shared",
 	}
 	return s.CreateNotification(req)
 }
@@ -148,7 +148,7 @@ func (s *NotificationService) CreateUploadCompleteNotification(userID uint, file
 		Title:   "文件上传完成",
 		Message: "文件 \"" + fileName + "\" 已成功上传",
 		Type:    "success",
-		Link:    "/my-drive",
+		Link:    "/",
 	}
 	return s.CreateNotification(req)
 }

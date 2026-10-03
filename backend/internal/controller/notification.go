@@ -186,6 +186,11 @@ func (c *NotificationController) NotificationSSE(ctx *gin.Context) {
 			ctx.Writer.Write(msg)
 			ctx.Writer.Flush()
 		case <-ticker.C:
+			if validator, ok := ctx.Get("validateSession"); ok {
+				if err := validator.(func() error)(); err != nil {
+					return
+				}
+			}
 			fmt.Fprintf(ctx.Writer, ": heartbeat\n\n")
 			ctx.Writer.Flush()
 		case <-ctx.Request.Context().Done():

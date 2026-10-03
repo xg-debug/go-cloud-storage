@@ -419,9 +419,9 @@ func (s *MinioService) PresignThumbnailURL(ctx context.Context, objectKey string
 	return u.String(), nil
 }
 
-// PresignAvatarURL 从数据库中存储的头像 URL 解析对象键并生成预签名 URL。
+// PresignStoredObjectURL 从数据库中存储的对象 URL 解析对象键并生成预签名 URL。
 // 解析失败（例如历史遗留的第三方存储 URL）时原样返回，保证兼容。
-func (s *MinioService) PresignAvatarURL(ctx context.Context, storedURL string, expiry time.Duration) string {
+func (s *MinioService) PresignStoredObjectURL(ctx context.Context, storedURL string, expiry time.Duration) string {
 	if storedURL == "" {
 		return ""
 	}
@@ -434,6 +434,11 @@ func (s *MinioService) PresignAvatarURL(ctx context.Context, storedURL string, e
 		return storedURL
 	}
 	return u.String()
+}
+
+// PresignAvatarURL 从数据库中存储的头像 URL 解析对象键并生成预签名 URL。
+func (s *MinioService) PresignAvatarURL(ctx context.Context, storedURL string, expiry time.Duration) string {
+	return s.PresignStoredObjectURL(ctx, storedURL, expiry)
 }
 
 // parseObjectKeyFromURL 从 `http(s)://endpoint/bucket/objectKey?...` 中提取 objectKey。

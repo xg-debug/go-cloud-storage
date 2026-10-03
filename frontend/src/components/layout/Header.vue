@@ -233,6 +233,7 @@ function goProfile() {
 
 async function handleLogout() {
   userDropdownRef.value?.handleClose()
+  await store.dispatch('upload/cancelAll')
   try { await logout() } catch (e) { console.error('Logout failed', e) }
   store.commit('clearAuth')
   router.push('/login')
