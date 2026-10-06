@@ -25,7 +25,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func SetUpRouter(db *gorm.DB, minioService *minio.MinioService, rabbitClient *mq.RabbitMQClient, cfg *config.Config) *gin.Engine {
+func SetUpRouter(appCtx context.Context, db *gorm.DB, minioService *minio.MinioService, rabbitClient *mq.RabbitMQClient, cfg *config.Config) *gin.Engine {
 	mqCfg := &cfg.RabbitMQ
 	ginServer := gin.New()
 	ginServer.Use(gin.Recovery())
@@ -96,7 +96,7 @@ func SetUpRouter(db *gorm.DB, minioService *minio.MinioService, rabbitClient *mq
 		storagePort,
 		eventBus,
 	)
-	uploadApplication.StartChunkUploadCleanup(context.Background())
+	uploadApplication.StartChunkUploadCleanup(appCtx)
 
 	// The GORM upload adapter also satisfies FileReadRepository, so download and
 	// preview streaming share the same metadata boundary without depending on the
@@ -128,7 +128,7 @@ func SetUpRouter(db *gorm.DB, minioService *minio.MinioService, rabbitClient *mq
 	statsCtrl := controller.NewStatsController(statsService, storageQuotaService)
 	notificationCtrl := controller.NewNotificationController(notificationService, sseBroker)
 
-	startRecycleCleanupWorkers(recycleService, rabbitClient, mqCfg)
+	startRecycleCleanupWorkers(appCtx, recycleService, rabbitClient, mqCfg)
 
 	ginServer.POST("/login", middleware.NewIPRateLimiter(10, time.Minute), loginCtrl.Login)
 	ginServer.POST("/register", middleware.NewIPRateLimiter(5, time.Minute), loginCtrl.Register)
@@ -250,12 +250,11 @@ func SetUpRouter(db *gorm.DB, minioService *minio.MinioService, rabbitClient *mq
 	return ginServer
 }
 
-func startRecycleCleanupWorkers(recycleService services.RecycleService, rabbitClient *mq.RabbitMQClient, mqCfg *config.RabbitMQConfig) {
+func startRecycleCleanupWorkers(ctx context.Context, recycleService services.RecycleService, rabbitClient *mq.RabbitMQClient, mqCfg *config.RabbitMQConfig) {
 	interval := 60 * time.Second
 	if mqCfg != nil && mqCfg.ScanIntervalSeconds > 0 {
 		interval = time.Duration(mqCfg.ScanIntervalSeconds) * time.Second
 	}
-	ctx := context.Background()
 
 	go func() {
 		if rabbitClient == nil {
@@ -263,7 +262,7 @@ func startRecycleCleanupWorkers(recycleService services.RecycleService, rabbitCl
 		}
 		if err := rabbitClient.ConsumeExpiredFilePurge(ctx, func(ctx context.Context, fileID string) error {
 			return recycleService.PurgeExpired(ctx, []string{fileID})
-		}); err != nil {
+		}); err != nil && ctx.Err() == nil {
 			slog.Error("recycle cleanup consumer exited", "error", err)
 		}
 	}()
@@ -273,18 +272,25 @@ func startRecycleCleanupWorkers(recycleService services.RecycleService, rabbitCl
 		defer ticker.Stop()
 
 		_, err := recycleService.DispatchExpiredPurgeJobs(ctx, 200)
-		if err != nil {
+		if err != nil && ctx.Err() == nil {
 			slog.Error("dispatch recycle cleanup job failed", "error", err)
 		}
 
-		for range ticker.C {
-			n, dispatchErr := recycleService.DispatchExpiredPurgeJobs(ctx, 200)
-			if dispatchErr != nil {
-				slog.Error("dispatch recycle cleanup job failed", "error", dispatchErr)
-				continue
-			}
-			if n > 0 {
-				slog.Info("dispatched recycle cleanup jobs", "count", n)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				n, dispatchErr := recycleService.DispatchExpiredPurgeJobs(ctx, 200)
+				if dispatchErr != nil {
+					if ctx.Err() == nil {
+						slog.Error("dispatch recycle cleanup job failed", "error", dispatchErr)
+					}
+					continue
+				}
+				if n > 0 {
+					slog.Info("dispatched recycle cleanup jobs", "count", n)
+				}
 			}
 		}
 	}()
