@@ -69,8 +69,7 @@ func SetUpRouter(db *gorm.DB, minioService *minio.MinioService, rabbitClient *mq
 	userService := services.NewUserService(db, userRepo, fileRepo, storageQuotaRepo, minioService, emailService, cfg.Server.PublicBaseURL)
 
 	// Legacy FileService remains for file use cases that have not been migrated yet.
-	// The active upload path no longer receives that service and therefore cannot
-	// reach its concrete GORM/Redis/MinIO fields.
+	// Upload and core download streaming now use application ports/adapters.
 	redisClient := cache.GetClient()
 	fileService := services.NewFileService(db, redisClient, fileRepo, storageQuotaRepo, shareRepo, minioService)
 
@@ -99,6 +98,11 @@ func SetUpRouter(db *gorm.DB, minioService *minio.MinioService, rabbitClient *mq
 	)
 	uploadApplication.StartChunkUploadCleanup(context.Background())
 
+	// The GORM upload adapter also satisfies FileReadRepository, so download and
+	// preview streaming share the same metadata boundary without depending on the
+	// legacy FileService or MinIO concrete type.
+	downloadApplication := services.NewDownloadApplication(uploadFiles, storagePort)
+
 	recyclePurgeService := services.NewRecyclePurgeService(db, minioService, recycleRepo, fileRepo, shareRepo, favoriteRepo, storageQuotaRepo)
 	var recyclePublisher services.RecycleJobPublisher
 	if rabbitClient != nil {
@@ -114,6 +118,7 @@ func SetUpRouter(db *gorm.DB, minioService *minio.MinioService, rabbitClient *mq
 	loginCtrl := controller.NewLoginController(userService)
 	fileCtrl := controller.NewFileController(fileService, cfg, notificationService)
 	uploadCtrl := controller.NewUploadController(uploadApplication, cfg)
+	downloadCtrl := controller.NewDownloadController(downloadApplication)
 	userCtrl := controller.NewUserController(userService)
 	recycleCtrl := controller.NewRecycleController(recycleService)
 	favoriteCtrl := controller.NewFavoriteController(favoriteService)
@@ -171,14 +176,14 @@ func SetUpRouter(db *gorm.DB, minioService *minio.MinioService, rabbitClient *mq
 		file.POST("/move", fileCtrl.MoveFile)
 		file.POST("/copy", fileCtrl.CopyFile)
 		file.GET("/preview/:fileId", fileCtrl.PreviewFile)
-		file.GET("/preview-stream/:fileId", fileCtrl.PreviewStream)
+		file.GET("/preview-stream/:fileId", downloadCtrl.PreviewStream)
 		file.GET("/recent", fileCtrl.GetRecentFiles)
 		file.POST("/search", fileCtrl.SearchFiles)
 		file.GET("/search/history", fileCtrl.GetSearchHistory)
 		file.GET("/duplicates", fileCtrl.GetDuplicateFiles)
 		file.DELETE("/search/history", fileCtrl.DeleteSearchHistory)
-		file.GET("/download/:fileId", fileCtrl.Download)
-		file.GET("/download-info/:fileId", fileCtrl.GetDownloadInfo)
+		file.GET("/download/:fileId", downloadCtrl.Download)
+		file.GET("/download-info/:fileId", downloadCtrl.GetDownloadInfo)
 		file.POST("/download-batch", fileCtrl.DownloadBatch)
 	}
 
