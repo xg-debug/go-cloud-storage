@@ -4,10 +4,13 @@ import (
 	"context"
 	"go-cloud-storage/backend/infrastructure/cache"
 	"go-cloud-storage/backend/infrastructure/email"
+	"go-cloud-storage/backend/infrastructure/messaging"
 	"go-cloud-storage/backend/infrastructure/minio"
 	"go-cloud-storage/backend/infrastructure/mq"
+	storageinfra "go-cloud-storage/backend/infrastructure/storage"
 	"go-cloud-storage/backend/internal/controller"
 	"go-cloud-storage/backend/internal/middleware"
+	"go-cloud-storage/backend/internal/ports"
 	"go-cloud-storage/backend/internal/repositories"
 	"go-cloud-storage/backend/pkg/config"
 	"log/slog"
@@ -77,8 +80,22 @@ func SetUpRouter(db *gorm.DB, minioService *minio.MinioService, rabbitClient *mq
 	sseBroker := services.NewSSEBroker()
 	notificationService := services.NewNotificationService(notificationRepo, sseBroker)
 	userService := services.NewUserService(db, userRepo, fileRepo, storageQuotaRepo, minioService, emailService, cfg.Server.PublicBaseURL)
+
+	// 旧 FileService 继续承载尚未迁移的文件用例；上传链路从这里开始走独立的
+	// UploadApplication -> Storage/EventBus ports，避免 Gin/MinIO SDK 继续向核心扩散。
 	fileService := services.NewFileService(db, cache.GetClient(), fileRepo, storageQuotaRepo, shareRepo, minioService)
-	fileService.StartChunkUploadCleanup(context.Background())
+	storagePort := storageinfra.NewMinIOStorageV2(minioService)
+	eventBus := messaging.NewLocalEventBus()
+	eventBus.Subscribe("file.uploaded.v1", func(ctx context.Context, event ports.Event) error {
+		data, ok := event.Data.(services.FileUploadedEvent)
+		if !ok {
+			return nil
+		}
+		return notificationService.CreateUploadCompleteNotification(uint(event.UserID), data.FileName)
+	})
+	uploadApplication := services.NewUploadApplication(fileService, storagePort, eventBus)
+	uploadApplication.StartChunkUploadCleanup(context.Background())
+
 	recyclePurgeService := services.NewRecyclePurgeService(db, minioService, recycleRepo, fileRepo, shareRepo, favoriteRepo, storageQuotaRepo)
 	var recyclePublisher services.RecycleJobPublisher
 	if rabbitClient != nil {
@@ -93,6 +110,7 @@ func SetUpRouter(db *gorm.DB, minioService *minio.MinioService, rabbitClient *mq
 
 	loginCtrl := controller.NewLoginController(userService)
 	fileCtrl := controller.NewFileController(fileService, cfg, notificationService)
+	uploadCtrl := controller.NewUploadController(uploadApplication, cfg)
 	userCtrl := controller.NewUserController(userService)
 	recycleCtrl := controller.NewRecycleController(recycleService)
 	favoriteCtrl := controller.NewFavoriteController(favoriteService)
@@ -136,15 +154,15 @@ func SetUpRouter(db *gorm.DB, minioService *minio.MinioService, rabbitClient *mq
 	{
 		file.POST("/list", fileCtrl.GetFiles)
 		file.POST("/create-folder", fileCtrl.CreateFolder)
-		// 普通文件上传
-		file.POST("/upload", fileCtrl.UploadFile)
 
-		// 大文件上传
-		file.POST("/chunk/init", fileCtrl.ChunkUploadInit)
-		file.POST("/chunk/upload", fileCtrl.ChunkUploadPart)
-		file.POST("/chunk/merge", fileCtrl.ChunkUploadMerge)
-		file.POST("/chunk/cancel", fileCtrl.ChunkUploadCancel)
-		file.GET("/chunk/progress", fileCtrl.GetChunkUploadProgress)
+		// 上传路由由独立 UploadController 接管。Controller 只做 Gin/HTTP 绑定，
+		// Application 层接收标准 context.Context 和 typed DTO。
+		file.POST("/upload", uploadCtrl.UploadFile)
+		file.POST("/chunk/init", uploadCtrl.ChunkUploadInit)
+		file.POST("/chunk/upload", uploadCtrl.ChunkUploadPart)
+		file.POST("/chunk/merge", uploadCtrl.ChunkUploadMerge)
+		file.POST("/chunk/cancel", uploadCtrl.ChunkUploadCancel)
+		file.GET("/chunk/progress", uploadCtrl.GetChunkUploadProgress)
 
 		file.DELETE("/:fileId", fileCtrl.Delete)
 		file.POST("/rename", fileCtrl.Rename)
