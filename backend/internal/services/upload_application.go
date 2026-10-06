@@ -8,21 +8,23 @@ import (
 	"log/slog"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
 	"go-cloud-storage/backend/internal/models"
 	"go-cloud-storage/backend/internal/ports"
 	"go-cloud-storage/backend/pkg/utils"
+)
 
-	"github.com/go-redis/redis/v8"
-	"gorm.io/gorm"
+const (
+	applicationDefaultUploadChunkSize int64 = 10 * 1024 * 1024
+	applicationCleanupBatchSize             = 100
+	applicationCleanupInterval              = 5 * time.Minute
+	applicationMergeLockTTL                 = 10 * time.Minute
 )
 
 // UploadApplication is the transport-neutral application boundary for uploads.
-// Gin/HTTP request binding belongs in controller; object-storage SDK types belong
-// in infrastructure adapters.
+// HTTP/Gin, Redis, GORM and object-storage SDK types are intentionally excluded.
 type UploadApplication interface {
 	UploadFile(ctx context.Context, r io.Reader, userID int, fileName string, fileSize int64, fileHash, parentID string) (*models.File, error)
 	InitChunkUpload(ctx context.Context, input InitChunkUploadInput) (*InitChunkUploadResult, error)
@@ -43,20 +45,45 @@ type FileUploadedEvent struct {
 }
 
 type uploadApplication struct {
-	*fileService
-	storage ports.Storage
-	events  ports.EventBus
+	files    ports.UploadFileRepository
+	quotas   ports.UploadQuotaRepository
+	tx       ports.TransactionManager
+	sessions ports.UploadSessionStore
+	storage  ports.Storage
+	events   ports.EventBus
 }
 
-func NewUploadApplication(legacy FileService, storage ports.Storage, events ports.EventBus) UploadApplication {
-	base, ok := legacy.(*fileService)
-	if !ok {
-		panic("NewUploadApplication requires the legacy *fileService during phase-1 migration")
+func NewUploadApplication(
+	files ports.UploadFileRepository,
+	quotas ports.UploadQuotaRepository,
+	tx ports.TransactionManager,
+	sessions ports.UploadSessionStore,
+	storage ports.Storage,
+	events ports.EventBus,
+) UploadApplication {
+	if files == nil {
+		panic("NewUploadApplication requires an UploadFileRepository")
+	}
+	if quotas == nil {
+		panic("NewUploadApplication requires an UploadQuotaRepository")
+	}
+	if tx == nil {
+		panic("NewUploadApplication requires a TransactionManager")
+	}
+	if sessions == nil {
+		panic("NewUploadApplication requires an UploadSessionStore")
 	}
 	if storage == nil {
 		panic("NewUploadApplication requires a Storage implementation")
 	}
-	return &uploadApplication{fileService: base, storage: storage, events: events}
+	return &uploadApplication{
+		files: files,
+		quotas: quotas,
+		tx: tx,
+		sessions: sessions,
+		storage: storage,
+		events: events,
+	}
 }
 
 func (s *uploadApplication) UploadFile(ctx context.Context, r io.Reader, userID int, fileName string, fileSize int64, fileHash, parentID string) (*models.File, error) {
@@ -67,14 +94,18 @@ func (s *uploadApplication) UploadFile(ctx context.Context, r io.Reader, userID 
 	if err := s.ensureTargetFolder(ctx, userID, parentID); err != nil {
 		return nil, err
 	}
-	if exists, err := s.fileRepo.CheckDuplicateName(userID, parentID, fileName); err != nil {
+	if exists, err := s.files.CheckDuplicateName(ctx, userID, parentID, fileName); err != nil {
 		return nil, err
 	} else if exists {
 		return nil, errors.New("该目录下已有同名的文件")
 	}
 
-	// 秒传仅复用当前用户已有对象，避免通过已知 hash 探测其他用户文件。
-	if existing, err := s.fileRepo.GetFileByMD5(userID, fileHash); err == nil && existing != nil && !existing.IsDeleted {
+	// 秒传只复用当前用户已有对象，避免通过已知 hash 探测其他用户文件。
+	existing, err := s.files.FindByHash(ctx, userID, fileHash)
+	if err != nil {
+		return nil, err
+	}
+	if existing != nil && !existing.IsDeleted {
 		file := cloneFileRecord(existing, userID, fileName, fileHash, parentID)
 		if err := s.persistUploadedFile(ctx, file); err != nil {
 			return nil, err
@@ -83,7 +114,7 @@ func (s *uploadApplication) UploadFile(ctx context.Context, r io.Reader, userID 
 		return file, nil
 	}
 
-	available, err := s.storageQuotaRepo.GetAvailableSpace(userID)
+	available, err := s.quotas.GetAvailableSpace(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("获取可用空间失败: %w", err)
 	}
@@ -126,6 +157,9 @@ func (s *uploadApplication) UploadFile(ctx context.Context, r io.Reader, userID 
 }
 
 func (s *uploadApplication) InitChunkUpload(ctx context.Context, input InitChunkUploadInput) (*InitChunkUploadResult, error) {
+	if !s.sessions.Available() {
+		return nil, ports.ErrUploadSessionUnavailable
+	}
 	fileName := strings.TrimSpace(input.FileName)
 	if err := validateFileName(fileName); err != nil {
 		return nil, err
@@ -133,7 +167,7 @@ func (s *uploadApplication) InitChunkUpload(ctx context.Context, input InitChunk
 	if err := s.ensureTargetFolder(ctx, input.UserID, input.ParentID); err != nil {
 		return nil, err
 	}
-	if exists, err := s.fileRepo.CheckDuplicateName(input.UserID, input.ParentID, fileName); err != nil {
+	if exists, err := s.files.CheckDuplicateName(ctx, input.UserID, input.ParentID, fileName); err != nil {
 		return nil, err
 	} else if exists {
 		return nil, errors.New("该目录下已有同名的文件")
@@ -141,7 +175,7 @@ func (s *uploadApplication) InitChunkUpload(ctx context.Context, input InitChunk
 
 	chunkSize := input.ChunkSize
 	if chunkSize <= 0 {
-		chunkSize = defaultUploadChunkSize
+		chunkSize = applicationDefaultUploadChunkSize
 	}
 	const (
 		minChunkSize int64 = 1 * 1024 * 1024
@@ -165,7 +199,11 @@ func (s *uploadApplication) InitChunkUpload(ctx context.Context, input InitChunk
 		return nil, fmt.Errorf("分片数量过多（最多 %d 片），请增大分片大小", maxChunks)
 	}
 
-	if existing, err := s.fileRepo.GetFileByMD5(input.UserID, input.FileHash); err == nil && existing != nil && !existing.IsDeleted {
+	existing, err := s.files.FindByHash(ctx, input.UserID, input.FileHash)
+	if err != nil {
+		return nil, err
+	}
+	if existing != nil && !existing.IsDeleted {
 		file := cloneFileRecord(existing, input.UserID, fileName, input.FileHash, input.ParentID)
 		if err := s.persistUploadedFile(ctx, file); err != nil {
 			return nil, err
@@ -174,7 +212,7 @@ func (s *uploadApplication) InitChunkUpload(ctx context.Context, input InitChunk
 		return &InitChunkUploadResult{Finished: true, File: file, URL: file.FileURL}, nil
 	}
 
-	remaining, err := s.storageQuotaRepo.GetAvailableSpace(input.UserID)
+	remaining, err := s.quotas.GetAvailableSpace(ctx, input.UserID)
 	if err != nil {
 		return nil, fmt.Errorf("获取可用空间失败: %w", err)
 	}
@@ -182,139 +220,126 @@ func (s *uploadApplication) InitChunkUpload(ctx context.Context, input InitChunk
 		return nil, errors.New("存储空间不足，请升级存储配额")
 	}
 
-	sessionKey := fmt.Sprintf("upload:%d:%s", input.UserID, input.FileHash)
-	var uploadID, objectKey string
-	createSession := func() error {
-		objectKey = s.storage.GenerateObjectKey(input.UserID, input.ParentID, fileName)
-		var initErr error
-		uploadID, initErr = s.storage.InitiateMultipartUpload(ctx, objectKey)
+	createSession := func() (*ports.UploadSession, error) {
+		objectKey := s.storage.GenerateObjectKey(input.UserID, input.ParentID, fileName)
+		uploadID, initErr := s.storage.InitiateMultipartUpload(ctx, objectKey)
 		if initErr != nil {
-			return fmt.Errorf("初始化对象存储分片上传失败: %w", initErr)
+			return nil, fmt.Errorf("初始化对象存储分片上传失败: %w", initErr)
 		}
-		if err := s.redis.HSet(ctx, sessionKey,
-			"id", uploadID,
-			"key", objectKey,
-			"fileName", fileName,
-			"parentId", input.ParentID,
-			"fileSize", strconv.FormatInt(input.FileSize, 10),
-			"chunkSize", strconv.FormatInt(chunkSize, 10),
-			"totalChunks", strconv.Itoa(totalChunks),
-		).Err(); err != nil {
-			_ = s.storage.AbortMultipartUpload(ctx, objectKey, uploadID)
-			return err
+		session := &ports.UploadSession{
+			UserID: input.UserID,
+			FileHash: input.FileHash,
+			UploadID: uploadID,
+			ObjectKey: objectKey,
+			FileName: fileName,
+			ParentID: input.ParentID,
+			FileSize: input.FileSize,
+			ChunkSize: chunkSize,
+			TotalChunks: totalChunks,
+			Parts: make(map[int]ports.UploadPartState),
 		}
-		return s.refreshChunkUploadSession(ctx, sessionKey)
+		if saveErr := s.sessions.Save(ctx, session); saveErr != nil {
+			_ = s.storage.AbortMultipartUpload(cleanupContext(ctx), objectKey, uploadID)
+			return nil, saveErr
+		}
+		return session, nil
 	}
 
-	sessionExists, err := s.redis.Exists(ctx, sessionKey).Result()
-	if err != nil || sessionExists == 0 {
-		if err := createSession(); err != nil {
+	session, err := s.sessions.Get(ctx, input.UserID, input.FileHash)
+	if errors.Is(err, ports.ErrUploadSessionNotFound) {
+		session, err = createSession()
+		if err != nil {
 			return nil, err
 		}
+	} else if err != nil {
+		return nil, err
 	} else {
-		uploadID, _ = s.redis.HGet(ctx, sessionKey, "id").Result()
-		objectKey, _ = s.redis.HGet(ctx, sessionKey, "key").Result()
-		if uploadID == "" || objectKey == "" {
+		if session.UploadID == "" || session.ObjectKey == "" {
 			return nil, errors.New("上传任务状态异常，请取消后重新上传")
 		}
-		if expired, _ := s.isChunkUploadSessionExpired(ctx, sessionKey); expired {
-			_ = s.storage.AbortMultipartUpload(ctx, objectKey, uploadID)
-			s.deleteChunkUploadSession(ctx, sessionKey)
-			if err := createSession(); err != nil {
+		if session.Expired(time.Now()) {
+			_ = s.storage.AbortMultipartUpload(cleanupContext(ctx), session.ObjectKey, session.UploadID)
+			_ = s.sessions.Delete(cleanupContext(ctx), input.UserID, input.FileHash)
+			session, err = createSession()
+			if err != nil {
 				return nil, err
 			}
 		} else {
-			storedName, _ := s.redis.HGet(ctx, sessionKey, "fileName").Result()
-			storedParent, _ := s.redis.HGet(ctx, sessionKey, "parentId").Result()
-			if storedName != "" && (storedName != fileName || storedParent != input.ParentID) {
+			if session.FileName != "" && (session.FileName != fileName || session.ParentID != input.ParentID) {
 				return nil, errors.New("相同内容的文件正在上传到其他位置，请稍后重试或先取消该上传")
 			}
-			if err := s.redis.HSet(ctx, sessionKey,
-				"fileName", fileName,
-				"parentId", input.ParentID,
-				"fileSize", strconv.FormatInt(input.FileSize, 10),
-				"chunkSize", strconv.FormatInt(chunkSize, 10),
-				"totalChunks", strconv.Itoa(totalChunks),
-			).Err(); err != nil {
-				return nil, err
+			if len(session.Parts) > 0 && (session.FileSize != input.FileSize || session.ChunkSize != chunkSize || session.TotalChunks != totalChunks) {
+				return nil, errors.New("上传参数与已有断点不一致，请先取消该上传任务")
 			}
-			if err := s.refreshChunkUploadSession(ctx, sessionKey); err != nil {
+			session.FileName = fileName
+			session.ParentID = input.ParentID
+			session.FileSize = input.FileSize
+			session.ChunkSize = chunkSize
+			session.TotalChunks = totalChunks
+			if err := s.sessions.Save(ctx, session); err != nil {
 				return nil, err
 			}
 		}
 	}
 
-	fields, err := s.redis.HGetAll(ctx, sessionKey).Result()
-	uploaded := make([]int, 0)
-	if err == nil {
-		for key := range fields {
-			if isChunkUploadMetadataField(key) {
-				continue
-			}
-			idx, convErr := strconv.Atoi(key)
-			if convErr == nil {
-				uploaded = append(uploaded, idx)
-			}
-		}
-	}
-	sort.Ints(uploaded)
-
+	uploaded := uploadedChunkIndexes(session.Parts)
 	return &InitChunkUploadResult{
-		Finished:       false,
-		FileHash:       input.FileHash,
-		UploadID:       uploadID,
+		Finished: false,
+		FileHash: input.FileHash,
+		UploadID: session.UploadID,
 		UploadedChunks: uploaded,
-		ChunkSize:      chunkSize,
-		TotalChunks:    totalChunks,
+		ChunkSize: chunkSize,
+		TotalChunks: totalChunks,
 	}, nil
 }
 
 func (s *uploadApplication) UploadChunk(ctx context.Context, userID int, fileHash string, chunkIndex int, r io.Reader, chunkSize int64, expectedChunkHash string) error {
-	sessionKey := fmt.Sprintf("upload:%d:%s", userID, fileHash)
-	uploadID, err := s.redis.HGet(ctx, sessionKey, "id").Result()
-	if err != nil || uploadID == "" {
+	if !s.sessions.Available() {
+		return ports.ErrUploadSessionUnavailable
+	}
+	session, err := s.sessions.Get(ctx, userID, fileHash)
+	if errors.Is(err, ports.ErrUploadSessionNotFound) {
 		return errors.New("上传任务不存在或已过期，请重新初始化")
 	}
-	objectKey, err := s.redis.HGet(ctx, sessionKey, "key").Result()
-	if err != nil || objectKey == "" {
-		return errors.New("文件路径丢失")
-	}
-	if expired, _ := s.isChunkUploadSessionExpired(ctx, sessionKey); expired {
-		_ = s.storage.AbortMultipartUpload(ctx, objectKey, uploadID)
-		s.deleteChunkUploadSession(ctx, sessionKey)
-		return errors.New("上传任务已过期，请重新初始化")
-	}
-
-	fileSize, chunkUnitSize, totalChunks, err := s.getChunkUploadMetadata(ctx, sessionKey)
 	if err != nil {
 		return err
 	}
-	if chunkIndex < 0 || chunkIndex >= totalChunks {
+	if session.UploadID == "" || session.ObjectKey == "" {
+		return errors.New("上传任务状态异常")
+	}
+	if session.Expired(time.Now()) {
+		_ = s.storage.AbortMultipartUpload(cleanupContext(ctx), session.ObjectKey, session.UploadID)
+		_ = s.sessions.Delete(cleanupContext(ctx), userID, fileHash)
+		return errors.New("上传任务已过期，请重新初始化")
+	}
+	if chunkIndex < 0 || chunkIndex >= session.TotalChunks {
 		return fmt.Errorf("分片索引越界: %d", chunkIndex)
 	}
-	expectedSize := chunkUnitSize
-	if chunkIndex == totalChunks-1 {
-		expectedSize = fileSize - int64(totalChunks-1)*chunkUnitSize
+
+	expectedSize := session.ChunkSize
+	if chunkIndex == session.TotalChunks-1 {
+		expectedSize = session.FileSize - int64(session.TotalChunks-1)*session.ChunkSize
 	}
 	if expectedSize <= 0 || chunkSize != expectedSize {
 		return fmt.Errorf("分片大小校验失败: index=%d got=%d expected=%d", chunkIndex, chunkSize, expectedSize)
 	}
 
-	part, computedHash, err := s.storage.UploadPart(ctx, objectKey, uploadID, chunkIndex+1, r, chunkSize, expectedChunkHash)
+	part, computedHash, err := s.storage.UploadPart(ctx, session.ObjectKey, session.UploadID, chunkIndex+1, r, chunkSize, expectedChunkHash)
 	if err != nil {
 		return fmt.Errorf("对象存储分片上传失败: %w", err)
 	}
-	if err := s.redis.HSet(ctx, sessionKey,
-		strconv.Itoa(chunkIndex), part.ETag,
-		strconv.Itoa(chunkIndex)+"_hash", computedHash,
-		strconv.Itoa(chunkIndex)+"_size", strconv.FormatInt(chunkSize, 10),
-	).Err(); err != nil {
-		return err
-	}
-	return s.refreshChunkUploadSession(ctx, sessionKey)
+	return s.sessions.SavePart(ctx, userID, fileHash, ports.UploadPartState{
+		Index: chunkIndex,
+		ETag: part.ETag,
+		Hash: computedHash,
+		Size: chunkSize,
+	})
 }
 
 func (s *uploadApplication) MergeChunks(ctx context.Context, userID int, fileHash, fileName, parentID string, fileSize, chunkSize int64, totalChunks int) (*models.File, error) {
+	if !s.sessions.Available() {
+		return nil, ports.ErrUploadSessionUnavailable
+	}
 	fileName = strings.TrimSpace(fileName)
 	if err := validateFileName(fileName); err != nil {
 		return nil, err
@@ -323,246 +348,260 @@ func (s *uploadApplication) MergeChunks(ctx context.Context, userID int, fileHas
 		return nil, err
 	}
 
-	sessionKey := fmt.Sprintf("upload:%d:%s", userID, fileHash)
-	lockKey := fmt.Sprintf("upload:%d:%s:lock", userID, fileHash)
-	locked, err := s.redis.SetNX(ctx, lockKey, "1", 10*time.Minute).Result()
+	locked, err := s.sessions.AcquireMergeLock(ctx, userID, fileHash, applicationMergeLockTTL)
 	if err != nil || !locked {
 		return nil, errors.New("合并正在进行中，请稍后重试")
 	}
-	defer s.redis.Del(ctx, lockKey)
+	defer func() {
+		_ = s.sessions.ReleaseMergeLock(cleanupContext(ctx), userID, fileHash)
+	}()
 
-	uploadID, err := s.redis.HGet(ctx, sessionKey, "id").Result()
-	if err != nil || uploadID == "" {
+	session, err := s.sessions.Get(ctx, userID, fileHash)
+	if errors.Is(err, ports.ErrUploadSessionNotFound) {
 		return nil, errors.New("上传任务失败")
 	}
-	objectKey, err := s.redis.HGet(ctx, sessionKey, "key").Result()
-	if err != nil || objectKey == "" {
-		return nil, errors.New("文件路径丢失")
-	}
-	if expired, _ := s.isChunkUploadSessionExpired(ctx, sessionKey); expired {
-		_ = s.storage.AbortMultipartUpload(ctx, objectKey, uploadID)
-		s.deleteChunkUploadSession(ctx, sessionKey)
-		return nil, errors.New("上传任务已过期，请重新初始化")
-	}
-
-	fields, err := s.redis.HGetAll(ctx, sessionKey).Result()
-	if err != nil || len(fields) <= 2 {
-		return nil, errors.New("未找到已上传的分片数据")
-	}
-	storedFileSize, storedChunkSize, storedTotalChunks, err := parseChunkUploadMetadata(fields)
 	if err != nil {
 		return nil, err
 	}
-	if storedName := fields["fileName"]; storedName != "" && storedName != fileName {
+	if session.UploadID == "" || session.ObjectKey == "" {
+		return nil, errors.New("上传任务状态异常")
+	}
+	if session.Expired(time.Now()) {
+		_ = s.storage.AbortMultipartUpload(cleanupContext(ctx), session.ObjectKey, session.UploadID)
+		_ = s.sessions.Delete(cleanupContext(ctx), userID, fileHash)
+		return nil, errors.New("上传任务已过期，请重新初始化")
+	}
+	if session.FileName != "" && session.FileName != fileName {
 		return nil, errors.New("文件名与上传会话不一致")
 	}
-	if storedParent, ok := fields["parentId"]; ok && storedParent != parentID {
+	if session.ParentID != parentID {
 		return nil, errors.New("父目录与上传会话不一致")
 	}
+
 	if fileSize <= 0 {
-		fileSize = storedFileSize
-	} else if storedFileSize > 0 && fileSize != storedFileSize {
-		return nil, fmt.Errorf("文件大小与上传会话不一致: got=%d expected=%d", fileSize, storedFileSize)
+		fileSize = session.FileSize
+	} else if session.FileSize > 0 && fileSize != session.FileSize {
+		return nil, fmt.Errorf("文件大小与上传会话不一致: got=%d expected=%d", fileSize, session.FileSize)
 	}
 	if chunkSize <= 0 {
-		chunkSize = storedChunkSize
-	} else if storedChunkSize > 0 && chunkSize != storedChunkSize {
-		return nil, fmt.Errorf("分片大小与上传会话不一致: got=%d expected=%d", chunkSize, storedChunkSize)
+		chunkSize = session.ChunkSize
+	} else if session.ChunkSize > 0 && chunkSize != session.ChunkSize {
+		return nil, fmt.Errorf("分片大小与上传会话不一致: got=%d expected=%d", chunkSize, session.ChunkSize)
 	}
 	if totalChunks <= 0 {
-		totalChunks = storedTotalChunks
-	} else if storedTotalChunks > 0 && totalChunks != storedTotalChunks {
-		return nil, fmt.Errorf("分片数量与上传会话不一致: got=%d expected=%d", totalChunks, storedTotalChunks)
+		totalChunks = session.TotalChunks
+	} else if session.TotalChunks > 0 && totalChunks != session.TotalChunks {
+		return nil, fmt.Errorf("分片数量与上传会话不一致: got=%d expected=%d", totalChunks, session.TotalChunks)
 	}
-	if exists, err := s.fileRepo.CheckDuplicateName(userID, parentID, fileName); err != nil {
+	if totalChunks <= 0 || fileSize <= 0 || chunkSize <= 0 {
+		return nil, errors.New("上传会话元数据无效")
+	}
+	if exists, err := s.files.CheckDuplicateName(ctx, userID, parentID, fileName); err != nil {
 		return nil, err
 	} else if exists {
 		return nil, errors.New("该目录下已有同名的文件")
 	}
 
 	parts := make([]ports.CompletedPart, 0, totalChunks)
-	seen := make(map[int]bool, totalChunks)
 	var uploadedSize int64
-	for key, etag := range fields {
-		if isChunkUploadMetadataField(key) {
-			continue
+	for idx := 0; idx < totalChunks; idx++ {
+		part, ok := session.Parts[idx]
+		if !ok || part.ETag == "" {
+			return nil, fmt.Errorf("缺少分片: %d", idx)
 		}
-		idx, convErr := strconv.Atoi(key)
-		if convErr != nil {
-			continue
-		}
-		if idx < 0 || idx >= totalChunks {
-			return nil, fmt.Errorf("分片索引越界: %d", idx)
-		}
-		seen[idx] = true
-		if partSize, sizeErr := strconv.ParseInt(fields[strconv.Itoa(idx)+"_size"], 10, 64); sizeErr == nil {
-			uploadedSize += partSize
-		}
-		parts = append(parts, ports.CompletedPart{PartNumber: idx + 1, ETag: etag})
+		uploadedSize += part.Size
+		parts = append(parts, ports.CompletedPart{PartNumber: idx + 1, ETag: part.ETag})
 	}
 	if len(parts) != totalChunks {
 		return nil, fmt.Errorf("分片不完整: 已上传 %d/%d", len(parts), totalChunks)
 	}
-	for idx := 0; idx < totalChunks; idx++ {
-		if !seen[idx] {
-			return nil, fmt.Errorf("缺少分片: %d", idx)
-		}
-	}
 	if uploadedSize > 0 && uploadedSize != fileSize {
 		return nil, fmt.Errorf("分片大小校验失败: got=%d expected=%d", uploadedSize, fileSize)
 	}
-	sort.Slice(parts, func(i, j int) bool { return parts[i].PartNumber < parts[j].PartNumber })
 
-	object, err := s.storage.CompleteMultipartUpload(ctx, objectKey, uploadID, parts)
+	object, err := s.storage.CompleteMultipartUpload(ctx, session.ObjectKey, session.UploadID, parts)
 	if err != nil {
 		return nil, fmt.Errorf("对象存储合并失败: %w", err)
 	}
 	if object.Size != fileSize {
-		_ = s.storage.DeleteFile(ctx, objectKey)
+		_ = s.storage.DeleteFile(cleanupContext(ctx), session.ObjectKey)
 		return nil, fmt.Errorf("合并对象大小校验失败: got=%d expected=%d", object.Size, fileSize)
 	}
 	if len(fileHash) == 64 {
-		computedHash, hashErr := s.storage.ComputeObjectSHA256(ctx, objectKey)
+		computedHash, hashErr := s.storage.ComputeObjectSHA256(ctx, session.ObjectKey)
 		if hashErr != nil {
-			_ = s.storage.DeleteFile(ctx, objectKey)
+			_ = s.storage.DeleteFile(cleanupContext(ctx), session.ObjectKey)
 			return nil, fmt.Errorf("计算合并对象hash失败: %w", hashErr)
 		}
 		if !strings.EqualFold(computedHash, fileHash) {
-			_ = s.storage.DeleteFile(ctx, objectKey)
+			_ = s.storage.DeleteFile(cleanupContext(ctx), session.ObjectKey)
 			return nil, errors.New("合并对象hash校验失败")
 		}
 	}
 
-	ext := strings.TrimPrefix(filepath.Ext(fileName), ".")
+	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(fileName), "."))
 	file := &models.File{
-		Id:            utils.NewUUID(),
-		UserId:        userID,
-		Name:          fileName,
-		ParentId:      nullableParentID(parentID),
-		OssObjectKey:  objectKey,
-		FileHash:      fileHash,
-		FileURL:       object.URL,
-		ThumbnailURL:  object.ThumbnailURL,
-		Size:          fileSize,
-		SizeStr:       utils.FormatFileSize(fileSize),
+		Id: utils.NewUUID(),
+		UserId: userID,
+		Name: fileName,
+		ParentId: nullableParentID(parentID),
+		OssObjectKey: session.ObjectKey,
+		FileHash: fileHash,
+		FileURL: object.URL,
+		ThumbnailURL: object.ThumbnailURL,
+		Size: fileSize,
+		SizeStr: utils.FormatFileSize(fileSize),
 		FileExtension: ext,
-		CreatedAt:     time.Now(),
-		UpdatedAt:     time.Now(),
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
 	}
 	if err := s.persistUploadedFile(ctx, file); err != nil {
-		s.cleanupObject(ctx, objectKey)
-		s.deleteChunkUploadSession(cleanupContext(ctx), sessionKey)
+		s.cleanupObject(ctx, session.ObjectKey)
+		_ = s.sessions.Delete(cleanupContext(ctx), userID, fileHash)
 		return nil, err
 	}
 
 	s.generateThumbnailAsync(file.Id, file.OssObjectKey)
-	s.deleteChunkUploadSession(ctx, sessionKey)
+	_ = s.sessions.Delete(ctx, userID, fileHash)
 	s.publishFileUploaded(ctx, file)
 	return file, nil
 }
 
 func (s *uploadApplication) CancelChunkUpload(ctx context.Context, userID int, fileHash string) error {
-	sessionKey := fmt.Sprintf("upload:%d:%s", userID, fileHash)
-	uploadID, err := s.redis.HGet(ctx, sessionKey, "id").Result()
-	objectKey, _ := s.redis.HGet(ctx, sessionKey, "key").Result()
-	if err == nil && uploadID != "" && objectKey != "" {
-		_ = s.storage.AbortMultipartUpload(ctx, objectKey, uploadID)
+	if !s.sessions.Available() {
+		return ports.ErrUploadSessionUnavailable
 	}
-	s.deleteChunkUploadSession(ctx, sessionKey)
+	session, err := s.sessions.Get(ctx, userID, fileHash)
+	if err != nil && !errors.Is(err, ports.ErrUploadSessionNotFound) {
+		return err
+	}
+	if session != nil && session.UploadID != "" && session.ObjectKey != "" {
+		_ = s.storage.AbortMultipartUpload(cleanupContext(ctx), session.ObjectKey, session.UploadID)
+	}
+	if err := s.sessions.Delete(ctx, userID, fileHash); err != nil && !errors.Is(err, ports.ErrUploadSessionNotFound) {
+		return err
+	}
 	return nil
 }
 
 func (s *uploadApplication) GetChunkUploadProgress(ctx context.Context, userID int, fileHash string) (*ChunkUploadProgress, error) {
-	sessionKey := fmt.Sprintf("upload:%d:%s", userID, fileHash)
-	uploadID, err := s.redis.HGet(ctx, sessionKey, "id").Result()
-	if err != nil || uploadID == "" {
+	if !s.sessions.Available() {
+		return nil, ports.ErrUploadSessionUnavailable
+	}
+	session, err := s.sessions.Get(ctx, userID, fileHash)
+	if errors.Is(err, ports.ErrUploadSessionNotFound) {
 		return &ChunkUploadProgress{Status: "not_found", UploadedChunks: []int{}}, nil
 	}
-	fields, err := s.redis.HGetAll(ctx, sessionKey).Result()
 	if err != nil {
 		return nil, err
 	}
-	uploaded := make([]int, 0)
-	for key := range fields {
-		if isChunkUploadMetadataField(key) {
-			continue
-		}
-		idx, convErr := strconv.Atoi(key)
-		if convErr == nil {
-			uploaded = append(uploaded, idx)
-		}
-	}
-	sort.Ints(uploaded)
-	return &ChunkUploadProgress{Status: "in_progress", UploadID: uploadID, UploadedChunks: uploaded, UploadedCount: len(uploaded)}, nil
+	uploaded := uploadedChunkIndexes(session.Parts)
+	return &ChunkUploadProgress{
+		Status: "in_progress",
+		UploadID: session.UploadID,
+		UploadedChunks: uploaded,
+		UploadedCount: len(uploaded),
+	}, nil
 }
 
 func (s *uploadApplication) StartChunkUploadCleanup(ctx context.Context) {
-	if s.redis == nil {
+	if s.sessions == nil || !s.sessions.Available() {
 		return
 	}
 	go func() {
-		ticker := time.NewTicker(chunkUploadCleanupInterval)
+		ticker := time.NewTicker(applicationCleanupInterval)
 		defer ticker.Stop()
-		s.cleanupExpiredChunkUploads(ctx, chunkUploadCleanupBatchSize)
+		s.cleanupExpiredChunkUploads(ctx, applicationCleanupBatchSize)
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				s.cleanupExpiredChunkUploads(ctx, chunkUploadCleanupBatchSize)
+				s.cleanupExpiredChunkUploads(ctx, applicationCleanupBatchSize)
 			}
 		}
 	}()
 }
 
 func (s *uploadApplication) cleanupExpiredChunkUploads(ctx context.Context, limit int64) {
-	sessions, err := s.redis.ZRangeByScore(ctx, chunkUploadSessionSet, &redis.ZRangeBy{
-		Min: "-inf", Max: strconv.FormatInt(time.Now().Unix(), 10), Offset: 0, Count: limit,
-	}).Result()
+	refs, err := s.sessions.ListExpired(ctx, time.Now(), limit)
 	if err != nil {
 		slog.Error("scan expired chunk upload sessions failed", "error", err)
 		return
 	}
-	for _, sessionKey := range sessions {
-		uploadID, _ := s.redis.HGet(ctx, sessionKey, "id").Result()
-		objectKey, _ := s.redis.HGet(ctx, sessionKey, "key").Result()
-		if uploadID != "" && objectKey != "" {
-			if err := s.storage.AbortMultipartUpload(ctx, objectKey, uploadID); err != nil {
-				slog.Error("abort expired chunk upload failed", "sessionKey", sessionKey, "objectKey", objectKey, "error", err)
+	for _, ref := range refs {
+		session, getErr := s.sessions.Get(ctx, ref.UserID, ref.FileHash)
+		if errors.Is(getErr, ports.ErrUploadSessionNotFound) {
+			_ = s.sessions.Delete(ctx, ref.UserID, ref.FileHash)
+			continue
+		}
+		if getErr != nil {
+			slog.Error("load expired chunk upload session failed", "userId", ref.UserID, "fileHash", ref.FileHash, "error", getErr)
+			continue
+		}
+		if session.UploadID != "" && session.ObjectKey != "" {
+			if abortErr := s.storage.AbortMultipartUpload(ctx, session.ObjectKey, session.UploadID); abortErr != nil {
+				slog.Error("abort expired chunk upload failed", "objectKey", session.ObjectKey, "error", abortErr)
+				continue
 			}
 		}
-		s.deleteChunkUploadSession(ctx, sessionKey)
+		if deleteErr := s.sessions.Delete(ctx, ref.UserID, ref.FileHash); deleteErr != nil {
+			slog.Error("delete expired chunk upload session failed", "userId", ref.UserID, "fileHash", ref.FileHash, "error", deleteErr)
+		}
 	}
 }
 
 func (s *uploadApplication) persistUploadedFile(ctx context.Context, file *models.File) error {
-	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Create(file).Error; err != nil {
+	return s.tx.WithinTransaction(ctx, func(txCtx context.Context) error {
+		if err := s.files.Create(txCtx, file); err != nil {
 			return fmt.Errorf("保存文件记录失败: %w", err)
 		}
-		return s.storageQuotaRepo.UpdateUsedSpace(tx, file.UserId, file.Size)
+		return s.quotas.AddUsedSpace(txCtx, file.UserId, file.Size)
 	})
+}
+
+func (s *uploadApplication) ensureTargetFolder(ctx context.Context, userID int, parentID string) error {
+	if parentID == "" {
+		return nil
+	}
+	folder, err := s.files.GetUserFile(ctx, userID, parentID)
+	if err != nil {
+		return fmt.Errorf("查询目标文件夹失败: %w", err)
+	}
+	if folder == nil || !folder.IsDir {
+		return errors.New("目标文件夹不存在或无权限")
+	}
+	return nil
 }
 
 func cloneFileRecord(existing *models.File, userID int, fileName, fileHash, parentID string) *models.File {
 	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(fileName), "."))
 	return &models.File{
-		Id:            utils.NewUUID(),
-		UserId:        userID,
-		Name:          fileName,
-		Size:          existing.Size,
-		SizeStr:       existing.SizeStr,
-		IsDir:         false,
+		Id: utils.NewUUID(),
+		UserId: userID,
+		Name: fileName,
+		Size: existing.Size,
+		SizeStr: existing.SizeStr,
+		IsDir: false,
 		FileExtension: ext,
-		OssObjectKey:  existing.OssObjectKey,
-		FileHash:      fileHash,
-		ParentId:      nullableParentID(parentID),
-		IsDeleted:     false,
-		CreatedAt:     time.Now(),
-		UpdatedAt:     time.Now(),
-		FileURL:       existing.FileURL,
-		ThumbnailURL:  existing.ThumbnailURL,
+		OssObjectKey: existing.OssObjectKey,
+		FileHash: fileHash,
+		ParentId: nullableParentID(parentID),
+		IsDeleted: false,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+		FileURL: existing.FileURL,
+		ThumbnailURL: existing.ThumbnailURL,
 	}
+}
+
+func uploadedChunkIndexes(parts map[int]ports.UploadPartState) []int {
+	uploaded := make([]int, 0, len(parts))
+	for idx := range parts {
+		uploaded = append(uploaded, idx)
+	}
+	sort.Ints(uploaded)
+	return uploaded
 }
 
 func (s *uploadApplication) publishFileUploaded(ctx context.Context, file *models.File) {
@@ -570,13 +609,16 @@ func (s *uploadApplication) publishFileUploaded(ctx context.Context, file *model
 		return
 	}
 	event := ports.Event{
-		ID:          utils.NewUUID(),
-		Type:        "file.uploaded.v1",
+		ID: utils.NewUUID(),
+		Type: "file.uploaded.v1",
 		AggregateID: file.Id,
-		UserID:      file.UserId,
-		OccurredAt:  time.Now(),
+		UserID: file.UserId,
+		OccurredAt: time.Now(),
 		Data: FileUploadedEvent{
-			FileID: file.Id, FileName: file.Name, ObjectKey: file.OssObjectKey, Size: file.Size,
+			FileID: file.Id,
+			FileName: file.Name,
+			ObjectKey: file.OssObjectKey,
+			Size: file.Size,
 		},
 	}
 	if err := s.events.Publish(ctx, event); err != nil {
@@ -600,12 +642,10 @@ func (s *uploadApplication) generateThumbnailAsync(fileID, objectKey string) {
 		if thumbURL == "" {
 			return
 		}
-		result := s.db.WithContext(ctx).Model(&models.File{}).
-			Where("id = ? AND is_deleted = ?", fileID, false).
-			Update("thumbnail_url", thumbURL)
-		if result.Error != nil || result.RowsAffected == 0 {
-			if result.Error != nil {
-				slog.Error("update async thumbnail failed", "fileId", fileID, "error", result.Error)
+		updated, updateErr := s.files.UpdateThumbnail(ctx, fileID, thumbURL)
+		if updateErr != nil || !updated {
+			if updateErr != nil {
+				slog.Error("update async thumbnail failed", "fileId", fileID, "error", updateErr)
 			}
 			_ = s.storage.DeleteThumbnailForObject(context.Background(), objectKey)
 		}
