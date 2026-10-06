@@ -227,16 +227,16 @@ func (s *uploadApplication) InitChunkUpload(ctx context.Context, input InitChunk
 			return nil, fmt.Errorf("初始化对象存储分片上传失败: %w", initErr)
 		}
 		session := &ports.UploadSession{
-			UserID: input.UserID,
-			FileHash: input.FileHash,
-			UploadID: uploadID,
-			ObjectKey: objectKey,
-			FileName: fileName,
-			ParentID: input.ParentID,
-			FileSize: input.FileSize,
-			ChunkSize: chunkSize,
+			UserID:      input.UserID,
+			FileHash:    input.FileHash,
+			UploadID:    uploadID,
+			ObjectKey:   objectKey,
+			FileName:    fileName,
+			ParentID:    input.ParentID,
+			FileSize:    input.FileSize,
+			ChunkSize:   chunkSize,
 			TotalChunks: totalChunks,
-			Parts: make(map[int]ports.UploadPartState),
+			Parts:       make(map[int]ports.UploadPartState),
 		}
 		if saveErr := s.sessions.Save(ctx, session); saveErr != nil {
 			_ = s.storage.AbortMultipartUpload(cleanupContext(ctx), objectKey, uploadID)
@@ -284,12 +284,12 @@ func (s *uploadApplication) InitChunkUpload(ctx context.Context, input InitChunk
 
 	uploaded := uploadedChunkIndexes(session.Parts)
 	return &InitChunkUploadResult{
-		Finished: false,
-		FileHash: input.FileHash,
-		UploadID: session.UploadID,
+		Finished:       false,
+		FileHash:       input.FileHash,
+		UploadID:       session.UploadID,
 		UploadedChunks: uploaded,
-		ChunkSize: chunkSize,
-		TotalChunks: totalChunks,
+		ChunkSize:      chunkSize,
+		TotalChunks:    totalChunks,
 	}, nil
 }
 
@@ -330,9 +330,9 @@ func (s *uploadApplication) UploadChunk(ctx context.Context, userID int, fileHas
 	}
 	return s.sessions.SavePart(ctx, userID, fileHash, ports.UploadPartState{
 		Index: chunkIndex,
-		ETag: part.ETag,
-		Hash: computedHash,
-		Size: chunkSize,
+		ETag:  part.ETag,
+		Hash:  computedHash,
+		Size:  chunkSize,
 	})
 }
 
@@ -441,19 +441,19 @@ func (s *uploadApplication) MergeChunks(ctx context.Context, userID int, fileHas
 
 	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(fileName), "."))
 	file := &models.File{
-		Id: utils.NewUUID(),
-		UserId: userID,
-		Name: fileName,
-		ParentId: nullableParentID(parentID),
-		OssObjectKey: session.ObjectKey,
-		FileHash: fileHash,
-		FileURL: object.URL,
-		ThumbnailURL: object.ThumbnailURL,
-		Size: fileSize,
-		SizeStr: utils.FormatFileSize(fileSize),
+		Id:            utils.NewUUID(),
+		UserId:        userID,
+		Name:          fileName,
+		ParentId:      nullableParentID(parentID),
+		OssObjectKey:  session.ObjectKey,
+		FileHash:      fileHash,
+		FileURL:       object.URL,
+		ThumbnailURL:  object.ThumbnailURL,
+		Size:          fileSize,
+		SizeStr:       utils.FormatFileSize(fileSize),
 		FileExtension: ext,
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+		CreatedAt:     time.Now(),
+		UpdatedAt:     time.Now(),
 	}
 	if err := s.persistUploadedFile(ctx, file); err != nil {
 		s.cleanupObject(ctx, session.ObjectKey)
@@ -497,10 +497,10 @@ func (s *uploadApplication) GetChunkUploadProgress(ctx context.Context, userID i
 	}
 	uploaded := uploadedChunkIndexes(session.Parts)
 	return &ChunkUploadProgress{
-		Status: "in_progress",
-		UploadID: session.UploadID,
+		Status:         "in_progress",
+		UploadID:       session.UploadID,
 		UploadedChunks: uploaded,
-		UploadedCount: len(uploaded),
+		UploadedCount:  len(uploaded),
 	}, nil
 }
 
@@ -577,21 +577,21 @@ func (s *uploadApplication) ensureTargetFolder(ctx context.Context, userID int, 
 func cloneFileRecord(existing *models.File, userID int, fileName, fileHash, parentID string) *models.File {
 	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(fileName), "."))
 	return &models.File{
-		Id: utils.NewUUID(),
-		UserId: userID,
-		Name: fileName,
-		Size: existing.Size,
-		SizeStr: existing.SizeStr,
-		IsDir: false,
+		Id:            utils.NewUUID(),
+		UserId:        userID,
+		Name:          fileName,
+		Size:          existing.Size,
+		SizeStr:       existing.SizeStr,
+		IsDir:         false,
 		FileExtension: ext,
-		OssObjectKey: existing.OssObjectKey,
-		FileHash: fileHash,
-		ParentId: nullableParentID(parentID),
-		IsDeleted: false,
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
-		FileURL: existing.FileURL,
-		ThumbnailURL: existing.ThumbnailURL,
+		OssObjectKey:  existing.OssObjectKey,
+		FileHash:      fileHash,
+		ParentId:      nullableParentID(parentID),
+		IsDeleted:     false,
+		CreatedAt:     time.Now(),
+		UpdatedAt:     time.Now(),
+		FileURL:       existing.FileURL,
+		ThumbnailURL:  existing.ThumbnailURL,
 	}
 }
 
@@ -609,16 +609,16 @@ func (s *uploadApplication) publishFileUploaded(ctx context.Context, file *model
 		return
 	}
 	event := ports.Event{
-		ID: utils.NewUUID(),
-		Type: "file.uploaded.v1",
+		ID:          utils.NewUUID(),
+		Type:        "file.uploaded.v1",
 		AggregateID: file.Id,
-		UserID: file.UserId,
-		OccurredAt: time.Now(),
+		UserID:      file.UserId,
+		OccurredAt:  time.Now(),
 		Data: FileUploadedEvent{
-			FileID: file.Id,
-			FileName: file.Name,
+			FileID:    file.Id,
+			FileName:  file.Name,
 			ObjectKey: file.OssObjectKey,
-			Size: file.Size,
+			Size:      file.Size,
 		},
 	}
 	if err := s.events.Publish(ctx, event); err != nil {
