@@ -4,10 +4,14 @@ import (
 	"context"
 	"go-cloud-storage/backend/infrastructure/cache"
 	"go-cloud-storage/backend/infrastructure/email"
+	"go-cloud-storage/backend/infrastructure/messaging"
 	"go-cloud-storage/backend/infrastructure/minio"
 	"go-cloud-storage/backend/infrastructure/mq"
+	persistenceinfra "go-cloud-storage/backend/infrastructure/persistence"
+	storageinfra "go-cloud-storage/backend/infrastructure/storage"
 	"go-cloud-storage/backend/internal/controller"
 	"go-cloud-storage/backend/internal/middleware"
+	"go-cloud-storage/backend/internal/ports"
 	"go-cloud-storage/backend/internal/repositories"
 	"go-cloud-storage/backend/pkg/config"
 	"log/slog"
@@ -21,21 +25,13 @@ import (
 	"gorm.io/gorm"
 )
 
-func SetUpRouter(db *gorm.DB, minioService *minio.MinioService, rabbitClient *mq.RabbitMQClient, cfg *config.Config) *gin.Engine {
+func SetUpRouter(appCtx context.Context, db *gorm.DB, minioService *minio.MinioService, rabbitClient *mq.RabbitMQClient, cfg *config.Config) *gin.Engine {
 	mqCfg := &cfg.RabbitMQ
-	// 创建一个服务（不用 gin.Default：其 Logger 会打印完整 RequestURI，
-	// 导致 SSE 的 ?token= 等敏感参数进入日志）
 	ginServer := gin.New()
 	ginServer.Use(gin.Recovery())
 
-	// 仅信任直连（RemoteAddr），不信任 X-Forwarded-For，防止伪造 IP 绕过限流/防暴力。
-	// 若部署在反向代理之后，请按代理来源显式配置 SetTrustedProxies。
 	_ = ginServer.SetTrustedProxies(nil)
-
-	// 注入 requestId
 	ginServer.Use(middleware.RequestIDMiddleware())
-
-	// 自定义请求日志：只记录 path，不记录 query（防止 token 等敏感参数进日志）
 	ginServer.Use(func(c *gin.Context) {
 		start := time.Now()
 		c.Next()
@@ -48,10 +44,7 @@ func SetUpRouter(db *gorm.DB, minioService *minio.MinioService, rabbitClient *mq
 		)
 	})
 
-	// 初始化限流器
 	middleware.InitRateLimiter(cfg.Security.RateLimitRPS, cfg.Security.RateLimitRPS*2)
-
-	// 配置 CORS 中间件
 	ginServer.Use(cors.New(cors.Config{
 		AllowOrigins:     cfg.Server.AllowedOrigins,
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
@@ -61,7 +54,6 @@ func SetUpRouter(db *gorm.DB, minioService *minio.MinioService, rabbitClient *mq
 		MaxAge:           12 * time.Hour,
 	}))
 
-	// 初始化仓库
 	userRepo := repositories.NewUserRepository(db)
 	fileRepo := repositories.NewFileRepository(db)
 	recycleRepo := repositories.NewRecycleRepository(db)
@@ -70,15 +62,47 @@ func SetUpRouter(db *gorm.DB, minioService *minio.MinioService, rabbitClient *mq
 	storageQuotaRepo := repositories.NewStorageQuotaRepository(db)
 	notificationRepo := repositories.NewNotificationRepository(db)
 
-	// 初始化邮件服务
 	emailService := email.NewEmailService(cfg.SMTP.Host, cfg.SMTP.Port, cfg.SMTP.Username, cfg.SMTP.Password, cfg.SMTP.From)
 
-	// 初始化服务
 	sseBroker := services.NewSSEBroker()
 	notificationService := services.NewNotificationService(notificationRepo, sseBroker)
 	userService := services.NewUserService(db, userRepo, fileRepo, storageQuotaRepo, minioService, emailService, cfg.Server.PublicBaseURL)
-	fileService := services.NewFileService(db, cache.GetClient(), fileRepo, storageQuotaRepo, shareRepo, minioService)
-	fileService.StartChunkUploadCleanup(context.Background())
+
+	// Legacy FileService remains for file use cases that have not been migrated yet.
+	// Upload and core download streaming now use application ports/adapters.
+	redisClient := cache.GetClient()
+	fileService := services.NewFileService(db, redisClient, fileRepo, storageQuotaRepo, shareRepo, minioService)
+
+	storagePort := storageinfra.NewMinIOStorageV2(minioService)
+	uploadFiles := persistenceinfra.NewGormUploadFileRepository(db)
+	uploadQuotas := persistenceinfra.NewGormUploadQuotaRepository(db)
+	txManager := persistenceinfra.NewGormTransactionManager(db)
+	uploadSessions := cache.NewRedisUploadSessionStore(redisClient, 24*time.Hour, 48*time.Hour)
+
+	eventBus := messaging.NewLocalEventBus()
+	eventBus.Subscribe("file.uploaded.v1", func(ctx context.Context, event ports.Event) error {
+		data, ok := event.Data.(services.FileUploadedEvent)
+		if !ok {
+			return nil
+		}
+		return notificationService.CreateUploadCompleteNotification(uint(event.UserID), data.FileName)
+	})
+
+	uploadApplication := services.NewUploadApplication(
+		uploadFiles,
+		uploadQuotas,
+		txManager,
+		uploadSessions,
+		storagePort,
+		eventBus,
+	)
+	uploadApplication.StartChunkUploadCleanup(appCtx)
+
+	// The GORM upload adapter also satisfies FileReadRepository, so download and
+	// preview streaming share the same metadata boundary without depending on the
+	// legacy FileService or MinIO concrete type.
+	downloadApplication := services.NewDownloadApplication(uploadFiles, storagePort)
+
 	recyclePurgeService := services.NewRecyclePurgeService(db, minioService, recycleRepo, fileRepo, shareRepo, favoriteRepo, storageQuotaRepo)
 	var recyclePublisher services.RecycleJobPublisher
 	if rabbitClient != nil {
@@ -93,6 +117,8 @@ func SetUpRouter(db *gorm.DB, minioService *minio.MinioService, rabbitClient *mq
 
 	loginCtrl := controller.NewLoginController(userService)
 	fileCtrl := controller.NewFileController(fileService, cfg, notificationService)
+	uploadCtrl := controller.NewUploadController(uploadApplication, cfg)
+	downloadCtrl := controller.NewDownloadController(downloadApplication)
 	userCtrl := controller.NewUserController(userService)
 	recycleCtrl := controller.NewRecycleController(recycleService)
 	favoriteCtrl := controller.NewFavoriteController(favoriteService)
@@ -102,7 +128,7 @@ func SetUpRouter(db *gorm.DB, minioService *minio.MinioService, rabbitClient *mq
 	statsCtrl := controller.NewStatsController(statsService, storageQuotaService)
 	notificationCtrl := controller.NewNotificationController(notificationService, sseBroker)
 
-	startRecycleCleanupWorkers(recycleService, rabbitClient, mqCfg)
+	startRecycleCleanupWorkers(appCtx, recycleService, rabbitClient, mqCfg)
 
 	ginServer.POST("/login", middleware.NewIPRateLimiter(10, time.Minute), loginCtrl.Login)
 	ginServer.POST("/register", middleware.NewIPRateLimiter(5, time.Minute), loginCtrl.Register)
@@ -136,15 +162,13 @@ func SetUpRouter(db *gorm.DB, minioService *minio.MinioService, rabbitClient *mq
 	{
 		file.POST("/list", fileCtrl.GetFiles)
 		file.POST("/create-folder", fileCtrl.CreateFolder)
-		// 普通文件上传
-		file.POST("/upload", fileCtrl.UploadFile)
 
-		// 大文件上传
-		file.POST("/chunk/init", fileCtrl.ChunkUploadInit)
-		file.POST("/chunk/upload", fileCtrl.ChunkUploadPart)
-		file.POST("/chunk/merge", fileCtrl.ChunkUploadMerge)
-		file.POST("/chunk/cancel", fileCtrl.ChunkUploadCancel)
-		file.GET("/chunk/progress", fileCtrl.GetChunkUploadProgress)
+		file.POST("/upload", uploadCtrl.UploadFile)
+		file.POST("/chunk/init", uploadCtrl.ChunkUploadInit)
+		file.POST("/chunk/upload", uploadCtrl.ChunkUploadPart)
+		file.POST("/chunk/merge", uploadCtrl.ChunkUploadMerge)
+		file.POST("/chunk/cancel", uploadCtrl.ChunkUploadCancel)
+		file.GET("/chunk/progress", uploadCtrl.GetChunkUploadProgress)
 
 		file.DELETE("/:fileId", fileCtrl.Delete)
 		file.POST("/rename", fileCtrl.Rename)
@@ -152,14 +176,14 @@ func SetUpRouter(db *gorm.DB, minioService *minio.MinioService, rabbitClient *mq
 		file.POST("/move", fileCtrl.MoveFile)
 		file.POST("/copy", fileCtrl.CopyFile)
 		file.GET("/preview/:fileId", fileCtrl.PreviewFile)
-		file.GET("/preview-stream/:fileId", fileCtrl.PreviewStream)
+		file.GET("/preview-stream/:fileId", downloadCtrl.PreviewStream)
 		file.GET("/recent", fileCtrl.GetRecentFiles)
 		file.POST("/search", fileCtrl.SearchFiles)
 		file.GET("/search/history", fileCtrl.GetSearchHistory)
 		file.GET("/duplicates", fileCtrl.GetDuplicateFiles)
 		file.DELETE("/search/history", fileCtrl.DeleteSearchHistory)
-		file.GET("/download/:fileId", fileCtrl.Download)
-		file.GET("/download-info/:fileId", fileCtrl.GetDownloadInfo)
+		file.GET("/download/:fileId", downloadCtrl.Download)
+		file.GET("/download-info/:fileId", downloadCtrl.GetDownloadInfo)
 		file.POST("/download-batch", fileCtrl.DownloadBatch)
 	}
 
@@ -179,16 +203,13 @@ func SetUpRouter(db *gorm.DB, minioService *minio.MinioService, rabbitClient *mq
 	recycle.Use(middleware.RateLimitMiddleware())
 	{
 		recycle.GET("", recycleCtrl.ListRecycleFiles)
-
 		recycle.DELETE("/:fileId", recycleCtrl.DeletePermanent)
 		recycle.DELETE("/batch", recycleCtrl.DeleteSelected)
 		recycle.DELETE("", recycleCtrl.ClearRecycleBin)
-
 		recycle.PUT("/:fileId/restore", recycleCtrl.RestoreFile)
 		recycle.PUT("/batch", recycleCtrl.RestoreSelected)
 	}
 
-	// 分类路由
 	category := ginServer.Group("category")
 	category.Use(middleware.JWTAuthMiddleware(userService.ValidateSession))
 	category.Use(middleware.CSRFMiddleware())
@@ -197,20 +218,18 @@ func SetUpRouter(db *gorm.DB, minioService *minio.MinioService, rabbitClient *mq
 		category.POST("/files", categoryCtrl.GetFilesByCategory)
 	}
 
-	// 分享路由
 	share := ginServer.Group("share")
 	share.Use(middleware.JWTAuthMiddleware(userService.ValidateSession))
 	share.Use(middleware.CSRFMiddleware())
 	share.Use(middleware.RateLimitMiddleware())
 	{
-		share.POST("", shareCtrl.CreateShare)                // 创建分享
-		share.GET("", shareCtrl.GetUserShares)               // 获取用户分享列表
-		share.GET("/:shareId", shareCtrl.GetShareDetail)     // 获取分享详情
-		share.PUT("/:shareId", shareCtrl.UpdateShare)        // 更新分享设置
-		share.PUT("/:shareId/cancel", shareCtrl.CancelShare) // 取消分享
+		share.POST("", shareCtrl.CreateShare)
+		share.GET("", shareCtrl.GetUserShares)
+		share.GET("/:shareId", shareCtrl.GetShareDetail)
+		share.PUT("/:shareId", shareCtrl.UpdateShare)
+		share.PUT("/:shareId/cancel", shareCtrl.CancelShare)
 	}
 
-	// 通知路由
 	notification := ginServer.Group("notification")
 	notification.Use(middleware.JWTAuthMiddleware(userService.ValidateSession))
 	notification.Use(middleware.CSRFMiddleware())
@@ -225,19 +244,17 @@ func SetUpRouter(db *gorm.DB, minioService *minio.MinioService, rabbitClient *mq
 		notification.DELETE("/all", notificationCtrl.DeleteAllNotifications)
 	}
 
-	// 公开分享访问路由（无需认证），按 IP 限流防提取码暴力破解
-	ginServer.GET("/s/:token", middleware.NewIPRateLimiter(60, time.Minute), shareCtrl.AccessShare)                 // 访问分享
-	ginServer.GET("/s/:token/download", middleware.NewIPRateLimiter(60, time.Minute), shareCtrl.DownloadSharedFile) // 下载分享文件
+	ginServer.GET("/s/:token", middleware.NewIPRateLimiter(60, time.Minute), shareCtrl.AccessShare)
+	ginServer.GET("/s/:token/download", middleware.NewIPRateLimiter(60, time.Minute), shareCtrl.DownloadSharedFile)
 
 	return ginServer
 }
 
-func startRecycleCleanupWorkers(recycleService services.RecycleService, rabbitClient *mq.RabbitMQClient, mqCfg *config.RabbitMQConfig) {
+func startRecycleCleanupWorkers(ctx context.Context, recycleService services.RecycleService, rabbitClient *mq.RabbitMQClient, mqCfg *config.RabbitMQConfig) {
 	interval := 60 * time.Second
 	if mqCfg != nil && mqCfg.ScanIntervalSeconds > 0 {
 		interval = time.Duration(mqCfg.ScanIntervalSeconds) * time.Second
 	}
-	ctx := context.Background()
 
 	go func() {
 		if rabbitClient == nil {
@@ -245,7 +262,7 @@ func startRecycleCleanupWorkers(recycleService services.RecycleService, rabbitCl
 		}
 		if err := rabbitClient.ConsumeExpiredFilePurge(ctx, func(ctx context.Context, fileID string) error {
 			return recycleService.PurgeExpired(ctx, []string{fileID})
-		}); err != nil {
+		}); err != nil && ctx.Err() == nil {
 			slog.Error("recycle cleanup consumer exited", "error", err)
 		}
 	}()
@@ -255,18 +272,25 @@ func startRecycleCleanupWorkers(recycleService services.RecycleService, rabbitCl
 		defer ticker.Stop()
 
 		_, err := recycleService.DispatchExpiredPurgeJobs(ctx, 200)
-		if err != nil {
+		if err != nil && ctx.Err() == nil {
 			slog.Error("dispatch recycle cleanup job failed", "error", err)
 		}
 
-		for range ticker.C {
-			n, dispatchErr := recycleService.DispatchExpiredPurgeJobs(ctx, 200)
-			if dispatchErr != nil {
-				slog.Error("dispatch recycle cleanup job failed", "error", dispatchErr)
-				continue
-			}
-			if n > 0 {
-				slog.Info("dispatched recycle cleanup jobs", "count", n)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				n, dispatchErr := recycleService.DispatchExpiredPurgeJobs(ctx, 200)
+				if dispatchErr != nil {
+					if ctx.Err() == nil {
+						slog.Error("dispatch recycle cleanup job failed", "error", dispatchErr)
+					}
+					continue
+				}
+				if n > 0 {
+					slog.Info("dispatched recycle cleanup jobs", "count", n)
+				}
 			}
 		}
 	}()
