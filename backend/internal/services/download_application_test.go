@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"go-cloud-storage/backend/internal/models"
+	"go-cloud-storage/backend/internal/ports"
 )
 
 type fakeFileReadRepo struct {
@@ -30,8 +31,19 @@ func TestDownloadApplicationRangeUsesStoragePort(t *testing.T) {
 	files := &fakeFileReadRepo{file: &models.File{
 		Id: "f1", UserId: 1, Name: "video.mp4", OssObjectKey: "objects/video", Size: 100,
 	}}
-	storage := &downloadStorageFake{fakeStorage: &fakeStorage{completeObject: &portsStoredObjectForTest{}}}
-	_ = storage
+	storage := &downloadStorageFake{fakeStorage: &fakeStorage{
+		completeObject: &ports.StoredObject{ObjectKey: "objects/video", Size: 100},
+	}}
+	app := NewDownloadApplication(files, storage)
+
+	reader, file, objectSize, err := app.DownloadRange(context.Background(), 1, "f1", 10, 19)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	if file.Id != "f1" || objectSize != 100 {
+		t.Fatalf("file=%+v objectSize=%d", file, objectSize)
+	}
 }
 
 func TestDownloadApplicationDownloadInfoChoosesChunkStrategy(t *testing.T) {
@@ -53,3 +65,5 @@ func TestDownloadApplicationDownloadInfoChoosesChunkStrategy(t *testing.T) {
 		t.Fatalf("unexpected download info: %+v", info)
 	}
 }
+
+var _ ports.FileReadRepository = (*fakeFileReadRepo)(nil)
