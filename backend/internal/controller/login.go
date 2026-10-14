@@ -1,22 +1,31 @@
 package controller
 
 import (
+	"errors"
 	"fmt"
+	"github.com/go-redis/redis/v8"
+	"go-cloud-storage/backend/internal/services"
 	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"go-cloud-storage/backend/infrastructure/cache"
-	"go-cloud-storage/backend/internal/services"
+	"go-cloud-storage/backend/internal/models"
 	"go-cloud-storage/backend/pkg/utils"
 )
 
-type LoginController struct {
-	userService services.UserService
+type LoginUsers interface {
+	AuthenticateUser(string, string) (*models.User, error)
+	ValidateSession(int, string) error
+	RegisterUser(string, string, string) error
 }
 
-func NewLoginController(service services.UserService) *LoginController {
+type LoginController struct {
+	userService LoginUsers
+}
+
+func NewLoginController(service LoginUsers) *LoginController {
 	return &LoginController{userService: service}
 }
 
@@ -51,7 +60,10 @@ func (c *LoginController) Login(ctx *gin.Context) {
 		utils.Fail(ctx, http.StatusUnauthorized, "认证失败")
 		return
 	}
-	version := utils.CredentialVersion(user.Password)
+	version := user.SessionVersion
+	if version == "" {
+		version = utils.CredentialVersion(user.Password)
+	}
 	user.Password = ""
 
 	// 根据记住我设置不同过期时间
@@ -108,18 +120,26 @@ func (c *LoginController) RefreshToken(ctx *gin.Context) {
 	}
 	// 检查refresh_token是否存在于Redis
 	if err := c.userService.ValidateSession(claims.UserId, claims.CredentialVersion); err != nil {
+		if !errors.Is(err, services.ErrSessionInvalid) {
+			ctx.JSON(http.StatusServiceUnavailable, gin.H{"code": 503, "message": "认证服务暂不可用，请稍后重试"})
+			return
+		}
 		clearAuthCookies(ctx)
 		utils.Fail(ctx, http.StatusUnauthorized, "登录已失效，请重新登录")
 		return
 	}
 	rdb := cache.GetClient()
 	if rdb == nil {
-		utils.Fail(ctx, http.StatusUnauthorized, "RefreshToken已失效")
+		ctx.JSON(http.StatusServiceUnavailable, gin.H{"code": 503, "message": "会话服务暂不可用"})
 		return
 	}
 	refreshKey := fmt.Sprintf("user:%d:refresh_token", claims.UserId)
 	storedToken, err := rdb.Get(ctx.Request.Context(), refreshKey).Result()
-	if err != nil || storedToken != refreshToken {
+	if err != nil && !errors.Is(err, redis.Nil) {
+		ctx.JSON(http.StatusServiceUnavailable, gin.H{"code": 503, "message": "会话服务暂不可用"})
+		return
+	}
+	if errors.Is(err, redis.Nil) || storedToken != refreshToken {
 		utils.Fail(ctx, http.StatusUnauthorized, "RefreshToken已失效")
 		return
 	}

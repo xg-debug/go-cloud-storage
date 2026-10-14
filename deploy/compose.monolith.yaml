@@ -1,0 +1,118 @@
+services:
+  gateway:
+    networks:
+      default:
+        ipv4_address: 172.30.0.2
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      args:
+        TARGET: ./cmd/gateway
+    environment:
+      GCS_GATEWAY_LISTEN: :8080
+      GCS_GATEWAY_UPSTREAM: http://core-api:8081
+    ports: ["127.0.0.1:8081:8080"]
+    depends_on:
+      core-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+  core-api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      args:
+        TARGET: ./cmd
+    volumes:
+      - ./core.example.yaml:/app/conf/go-cloud-storage.dev.yaml:ro
+    environment:
+      GCS_DB_PASSWORD: ${GCS_DB_PASSWORD:?set GCS_DB_PASSWORD}
+      GCS_JWT_SECRET: ${GCS_JWT_SECRET:?set GCS_JWT_SECRET}
+      GCS_STORAGE_TOKEN: ${GCS_STORAGE_TOKEN:?set GCS_STORAGE_TOKEN}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      storage-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8081/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+  storage-service:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      args:
+        TARGET: ./services/storage-service/cmd/server
+    environment:
+      GCS_STORAGE_TOKEN: ${GCS_STORAGE_TOKEN:?set GCS_STORAGE_TOKEN}
+      GCS_MINIO_ENDPOINT: minio:9000
+      GCS_MINIO_PUBLIC_ENDPOINT: ${GCS_MINIO_PUBLIC_ENDPOINT:-localhost:9000}
+      GCS_MINIO_ACCESS_KEY: ${GCS_MINIO_ACCESS_KEY:?set GCS_MINIO_ACCESS_KEY}
+      GCS_MINIO_SECRET_KEY: ${GCS_MINIO_SECRET_KEY:?set GCS_MINIO_SECRET_KEY}
+      GCS_MINIO_BUCKET: go-cloud-storage
+      GCS_MINIO_REGION: us-east-1
+    depends_on:
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8082/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_DATABASE: file-store
+      MYSQL_USER: cloudbox
+      MYSQL_PASSWORD: ${GCS_DB_PASSWORD:?set GCS_DB_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set MYSQL_ROOT_PASSWORD}
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ../db.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+  redis:
+    image: redis:7-alpine
+    command: [redis-server, --appendonly, 'yes']
+    volumes: ["redis-data:/data"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+  minio:
+    build:
+      context: ..
+      dockerfile: deploy/minio.Dockerfile
+    command: server /data --console-address :9001
+    environment:
+      MINIO_ROOT_USER: ${GCS_MINIO_ACCESS_KEY:?set GCS_MINIO_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${GCS_MINIO_SECRET_KEY:?set GCS_MINIO_SECRET_KEY}
+    ports: ["127.0.0.1:9000:9000", "127.0.0.1:9001:9001"]
+    volumes: ["minio-data:/data"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+volumes:
+  mysql-data:
+  redis-data:
+  minio-data:
+
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+          ip_range: 172.30.0.128/25

@@ -64,10 +64,12 @@ module.exports = defineConfig({
     ],
   },
   chainWebpack: config => {
-    config.plugin('extract-css').tap(args => {
-      args[0].ignoreOrder = true
-      return args
-    })
+    if (config.plugins.has('extract-css')) {
+      config.plugin('extract-css').tap(args => {
+        args[0].ignoreOrder = true
+        return args
+      })
+    }
   },
   css: {
     loaderOptions: {

@@ -139,7 +139,12 @@ const verifyCode = async () => {
 
 const handleDownload = async () => {
   downloading.value = true
-  try { const url = await downloadSharedFile(token, extractCode.value); window.open(url, '_blank') }
+  try {
+    const url = await downloadSharedFile(token, extractCode.value)
+    // Signed attachment URLs can be downloaded in-place; an async window.open
+    // may be blocked as a popup after the API request loses user activation.
+    window.location.assign(url)
+  }
   catch (err) { ElMessage.error('下载失败：' + (err.message || '未知错误')) }
   finally { downloading.value = false }
 }

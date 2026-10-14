@@ -2,7 +2,7 @@ import axios from 'axios'
 import router from '@/router'
 import store from '@/store'
 import { API_BASE_URL } from '@/config/runtime'
-import { refreshSession } from '@/services/authSession'
+import { refreshSession, isSessionInvalid } from '@/services/authSession'
 
 const service = axios.create({
     baseURL: API_BASE_URL,
@@ -79,7 +79,10 @@ service.interceptors.response.use(response => {
                 return service(originalRequest)
 
             } catch (refreshError) {
-                // 刷新失败：彻底清除
+                if (!isSessionInvalid(refreshError)) {
+                    showMessage('error', '登录服务暂不可用，请稍后重试')
+                    return Promise.reject(refreshError)
+                }
                 store.commit('clearAuth')
                 showMessage('error', '登录已过期, 请重新登录')
                 router.push('/login')

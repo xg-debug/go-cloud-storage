@@ -8,6 +8,7 @@ import (
 	"go-cloud-storage/backend/internal/ports"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type GormUploadFileRepository struct {
@@ -49,7 +50,11 @@ func (r *GormUploadFileRepository) FindByHash(ctx context.Context, userID int, f
 
 func (r *GormUploadFileRepository) GetUserFile(ctx context.Context, userID int, fileID string) (*models.File, error) {
 	var file models.File
-	err := dbFromContext(ctx, r.db).
+	query := dbFromContext(ctx, r.db)
+	if dbFromContext(ctx, nil) != nil {
+		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
+	}
+	err := query.
 		Where("id = ? AND user_id = ? AND is_deleted = ?", fileID, userID, false).
 		First(&file).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {

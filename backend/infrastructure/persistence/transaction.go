@@ -47,3 +47,8 @@ func dbFromContext(ctx context.Context, fallback *gorm.DB) *gorm.DB {
 }
 
 var _ ports.TransactionManager = (*GormTransactionManager)(nil)
+
+// TransactionDB exposes the current unit of work to transactional adapters.
+func TransactionDB(ctx context.Context, fallback *gorm.DB) *gorm.DB {
+	return dbFromContext(ctx, fallback)
+}

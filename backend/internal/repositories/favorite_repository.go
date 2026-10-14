@@ -3,6 +3,7 @@ package repositories
 import (
 	"go-cloud-storage/backend/internal/models"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type FavoriteRepository interface {
@@ -25,7 +26,7 @@ func NewFavoriteRepository(db *gorm.DB) FavoriteRepository {
 
 // AddToFavorite 添加收藏
 func (r *favoriteRepo) AddToFavorite(favorite *models.Favorite) error {
-	return r.db.Create(favorite).Error
+	return r.db.Clauses(clause.OnConflict{DoNothing: true}).Create(favorite).Error
 }
 
 // CancelFavorite 取消收藏
@@ -46,7 +47,7 @@ func (r *favoriteRepo) ListFavorite(userId, page, pageSize int) ([]*models.Favor
 	var dtos []*models.Favorite
 	err = r.db.Raw(`
 		SELECT file_id, created_at
-		FROM favorites
+		FROM favorite
 		WHERE user_id = ?
 		ORDER BY created_at DESC 
 		LIMIT ? OFFSET ?`, userId, pageSize, (page-1)*pageSize).Scan(&dtos).Error

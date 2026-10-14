@@ -40,7 +40,7 @@ func mockDB(t *testing.T) (*gorm.DB, sqlmock.Sqlmock) {
 func expectPurgeLock(mock sqlmock.Sqlmock) {
 	mock.ExpectQuery("SELECT DISTINCT.*user_id.*FROM.*file").WithArgs("f").WillReturnRows(sqlmock.NewRows([]string{"user_id"}).AddRow(1))
 	mock.ExpectBegin()
-	mock.ExpectQuery("SELECT.*FROM.*user.*FOR UPDATE").WithArgs(1).WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(1))
+	mock.ExpectQuery("SELECT.*FROM.*storage_quota.*FOR UPDATE").WithArgs(1).WillReturnRows(sqlmock.NewRows([]string{"user_id"}).AddRow(1))
 }
 
 func TestExpiredPurgeRechecksCurrentRecycleState(t *testing.T) {

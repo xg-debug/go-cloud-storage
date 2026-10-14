@@ -11,7 +11,9 @@ let refreshPromise = null
 
 function unwrap(response, fallbackMessage) {
   if (response.data?.code !== 200) {
-    throw new Error(response.data?.message || fallbackMessage)
+    const error = new Error(response.data?.message || fallbackMessage)
+    error.code = response.data?.code
+    throw error
   }
   return response.data.data
 }
@@ -29,4 +31,8 @@ export function refreshSession() {
       .finally(() => { refreshPromise = null })
   }
   return refreshPromise
+}
+
+export function isSessionInvalid(error) {
+  return error?.response?.status === 401 || [401, 400, 10001, 10002].includes(error?.code)
 }

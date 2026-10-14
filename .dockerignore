@@ -1,0 +1,13 @@
+.git
+frontend/node_modules
+frontend/dist
+backend/conf/*.yaml
+!backend/conf/*.example.yaml
+.env
+*.log
+
+backend/tmp
+**/.env
+**/.env.*
+!**/.env.example
+**/__pycache__

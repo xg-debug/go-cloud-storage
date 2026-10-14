@@ -10,8 +10,6 @@ import (
 
 	"go-cloud-storage/backend/internal/models"
 
-	miniosrv "go-cloud-storage/backend/infrastructure/minio"
-
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
@@ -158,8 +156,8 @@ func (s *fileService) copyFileRecord(ctx context.Context, tx *gorm.DB, userId in
 	// 缩略图 key 规则为 <原key去扩展名>_thumb.jpg（与缩略图生成逻辑一致）。
 	newThumbnailURL := ""
 	if src.ThumbnailURL != "" && src.OssObjectKey != "" {
-		thumbSrcKey := miniosrv.ThumbnailObjectKey(src.OssObjectKey)
-		newThumbKey := miniosrv.ThumbnailObjectKey(newKey)
+		thumbSrcKey := s.minio.ThumbnailObjectKey(src.OssObjectKey)
+		newThumbKey := s.minio.ThumbnailObjectKey(newKey)
 		if err := s.minio.CopyObject(ctx, thumbSrcKey, newThumbKey); err == nil {
 			*copiedKeys = append(*copiedKeys, newThumbKey)
 			newThumbnailURL = s.minio.GenerateObjectURL(newThumbKey)

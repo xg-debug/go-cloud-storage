@@ -5,12 +5,17 @@ on:
     branches:
       - master
       - 'refactor/**'
+      - 'codex/**'
     paths:
       - 'backend/**'
+      - 'deploy/**'
+      - 'scripts/integration/**'
       - '.github/workflows/backend-ci.yml'
   pull_request:
     paths:
       - 'backend/**'
+      - 'deploy/**'
+      - 'scripts/integration/**'
       - '.github/workflows/backend-ci.yml'
 
 permissions:
@@ -34,3 +39,45 @@ jobs:
 
       - name: Go test
         run: go test ./...
+
+      - name: Service boundary and event race tests
+        run: go test -race ./internal/controller ./internal/services ./internal/distributed ./infrastructure/eventing ./internal/gateway ./services/storage-service/internal/transport ./infrastructure/minio
+
+      - name: Go vet
+        run: go vet ./...
+
+      - name: Validate deployment configuration
+        run: docker compose --env-file ../deploy/.env.example -f ../deploy/compose.yaml config --quiet
+
+  microservices-smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [host, containers]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: Seven-process integration test
+        env:
+          SMOKE_MODE: ${{ matrix.mode }}
+        run: |
+          if [ "$SMOKE_MODE" = containers ]; then
+            python3 scripts/integration/microservices_smoke.py --containers --migration-rehearsal
+          else
+            python3 scripts/integration/microservices_smoke.py
+          fi
+      - name: Verify shipped Compose topology
+        if: matrix.mode == 'containers'
+        run: python3 scripts/integration/compose_deployment_smoke.py
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: microservices-smoke-logs-${{ matrix.mode }}
+          path: backend/tmp/microservices-smoke/
+          retention-days: 3

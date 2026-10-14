@@ -2,23 +2,31 @@ package config
 
 import (
 	"errors"
+	"fmt"
+	"net"
 	"time"
 
 	"github.com/spf13/viper"
 )
 
+type StorageServiceConfig struct {
+	URL   string `mapstructure:"url"`
+	Token string `mapstructure:"token"`
+}
+
 type Config struct {
-	Server      ServerConfig    `yaml:"server"`
-	Database    DatabaseConfig  `yaml:"mysql"`
-	Redis       RedisConfig     `yaml:"redis"`
-	RabbitMQ    RabbitMQConfig  `yaml:"rabbitmq" mapstructure:"rabbitmq"`
-	QQ          QQConfig        `yaml:"qq"`
-	AliyunOss   AliyunOssConfig `yaml:"aliyun"`
-	StorageType string          `yaml:"storageType"`
-	JWT         JWTConfig       `yaml:"jwt"`
-	Minio       MinioConfig     `yaml:"minio"`
-	Security    SecurityConfig  `yaml:"security"`
-	SMTP        SMTPConfig      `yaml:"smtp"`
+	StorageService StorageServiceConfig `mapstructure:"storageService"`
+	Server         ServerConfig         `yaml:"server"`
+	Database       DatabaseConfig       `yaml:"mysql"`
+	Redis          RedisConfig          `yaml:"redis"`
+	RabbitMQ       RabbitMQConfig       `yaml:"rabbitmq" mapstructure:"rabbitmq"`
+	QQ             QQConfig             `yaml:"qq"`
+	AliyunOss      AliyunOssConfig      `yaml:"aliyun"`
+	StorageType    string               `yaml:"storageType"`
+	JWT            JWTConfig            `yaml:"jwt"`
+	Minio          MinioConfig          `yaml:"minio"`
+	Security       SecurityConfig       `yaml:"security"`
+	SMTP           SMTPConfig           `yaml:"smtp"`
 }
 
 type SecurityConfig struct {
@@ -33,6 +41,7 @@ type JWTConfig struct {
 }
 
 type ServerConfig struct {
+	TrustedProxies []string `mapstructure:"trustedProxies"`
 	Port           int      `yaml:"port"`
 	Env            string   `yaml:"env"`
 	StoragePath    string   `yaml:"storagePath"`
@@ -96,6 +105,7 @@ type SMTPConfig struct {
 }
 
 type MinioConfig struct {
+	PublicEndpoint  string `mapstructure:"publicEndpoint"`
 	Endpoint        string `yaml:"endpoint"`
 	AccessKeyID     string `yaml:"accessKeyID"`
 	SecretAccessKey string `yaml:"secretAccessKey"`
@@ -126,6 +136,16 @@ func LoadConfig() (*Config, error) {
 	v.AutomaticEnv()
 	v.SetEnvPrefix("GCS") // GCS_DATABASE_PASSWORD 等
 	v.BindEnv("database.password", "GCS_DB_PASSWORD")
+	v.BindEnv("database.host", "GCS_DB_HOST")
+	v.BindEnv("database.user", "GCS_DB_USER")
+	v.BindEnv("database.dbname", "GCS_DB_NAME")
+	v.BindEnv("server.port", "GCS_SERVER_PORT")
+	v.BindEnv("redis.db", "GCS_REDIS_DB")
+
+	v.BindEnv("server.trustedProxies", "GCS_TRUSTED_PROXIES")
+	v.BindEnv("storageService.url", "GCS_STORAGE_URL")
+	v.BindEnv("storageService.token", "GCS_STORAGE_TOKEN")
+	v.BindEnv("minio.publicEndpoint", "GCS_MINIO_PUBLIC_ENDPOINT")
 	v.BindEnv("redis.password", "GCS_REDIS_PASSWORD")
 	v.BindEnv("minio.accessKeyID", "GCS_MINIO_ACCESS_KEY")
 	v.BindEnv("minio.secretAccessKey", "GCS_MINIO_SECRET_KEY")
@@ -160,6 +180,15 @@ func LoadConfig() (*Config, error) {
 }
 
 func validateConfig(cfg *Config) error {
+	for _, proxy := range cfg.Server.TrustedProxies {
+		if net.ParseIP(proxy) != nil {
+			continue
+		}
+		if _, _, err := net.ParseCIDR(proxy); err != nil {
+			return fmt.Errorf("invalid trusted proxy %q", proxy)
+		}
+	}
+
 	if cfg.Database.Host == "" {
 		return errors.New("mysql host is required")
 	}

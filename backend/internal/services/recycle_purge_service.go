@@ -7,7 +7,7 @@ import (
 	"gorm.io/gorm/clause"
 	"time"
 
-	"go-cloud-storage/backend/infrastructure/minio"
+	"go-cloud-storage/backend/internal/ports"
 	"go-cloud-storage/backend/internal/repositories"
 
 	"gorm.io/gorm"
@@ -21,20 +21,20 @@ type RecyclePurgeService interface {
 
 type recyclePurgeService struct {
 	db          *gorm.DB
-	minio       *minio.MinioService
+	minio       ports.Storage
 	recycleRepo repositories.RecycleRepository
 	fileRepo    repositories.FileRepository
-	shareRepo   repositories.ShareRepository
+	shareRepo   ShareIndex
 	starRepo    repositories.FavoriteRepository
 	quotaRepo   repositories.StorageQuotaRepository
 }
 
 func NewRecyclePurgeService(
 	db *gorm.DB,
-	minioService *minio.MinioService,
+	minioService ports.Storage,
 	recycleRepo repositories.RecycleRepository,
 	fileRepo repositories.FileRepository,
-	shareRepo repositories.ShareRepository,
+	shareRepo ShareIndex,
 	starRepo repositories.FavoriteRepository,
 	quotaRepo repositories.StorageQuotaRepository,
 ) RecyclePurgeService {
@@ -76,8 +76,8 @@ func (s *recyclePurgeService) purgeFiles(ctx context.Context, fileIDs []string, 
 	}
 	var keysToDelete []string
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var users []models.User
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id IN ?", owners).Order("id").Find(&users).Error; err != nil {
+		var users []models.StorageQuota
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("user_id IN ?", owners).Order("user_id").Find(&users).Error; err != nil {
 			return err
 		}
 		var roots []string
@@ -141,15 +141,10 @@ func (s *recyclePurgeService) purgeFiles(ctx context.Context, fileIDs []string, 
 				return err
 			}
 		}
-		return nil
+		return enqueueObjectDeletion(tx, keysToDelete)
 	})
 	if err != nil {
 		return err
-	}
-	if len(keysToDelete) > 0 {
-		if err := s.minio.DeleteFiles(ctx, keysToDelete); err != nil {
-			return fmt.Errorf("delete minio objects failed: %w", err)
-		}
 	}
 	return nil
 }

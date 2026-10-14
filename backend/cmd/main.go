@@ -14,6 +14,9 @@ import (
 	"go-cloud-storage/backend/infrastructure/minio"
 	"go-cloud-storage/backend/infrastructure/mq"
 	"go-cloud-storage/backend/infrastructure/mysql"
+	"go-cloud-storage/backend/infrastructure/storage"
+	"go-cloud-storage/backend/infrastructure/storagehttp"
+	"go-cloud-storage/backend/internal/ports"
 	"go-cloud-storage/backend/internal/router"
 	"go-cloud-storage/backend/pkg/config"
 	"go-cloud-storage/backend/pkg/logger"
@@ -43,9 +46,18 @@ func main() {
 	}
 	defer cache.Close()
 
-	minioService, err := minio.NewMinioService(&cfg.Minio)
+	var objectStorage ports.Storage
+	if cfg.StorageService.URL != "" {
+		objectStorage, err = storagehttp.NewClient(cfg.StorageService.URL, cfg.StorageService.Token)
+	} else {
+		var local *minio.MinioService
+		local, err = minio.NewMinioService(&cfg.Minio)
+		if err == nil {
+			objectStorage = storage.NewMinIOStorageV2(local)
+		}
+	}
 	if err != nil {
-		slog.Error("MinIO 初始化失败", "error", err)
+		slog.Error("对象存储初始化失败", "error", err)
 		panic(err)
 	}
 
@@ -68,7 +80,7 @@ func main() {
 	appCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	r := router.SetUpRouter(appCtx, mysql.GormDB, minioService, rabbitClient, cfg)
+	r := router.SetUpRouter(appCtx, mysql.GormDB, objectStorage, rabbitClient, cfg)
 	port := fmt.Sprintf(":%d", cfg.Server.Port)
 	server := &http.Server{Addr: port, Handler: r}
 

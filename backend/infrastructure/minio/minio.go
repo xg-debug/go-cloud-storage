@@ -23,6 +23,7 @@ import (
 
 	"go-cloud-storage/backend/internal/models"
 	"go-cloud-storage/backend/pkg/config"
+	"go-cloud-storage/backend/pkg/storagekey"
 	"go-cloud-storage/backend/pkg/utils"
 
 	"github.com/minio/minio-go/v7"
@@ -31,6 +32,7 @@ import (
 )
 
 type MinioService struct {
+	signer   *minio.Client
 	client   *minio.Client
 	core     *minio.Core // Core 用于底层分片上传操作
 	bucket   string
@@ -47,12 +49,23 @@ func NewMinioService(cfg *config.MinioConfig) (*MinioService, error) {
 	minioOpts := &minio.Options{
 		Creds:  credentials.NewStaticV4(cfg.AccessKeyID, cfg.SecretAccessKey, ""),
 		Secure: cfg.UseSSL,
+		Region: cfg.Region,
 	}
 
 	// 1.初始化标准 MinIO 客户端（用于普通上传、下载、管理）
 	minioClient, err := minio.New(cfg.Endpoint, minioOpts)
 	if err != nil {
 		return nil, err
+	}
+
+	publicEndpoint := cfg.Endpoint
+	signer := minioClient
+	if cfg.PublicEndpoint != "" && cfg.PublicEndpoint != cfg.Endpoint {
+		publicEndpoint = cfg.PublicEndpoint
+		signer, err = minio.New(publicEndpoint, minioOpts)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// 2.初始化 MinIO Core 客户端（用于分片上传）
@@ -62,7 +75,8 @@ func NewMinioService(cfg *config.MinioConfig) (*MinioService, error) {
 	}
 
 	// 自动检查并创建 Bucket
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 	exists, err := minioClient.BucketExists(ctx, cfg.Bucket)
 	if err != nil {
 		return nil, fmt.Errorf("检查 Bucket 失败: %w", err)
@@ -89,9 +103,10 @@ func NewMinioService(cfg *config.MinioConfig) (*MinioService, error) {
 
 	return &MinioService{
 		client:   minioClient,
+		signer:   signer,
 		core:     minioCore,
 		bucket:   cfg.Bucket,
-		endpoint: cfg.Endpoint,
+		endpoint: publicEndpoint,
 		useSSL:   cfg.UseSSL,
 	}, nil
 }
@@ -230,7 +245,7 @@ func (s *MinioService) DownloadFileRange(ctx context.Context, objectKey string, 
 
 func (s *MinioService) PresignedGetURL(ctx context.Context, objectKey string, expiry time.Duration) (string, error) {
 	reqParams := make(url.Values)
-	u, err := s.client.PresignedGetObject(ctx, s.bucket, objectKey, expiry, reqParams)
+	u, err := s.signer.PresignedGetObject(ctx, s.bucket, objectKey, expiry, reqParams)
 	if err != nil {
 		return "", err
 	}
@@ -242,7 +257,7 @@ func (s *MinioService) PresignedDownloadURL(ctx context.Context, objectKey, file
 	if fileName != "" {
 		reqParams.Set("response-content-disposition", mime.FormatMediaType("attachment", map[string]string{"filename": fileName}))
 	}
-	u, err := s.client.PresignedGetObject(ctx, s.bucket, objectKey, expiry, reqParams)
+	u, err := s.signer.PresignedGetObject(ctx, s.bucket, objectKey, expiry, reqParams)
 	if err != nil {
 		return "", err
 	}
@@ -275,8 +290,7 @@ func (s *MinioService) DeleteObjectWithThumbnail(ctx context.Context, objectKey 
 	if err := s.DeleteFile(ctx, objectKey); err != nil {
 		return err
 	}
-	_ = s.DeleteThumbnailForObject(ctx, objectKey)
-	return nil
+	return s.DeleteThumbnailForObject(ctx, objectKey)
 }
 
 func (s *MinioService) DeleteThumbnailForObject(ctx context.Context, objectKey string) error {
@@ -386,20 +400,14 @@ func (s *MinioService) AbortMultipartUpload(ctx context.Context, objectKey, uplo
 }
 
 func (s *MinioService) GenerateObjectKey(userId int, parentId, fileName string) string {
-	fileId := utils.NewUUID()
-	ossPath := fmt.Sprintf("files/%d", userId)
-	if parentId != "" {
-		ossPath = ossPath + "/" + parentId
-	}
-	ext := filepath.Ext(fileName)
-	return fmt.Sprintf("%s/%s%s", ossPath, fileId, ext)
+	return storagekey.New(userId, parentId, fileName)
 }
 
 // PresignedGetPreviewURL 生成带 inline 处置的预签名预览 URL
 func (s *MinioService) PresignedGetPreviewURL(ctx context.Context, objectKey string, expiry time.Duration) (string, error) {
 	reqParams := make(url.Values)
 	reqParams.Set("response-content-disposition", "inline")
-	u, err := s.client.PresignedGetObject(ctx, s.bucket, objectKey, expiry, reqParams)
+	u, err := s.signer.PresignedGetObject(ctx, s.bucket, objectKey, expiry, reqParams)
 	if err != nil {
 		return "", err
 	}
@@ -412,7 +420,7 @@ func (s *MinioService) PresignThumbnailURL(ctx context.Context, objectKey string
 	if objectKey == "" {
 		return "", nil
 	}
-	u, err := s.client.PresignedGetObject(ctx, s.bucket, ThumbnailObjectKey(objectKey), expiry, nil)
+	u, err := s.signer.PresignedGetObject(ctx, s.bucket, ThumbnailObjectKey(objectKey), expiry, nil)
 	if err != nil {
 		return "", err
 	}
@@ -429,7 +437,7 @@ func (s *MinioService) PresignStoredObjectURL(ctx context.Context, storedURL str
 	if !ok {
 		return storedURL
 	}
-	u, err := s.client.PresignedGetObject(ctx, s.bucket, key, expiry, nil)
+	u, err := s.signer.PresignedGetObject(ctx, s.bucket, key, expiry, nil)
 	if err != nil {
 		return storedURL
 	}
@@ -572,9 +580,7 @@ func (s *MinioService) uploadThumbnail(ctx context.Context, objectKey string, da
 }
 
 func ThumbnailObjectKey(objectKey string) string {
-	ext := filepath.Ext(objectKey)
-	base := strings.TrimSuffix(objectKey, ext)
-	return fmt.Sprintf("%s_thumb.jpg", base)
+	return storagekey.Thumbnail(objectKey)
 }
 
 func resizeImage(src image.Image, maxWidth int) image.Image {

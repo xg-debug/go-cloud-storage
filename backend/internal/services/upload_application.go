@@ -77,12 +77,12 @@ func NewUploadApplication(
 		panic("NewUploadApplication requires a Storage implementation")
 	}
 	return &uploadApplication{
-		files: files,
-		quotas: quotas,
-		tx: tx,
+		files:    files,
+		quotas:   quotas,
+		tx:       tx,
 		sessions: sessions,
-		storage: storage,
-		events: events,
+		storage:  storage,
+		events:   events,
 	}
 }
 
@@ -107,7 +107,7 @@ func (s *uploadApplication) UploadFile(ctx context.Context, r io.Reader, userID 
 	}
 	if existing != nil && !existing.IsDeleted {
 		file := cloneFileRecord(existing, userID, fileName, fileHash, parentID)
-		if err := s.persistUploadedFile(ctx, file); err != nil {
+		if err := s.persistUploadedFile(ctx, file, existing.Id); err != nil {
 			return nil, err
 		}
 		s.publishFileUploaded(ctx, file)
@@ -205,7 +205,7 @@ func (s *uploadApplication) InitChunkUpload(ctx context.Context, input InitChunk
 	}
 	if existing != nil && !existing.IsDeleted {
 		file := cloneFileRecord(existing, input.UserID, fileName, input.FileHash, input.ParentID)
-		if err := s.persistUploadedFile(ctx, file); err != nil {
+		if err := s.persistUploadedFile(ctx, file, existing.Id); err != nil {
 			return nil, err
 		}
 		s.publishFileUploaded(ctx, file)
@@ -551,12 +551,29 @@ func (s *uploadApplication) cleanupExpiredChunkUploads(ctx context.Context, limi
 	}
 }
 
-func (s *uploadApplication) persistUploadedFile(ctx context.Context, file *models.File) error {
+func (s *uploadApplication) persistUploadedFile(ctx context.Context, file *models.File, sourceIDs ...string) error {
 	return s.tx.WithinTransaction(ctx, func(txCtx context.Context) error {
+		if len(sourceIDs) > 0 {
+			// Lock and recheck the dedup source in this transaction: a stale
+			// lookup must not resurrect a reference after permanent deletion.
+			source, err := s.files.GetUserFile(txCtx, file.UserId, sourceIDs[0])
+			if err != nil {
+				return err
+			}
+			if source == nil || source.IsDeleted || source.OssObjectKey != file.OssObjectKey {
+				return errors.New("秒传源文件已变化，请重试上传")
+			}
+		}
 		if err := s.files.Create(txCtx, file); err != nil {
 			return fmt.Errorf("保存文件记录失败: %w", err)
 		}
-		return s.quotas.AddUsedSpace(txCtx, file.UserId, file.Size)
+		if err := s.quotas.AddUsedSpace(txCtx, file.UserId, file.Size); err != nil {
+			return err
+		}
+		if bus, ok := s.events.(interface{ Transactional() bool }); ok && bus.Transactional() {
+			return s.emitFileUploaded(txCtx, file)
+		}
+		return nil
 	})
 }
 
@@ -608,6 +625,15 @@ func (s *uploadApplication) publishFileUploaded(ctx context.Context, file *model
 	if s.events == nil || file == nil {
 		return
 	}
+	if bus, ok := s.events.(interface{ Transactional() bool }); ok && bus.Transactional() {
+		return
+	}
+	if err := s.emitFileUploaded(ctx, file); err != nil {
+		slog.Warn("publish file.uploaded.v1 failed", "fileId", file.Id, "error", err)
+	}
+}
+
+func (s *uploadApplication) emitFileUploaded(ctx context.Context, file *models.File) error {
 	event := ports.Event{
 		ID:          utils.NewUUID(),
 		Type:        "file.uploaded.v1",
@@ -621,10 +647,7 @@ func (s *uploadApplication) publishFileUploaded(ctx context.Context, file *model
 			Size:      file.Size,
 		},
 	}
-	if err := s.events.Publish(ctx, event); err != nil {
-		// 单体阶段事件失败不回滚已经完成的上传；跨服务后由 Outbox 保证可靠投递。
-		slog.Warn("publish file.uploaded.v1 failed", "fileId", file.Id, "error", err)
-	}
+	return s.events.Publish(ctx, event)
 }
 
 func (s *uploadApplication) generateThumbnailAsync(fileID, objectKey string) {

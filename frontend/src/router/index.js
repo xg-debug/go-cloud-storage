@@ -1,6 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import store from '@/store'
-import { fetchProfile, refreshSession } from '@/services/authSession'
+import { fetchProfile, refreshSession, isSessionInvalid } from '@/services/authSession'
 
 const routes = [
   {
@@ -66,14 +66,16 @@ async function ensureAuthenticated() {
     store.commit('setUserInfo', profile)
     store.commit('setAuthChecked', true)
     return true
-  } catch {
+  } catch (error) {
+    if (!isSessionInvalid(error)) throw error
     try {
       await refreshSession()
       const profile = await fetchProfile()
       store.commit('setUserInfo', profile)
       store.commit('setAuthChecked', true)
       return true
-    } catch {
+    } catch (error) {
+      if (!isSessionInvalid(error)) throw error
       store.commit('clearAuth')
       return false
     }
@@ -84,7 +86,15 @@ router.beforeEach(async (to, from, next) => {
   document.title = to.meta.title ? `${to.meta.title} - CloudBox` : 'CloudBox'
   const requiresAuth = to.matched.some(record => record.meta.requiresAuth)
   const shouldCheckAuth = requiresAuth || to.path === '/login'
-  const authenticated = shouldCheckAuth ? await ensureAuthenticated() : store.state.isAuthenticated
+  let authenticated
+  try {
+    authenticated = shouldCheckAuth ? await ensureAuthenticated() : store.state.isAuthenticated
+  } catch {
+    const { ElMessage } = await import('element-plus')
+    ElMessage.error('登录服务暂不可用，请稍后重试')
+    next(false)
+    return
+  }
 
   if (requiresAuth && !authenticated) {
     next({ path: '/login' })

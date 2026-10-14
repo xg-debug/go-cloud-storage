@@ -15,6 +15,7 @@ import (
 type fakeUploadFileRepo struct {
 	duplicate       bool
 	existing        *models.File
+	sourceGone      bool
 	createErr       error
 	created         []*models.File
 	thumbnailUpdate bool
@@ -26,7 +27,10 @@ func (f *fakeUploadFileRepo) CheckDuplicateName(context.Context, int, string, st
 func (f *fakeUploadFileRepo) FindByHash(context.Context, int, string) (*models.File, error) {
 	return f.existing, nil
 }
-func (f *fakeUploadFileRepo) GetUserFile(context.Context, int, string) (*models.File, error) {
+func (f *fakeUploadFileRepo) GetUserFile(_ context.Context, _ int, id string) (*models.File, error) {
+	if !f.sourceGone && f.existing != nil && f.existing.Id == id {
+		return f.existing, nil
+	}
 	return nil, nil
 }
 func (f *fakeUploadFileRepo) Create(_ context.Context, file *models.File) error {
@@ -86,7 +90,7 @@ func newFakeSessionStore() *fakeSessionStore {
 	return &fakeSessionStore{available: true, sessions: map[string]*ports.UploadSession{}, lockResult: true}
 }
 func sessionMapKey(userID int, hash string) string { return string(rune(userID)) + ":" + hash }
-func (f *fakeSessionStore) Available() bool          { return f.available }
+func (f *fakeSessionStore) Available() bool        { return f.available }
 func (f *fakeSessionStore) Get(_ context.Context, userID int, hash string) (*ports.UploadSession, error) {
 	s, ok := f.sessions[sessionMapKey(userID, hash)]
 	if !ok {
@@ -135,23 +139,23 @@ func (f *fakeSessionStore) ListExpired(context.Context, time.Time, int64) ([]por
 }
 
 type fakeStorage struct {
-	uploadObject       *ports.StoredObject
-	uploadErr          error
-	uploadCalls        int
-	initUploadID       string
-	initCalls          int
-	uploadPart         *ports.UploadedPart
-	partHash           string
-	partErr            error
-	completeObject     *ports.StoredObject
-	completeErr        error
-	completeParts      []ports.CompletedPart
-	abortCalls         int
-	deleteCalls        int
-	deleteWithThumb    []string
-	sha256             string
-	thumbnailURL       string
-	generateObjectKey  string
+	uploadObject      *ports.StoredObject
+	uploadErr         error
+	uploadCalls       int
+	initUploadID      string
+	initCalls         int
+	uploadPart        *ports.UploadedPart
+	partHash          string
+	partErr           error
+	completeObject    *ports.StoredObject
+	completeErr       error
+	completeParts     []ports.CompletedPart
+	abortCalls        int
+	deleteCalls       int
+	deleteWithThumb   []string
+	sha256            string
+	thumbnailURL      string
+	generateObjectKey string
 }
 
 func (f *fakeStorage) UploadFromStream(context.Context, int, io.Reader, string, int64, string, string) (*ports.StoredObject, error) {
@@ -181,14 +185,19 @@ func (f *fakeStorage) CompleteMultipartUpload(_ context.Context, _ string, _ str
 	f.completeParts = append([]ports.CompletedPart(nil), parts...)
 	return f.completeObject, f.completeErr
 }
-func (f *fakeStorage) AbortMultipartUpload(context.Context, string, string) error { f.abortCalls++; return nil }
+func (f *fakeStorage) AbortMultipartUpload(context.Context, string, string) error {
+	f.abortCalls++
+	return nil
+}
 func (f *fakeStorage) GetObjectInfo(context.Context, string) (int64, error) {
 	if f.completeObject != nil {
 		return f.completeObject.Size, nil
 	}
 	return 0, nil
 }
-func (f *fakeStorage) ComputeObjectSHA256(context.Context, string) (string, error) { return f.sha256, nil }
+func (f *fakeStorage) ComputeObjectSHA256(context.Context, string) (string, error) {
+	return f.sha256, nil
+}
 func (f *fakeStorage) DownloadFile(context.Context, string) (io.ReadCloser, error) {
 	return io.NopCloser(strings.NewReader("")), nil
 }
@@ -201,7 +210,9 @@ func (f *fakeStorage) PutObjectStream(context.Context, string, io.Reader, int64,
 func (f *fakeStorage) PresignedGetPreviewURL(context.Context, string, time.Duration) (string, error) {
 	return "", nil
 }
-func (f *fakeStorage) PresignStoredObjectURL(context.Context, string, time.Duration) string { return "" }
+func (f *fakeStorage) PresignStoredObjectURL(context.Context, string, time.Duration) string {
+	return ""
+}
 func (f *fakeStorage) PresignedDownloadURL(context.Context, string, string, time.Duration) (string, error) {
 	return "", nil
 }
@@ -211,10 +222,10 @@ func (f *fakeStorage) DeleteObjectWithThumbnail(_ context.Context, key string) e
 	return nil
 }
 func (f *fakeStorage) DeleteThumbnailForObject(context.Context, string) error { return nil }
-func (f *fakeStorage) DeleteFiles(context.Context, []string) error             { return nil }
-func (f *fakeStorage) CopyObject(context.Context, string, string) error         { return nil }
-func (f *fakeStorage) GenerateObjectURL(string) string                          { return "" }
-func (f *fakeStorage) ThumbnailObjectKey(string) string                         { return "" }
+func (f *fakeStorage) DeleteFiles(context.Context, []string) error            { return nil }
+func (f *fakeStorage) CopyObject(context.Context, string, string) error       { return nil }
+func (f *fakeStorage) GenerateObjectURL(string) string                        { return "" }
+func (f *fakeStorage) ThumbnailObjectKey(string) string                       { return "" }
 func (f *fakeStorage) GenerateThumbnailForObject(context.Context, string) (string, error) {
 	return f.thumbnailURL, nil
 }
@@ -394,3 +405,14 @@ var _ ports.TransactionManager = (*fakeTxManager)(nil)
 var _ ports.UploadSessionStore = (*fakeSessionStore)(nil)
 var _ ports.Storage = (*fakeStorage)(nil)
 var _ ports.EventBus = (*fakeEventBus)(nil)
+
+func TestInstantUploadRejectsSourcePurgedAfterLookup(t *testing.T) {
+	files := &fakeUploadFileRepo{existing: &models.File{Id: "old", UserId: 1, OssObjectKey: "key", Size: 128}, sourceGone: true}
+	quota := &fakeUploadQuotaRepo{available: 1024}
+	events := &fakeEventBus{}
+	app := newUploadTestApp(files, quota, &fakeTxManager{}, newFakeSessionStore(), &fakeStorage{}, events)
+	_, err := app.UploadFile(context.Background(), strings.NewReader("ignored"), 1, "copy.txt", 128, "hash", "")
+	if err == nil || len(files.created) != 0 || quota.added != 0 || len(events.events) != 0 {
+		t.Fatal("stale object reference persisted")
+	}
+}

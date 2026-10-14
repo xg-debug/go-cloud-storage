@@ -1,0 +1,31 @@
+server:
+  port: 8081
+  env: prod
+  trustedProxies: [172.30.0.2]
+  storagePath: /tmp/upload
+  publicBaseURL: http://localhost:8080
+  allowedOrigins: [http://localhost:8080, http://127.0.0.1:8080]
+database:
+  host: mysql
+  port: 3306
+  user: cloudbox
+  dbname: file-store
+  maxOpenConns: 50
+  maxIdleConns: 10
+  connMaxLifetime: 1h
+  connMaxIdleTime: 10m
+  logLevel: warn
+redis:
+  enabled: true
+  host: redis
+  port: 6379
+  db: 0
+  poolSize: 20
+storageService:
+  url: http://storage-service:8082
+rabbitmq:
+  enabled: false
+security:
+  maxFileSizeMB: 500
+  defaultQuotaGB: 10
+  rateLimitRPS: 50

@@ -5,10 +5,8 @@ import (
 	"go-cloud-storage/backend/infrastructure/cache"
 	"go-cloud-storage/backend/infrastructure/email"
 	"go-cloud-storage/backend/infrastructure/messaging"
-	"go-cloud-storage/backend/infrastructure/minio"
 	"go-cloud-storage/backend/infrastructure/mq"
 	persistenceinfra "go-cloud-storage/backend/infrastructure/persistence"
-	storageinfra "go-cloud-storage/backend/infrastructure/storage"
 	"go-cloud-storage/backend/internal/controller"
 	"go-cloud-storage/backend/internal/middleware"
 	"go-cloud-storage/backend/internal/ports"
@@ -25,12 +23,14 @@ import (
 	"gorm.io/gorm"
 )
 
-func SetUpRouter(appCtx context.Context, db *gorm.DB, minioService *minio.MinioService, rabbitClient *mq.RabbitMQClient, cfg *config.Config) *gin.Engine {
+func SetUpRouter(appCtx context.Context, db *gorm.DB, storagePort ports.Storage, rabbitClient *mq.RabbitMQClient, cfg *config.Config) *gin.Engine {
 	mqCfg := &cfg.RabbitMQ
 	ginServer := gin.New()
 	ginServer.Use(gin.Recovery())
+	ginServer.GET("/healthz", func(c *gin.Context) { c.Status(200) })
+	ginServer.HEAD("/healthz", func(c *gin.Context) { c.Status(200) })
 
-	_ = ginServer.SetTrustedProxies(nil)
+	_ = ginServer.SetTrustedProxies(cfg.Server.TrustedProxies)
 	ginServer.Use(middleware.RequestIDMiddleware())
 	ginServer.Use(func(c *gin.Context) {
 		start := time.Now()
@@ -66,14 +66,13 @@ func SetUpRouter(appCtx context.Context, db *gorm.DB, minioService *minio.MinioS
 
 	sseBroker := services.NewSSEBroker()
 	notificationService := services.NewNotificationService(notificationRepo, sseBroker)
-	userService := services.NewUserService(db, userRepo, fileRepo, storageQuotaRepo, minioService, emailService, cfg.Server.PublicBaseURL)
+	userService := services.NewUserService(db, userRepo, fileRepo, storageQuotaRepo, storagePort, emailService, cfg.Server.PublicBaseURL)
 
 	// Legacy FileService remains for file use cases that have not been migrated yet.
 	// Upload and core download streaming now use application ports/adapters.
 	redisClient := cache.GetClient()
-	fileService := services.NewFileService(db, redisClient, fileRepo, storageQuotaRepo, shareRepo, minioService)
+	fileService := services.NewFileService(db, redisClient, fileRepo, storageQuotaRepo, shareRepo, storagePort)
 
-	storagePort := storageinfra.NewMinIOStorageV2(minioService)
 	uploadFiles := persistenceinfra.NewGormUploadFileRepository(db)
 	uploadQuotas := persistenceinfra.NewGormUploadQuotaRepository(db)
 	txManager := persistenceinfra.NewGormTransactionManager(db)
@@ -103,7 +102,7 @@ func SetUpRouter(appCtx context.Context, db *gorm.DB, minioService *minio.MinioS
 	// legacy FileService or MinIO concrete type.
 	downloadApplication := services.NewDownloadApplication(uploadFiles, storagePort)
 
-	recyclePurgeService := services.NewRecyclePurgeService(db, minioService, recycleRepo, fileRepo, shareRepo, favoriteRepo, storageQuotaRepo)
+	recyclePurgeService := services.NewRecyclePurgeService(db, storagePort, recycleRepo, fileRepo, shareRepo, favoriteRepo, storageQuotaRepo)
 	var recyclePublisher services.RecycleJobPublisher
 	if rabbitClient != nil {
 		recyclePublisher = rabbitClient
@@ -111,7 +110,7 @@ func SetUpRouter(appCtx context.Context, db *gorm.DB, minioService *minio.MinioS
 	recycleService := services.NewRecycleService(db, recycleRepo, fileRepo, recyclePurgeService, recyclePublisher)
 	favoriteService := services.NewFavoriteService(favoriteRepo, fileRepo, fileService)
 	categoryService := services.NewCategoryService(db, fileRepo, fileService)
-	shareService := services.NewShareService(shareRepo, fileRepo, minioService, notificationService)
+	shareService := services.NewShareService(shareRepo, fileRepo, storagePort, notificationService)
 	statsService := services.NewStatsService(fileRepo, storageQuotaRepo, shareRepo)
 	storageQuotaService := services.NewStorageQuotaService(storageQuotaRepo)
 
@@ -129,6 +128,7 @@ func SetUpRouter(appCtx context.Context, db *gorm.DB, minioService *minio.MinioS
 	notificationCtrl := controller.NewNotificationController(notificationService, sseBroker)
 
 	startRecycleCleanupWorkers(appCtx, recycleService, rabbitClient, mqCfg)
+	go services.RunObjectCleanup(appCtx, db, storagePort)
 
 	ginServer.POST("/login", middleware.NewIPRateLimiter(10, time.Minute), loginCtrl.Login)
 	ginServer.POST("/register", middleware.NewIPRateLimiter(5, time.Minute), loginCtrl.Register)
