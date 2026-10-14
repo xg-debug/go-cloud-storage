@@ -60,7 +60,7 @@ Go Cloud Storage 是一个前后端分离的私有云存储项目，产品界面
 
 ## 架构
 
-核心微服务拆分已合并到 `master`。七个进程可独立启动，业务数据由四个独立 schema 和数据库账号管理；开发环境默认共用一个 MySQL 实例。服务之间通过内部 HTTP 和 RabbitMQ 协作。
+后端采用单仓库微服务结构。网关及六个服务各自拥有独立入口与私有实现，七个进程可独立构建和启动，业务数据由四个独立 schema 和数据库账号管理；开发环境默认共用一个 MySQL 实例。服务之间通过内部 HTTP 和 RabbitMQ 协作。
 
 ```mermaid
 flowchart LR
@@ -102,7 +102,7 @@ flowchart LR
 - **可靠事件**：业务数据与 Outbox 同事务提交，RabbitMQ 确认投递，消费者使用 Inbox 去重。
 - **文件生命周期**：删除递增分享版本，防止消息延迟导致旧链接复活；永久删除通过持久化任务重试物理对象清理。
 - **依赖**：微服务模式要求 Redis 和 RabbitMQ；Redis 保存会话、分片状态和搜索历史，并用于通知实例间分发。
-- **代码边界**：服务仍共用 Go 模块及部分业务实现。原单体入口保留，运行方式见 [微服务说明](backend/services/README.md)。
+- **代码边界**：每个服务的业务、模型、仓储、HTTP 接口与启动装配位于自己的 `internal/`，Go 编译器禁止跨服务导入。共用一个 `go.mod`，公共包只包含协议、通用端口与基础设施，不包含共享业务模型。`backend/architecture` 的测试持续检查依赖边界。
 
 本次不包含 AI、向量库、文件夹分享或完整文件版本历史。详细服务协议见 [微服务说明](backend/services/README.md)，旧数据迁移与回退要求见 [迁移指南](deploy/MIGRATION.md)。
 
@@ -165,7 +165,7 @@ Compose 在全新数据卷中创建四个数据库及独立账号，服务通过
 docker compose --env-file deploy/.env -f deploy/compose.yaml down
 ```
 
-原单体模式和不使用 Docker 的启动步骤见 [运行说明](backend/services/README.md)。
+不使用 Docker 的启动步骤、服务代码归属及旧入口退役说明见 [运行说明](backend/services/README.md)。
 
 ### 3. 启动前端
 
@@ -190,21 +190,26 @@ VUE_APP_DEV_API_TARGET=http://localhost:8081
 ```text
 go-cloud-storage/
 ├── backend/
-│   ├── cmd/                    # 原单体与网关入口
-│   ├── services/               # 认证、用户、文件、存储、分享、通知独立入口
-│   ├── conf/                   # 无密钥配置模板与本地配置
-│   ├── infrastructure/         # MySQL、Redis、MinIO、RabbitMQ、邮件
-│   ├── internal/
-│   │   ├── distributed/        # 内部 RPC、身份校验和事件消费者
-│   │   ├── gateway/            # 网关路由与流式代理
-│   │   ├── ports/              # 存储、上传会话、事务与事件接口
-│   │   ├── controller/         # HTTP 控制器
-│   │   ├── middleware/         # 认证、CSRF、限流、Request ID
-│   │   ├── repositories/       # 数据访问与事务
-│   │   ├── services/           # 文件、用户、分享等业务逻辑
-│   │   └── models/             # 数据模型与 DTO
-│   ├── migrations/             # 增量迁移与 GORM 迁移定义
-│   └── pkg/                    # 配置、日志与通用工具
+│   ├── gateway/
+│   │   ├── cmd/server/         # 独立网关入口
+│   │   └── internal/transport/ # 公开路由与流式代理
+│   ├── services/
+│   │   ├── auth-service/       # 认证、会话与用户 RPC 客户端
+│   │   ├── user-service/       # 用户业务、用户模型及用户库仓储
+│   │   ├── file-service/       # 文件业务、分片、配额、回收站及文件库仓储
+│   │   ├── storage-service/    # 对象 HTTP 接口与 MinIO 适配器
+│   │   ├── share-service/      # 分享业务、分享库及文件 RPC 客户端
+│   │   └── notification-service/ # 通知业务、通知库与事件消费者
+│   ├── pkg/
+│   │   ├── contracts/         # 服务间 HTTP DTO，无 ORM 模型
+│   │   ├── rpc/               # 内部 RPC 客户端、鉴权与请求校验
+│   │   ├── storagehttp/       # 对象协议与流式客户端
+│   │   ├── ports/             # 通用存储、事务和事件接口
+│   │   └── platform/          # MySQL/Redis 连接、事务与可靠消息基础设施
+│   ├── architecture/          # 服务依赖边界测试，包含在 go test ./...
+│   ├── conf/                  # 配置模板
+│   ├── migrations/            # 历史数据与增量 SQL
+│   └── go.mod                 # 单仓库共用依赖版本，不代表单进程
 ├── frontend/
 │   ├── public/                 # 静态资源与 PWA 图标
 │   └── src/
@@ -223,6 +228,22 @@ go-cloud-storage/
 ├── db.sql                      # 单体全新建库结构，不能用于升级已有库
 └── README.md
 ```
+
+以文件服务为例，源码在所属服务内完成分层：
+
+```text
+backend/services/file-service/
+├── cmd/server/main.go
+└── internal/
+    ├── bootstrap/       # 配置、依赖装配、路由、所属表迁移和后台任务
+    ├── application/     # 文件、上传下载、回收站等业务
+    ├── domain/          # 仅文件服务使用的模型与 DTO
+    ├── ports/           # 文件读写、分片会话接口
+    ├── adapters/        # 文件库仓储、Redis 会话、分享 RPC 客户端
+    └── transport/       # HTTP 控制器和内部文件接口
+```
+
+认证与存储服务按实际职责保留所需层级，不创建空的业务或数据库目录。旧 `backend/cmd/main.go` 单体入口和过渡 Compose 已退役；如需旧版本回退，应使用迁移前保存的代码、镜像及配置，不能让旧入口直接写入拆分后的数据库。
 
 ## API 概览
 
@@ -256,7 +277,7 @@ go-cloud-storage/
 
 ```bash
 # 后端测试与静态检查
-(cd backend && go test ./... && go vet ./...)
+(cd backend && go test ./... && go test -race ./... && go vet ./...)
 
 # 前端测试与生产构建
 (cd frontend && npm ci && npm test && npm run build)
@@ -270,7 +291,9 @@ python3 scripts/integration/compose_deployment_smoke.py
 
 集成脚本只操作其创建的临时项目和测试数据，结束后清理对应容器与卷。迁移演练覆盖逐行核对、业务恢复和反向复制，不代表真实生产数据迁移或旧应用回退验收。
 
-2026-10-14，合并 [PR #3](https://github.com/xg-debug/go-cloud-storage/pull/3) 前的 [Backend CI #42](https://github.com/xg-debug/go-cloud-storage/actions/runs/38521570380) 已通过后端测试、race、vet、宿主机联调、默认镜像构建、容器迁移演练及原始 Compose 验证。前端测试和生产构建已在本地通过。详细测试范围见 [验收记录](deploy/VERIFICATION.md)。
+历史基线：2026-10-14，合并 [PR #3](https://github.com/xg-debug/go-cloud-storage/pull/3) 前的 [Backend CI #42](https://github.com/xg-debug/go-cloud-storage/actions/runs/38521570380) 已通过后端测试、race、vet、宿主机联调、默认镜像构建、容器迁移演练及原始 Compose 验证。前端测试和生产构建已在本地通过。详细测试范围见 [验收记录](deploy/VERIFICATION.md)。
+
+本次服务源码边界改造（代码提交 `2294627`）已通过 [Backend CI #45](https://github.com/xg-debug/go-cloud-storage/actions/runs/38572672730)：后端测试、全量 race、vet、宿主机联调、默认 Dockerfile 镜像构建、七服务容器迁移演练，以及原始 Compose 健康检查和业务验证全部通过。本地缓存镜像联调也已通过；本机 Docker Hub DNS 超时不影响上述远程默认构建验证结果。详细本地测试范围见 [验收记录](deploy/VERIFICATION.md)。
 
 **目前尚未部署线上环境。** 目标服务器的 HTTPS、监控告警、备份恢复、容量与压力测试、依赖安全更新及真实数据迁移仍需验收。性能测试入口位于 [scripts/perf/README.md](scripts/perf/README.md)。
 

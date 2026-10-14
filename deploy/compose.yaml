@@ -3,7 +3,7 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
-      args: {TARGET: ./cmd/gateway}
+      args: {TARGET: ./gateway/cmd/server}
     networks:
       default: {ipv4_address: 172.30.0.2}
     environment:

@@ -92,3 +92,14 @@ python3 scripts/integration/microservices_smoke.py \
 ```
 
 有正常镜像网络时使用 `python3 scripts/integration/microservices_smoke.py --containers --migration-rehearsal`。本地验收通过不代替目标服务器的 TLS、域名、容量、备份恢复、监控与真实数据验收；这些待环境具备后执行。
+
+
+## 2026-10-14：服务源码边界改造
+
+- 网关迁至 `backend/gateway`；六个业务服务独占各自的 `internal` 目录，包含所需业务、模型、仓储、适配器、传输及启动装配。删除中央业务目录与按角色切换的启动器，退役旧单体入口和过渡 Compose。
+- 用户与文件 RPC 改为显式协议 DTO；共享协议不包含 ORM 标签，用户响应类型不能携带密码哈希。用户注册只写用户库，文件根目录与配额由文件服务幂等创建。
+- `go test ./...`、全量 `go test -race ./...`、`go vet ./...` 通过。新增依赖边界、真实用户 RPC 密码过滤与故障分类、文件 RPC 版本/对象键转换检查；原测试按服务归属迁移。
+- 当前代码交叉编译后构建为七个 Linux 应用容器，使用本机缓存基础镜像，通过注册登录、上传/Range/直链、收藏约束、分享失效/恢复、通知补消费、分片重启续传、RabbitMQ/存储/认证/数据库故障恢复、持久化对象清理、密码变更撤销会话及账号隔离检查。
+- 同次执行 `--migration-rehearsal`，通过旧 DDL 导入、逐行字段比较、迁移后业务检查及反向复制演练；仅使用临时数据库与测试对象，结束后清理。
+- 本机默认基础镜像构建因 `auth.docker.io` DNS 超时失败。上述容器结果使用 `--local-runtime-image cloudbox-compose-verify-storage-service:latest` 和已有 MySQL/MinIO 镜像，不冒充默认 Dockerfile 构建通过。默认镜像及原始 Compose 的验证由更新后的远程 CI 执行，结果另行记录。
+- 前端源码未改变；本次未重新执行浏览器验收。没有线上环境，未进行生产发布或真实数据迁移。

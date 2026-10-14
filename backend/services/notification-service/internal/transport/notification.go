@@ -1,0 +1,202 @@
+package transport
+
+import (
+	"fmt"
+	"log/slog"
+	"net/http"
+	"strconv"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+
+	"go-cloud-storage/backend/pkg/utils"
+	application "go-cloud-storage/backend/services/notification-service/internal/application"
+	domain "go-cloud-storage/backend/services/notification-service/internal/domain"
+)
+
+type NotificationController struct {
+	notificationService *application.NotificationService
+	sseBroker           *application.SSEBroker
+}
+
+func NewNotificationController(notificationService *application.NotificationService, broker *application.SSEBroker) *NotificationController {
+	return &NotificationController{
+		notificationService: notificationService,
+		sseBroker:           broker,
+	}
+}
+
+// GetNotifications 获取用户通知列表
+func (c *NotificationController) GetNotifications(ctx *gin.Context) {
+	userId := uint(ctx.GetInt("userId"))
+
+	page, _ := strconv.Atoi(ctx.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(ctx.DefaultQuery("page_size", "20"))
+
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 100 {
+		pageSize = 20
+	}
+
+	result, err := c.notificationService.GetUserNotifications(userId, page, pageSize)
+	if err != nil {
+		slog.Error("获取通知失败", "error", err)
+		utils.Fail(ctx, http.StatusInternalServerError, "获取通知失败")
+		return
+	}
+
+	utils.Success(ctx, result)
+}
+
+// GetUnreadCount 获取未读通知数量
+func (c *NotificationController) GetUnreadCount(ctx *gin.Context) {
+	userId := uint(ctx.GetInt("userId"))
+
+	count, err := c.notificationService.GetUnreadCount(userId)
+	if err != nil {
+		slog.Error("获取未读数量失败", "error", err)
+		utils.Fail(ctx, http.StatusInternalServerError, "获取未读数量失败")
+		return
+	}
+
+	utils.Success(ctx, gin.H{
+		"unread_count": count,
+	})
+}
+
+// MarkAsRead 标记通知为已读
+func (c *NotificationController) MarkAsRead(ctx *gin.Context) {
+	userId := uint(ctx.GetInt("userId"))
+
+	idStr := ctx.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		utils.Fail(ctx, http.StatusBadRequest, "无效的通知ID")
+		return
+	}
+
+	err = c.notificationService.MarkAsRead(uint(id), userId)
+	if err != nil {
+		slog.Error("标记已读失败", "error", err)
+		utils.Fail(ctx, http.StatusInternalServerError, "标记已读失败")
+		return
+	}
+
+	utils.Success(ctx, nil)
+}
+
+// MarkAllAsRead 标记所有通知为已读
+func (c *NotificationController) MarkAllAsRead(ctx *gin.Context) {
+	userId := uint(ctx.GetInt("userId"))
+
+	err := c.notificationService.MarkAllAsRead(userId)
+	if err != nil {
+		slog.Error("标记失败", "error", err)
+		utils.Fail(ctx, http.StatusInternalServerError, "标记失败")
+		return
+	}
+
+	utils.Success(ctx, nil)
+}
+
+// DeleteNotification 删除通知
+func (c *NotificationController) DeleteNotification(ctx *gin.Context) {
+	userId := uint(ctx.GetInt("userId"))
+
+	idStr := ctx.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		utils.Fail(ctx, http.StatusBadRequest, "无效的通知ID")
+		return
+	}
+
+	err = c.notificationService.DeleteNotification(uint(id), userId)
+	if err != nil {
+		slog.Error("删除通知失败", "error", err)
+		utils.Fail(ctx, http.StatusInternalServerError, "删除失败")
+		return
+	}
+
+	utils.Success(ctx, nil)
+}
+
+// DeleteAllNotifications 删除所有通知
+func (c *NotificationController) DeleteAllNotifications(ctx *gin.Context) {
+	userId := uint(ctx.GetInt("userId"))
+
+	err := c.notificationService.DeleteAllNotifications(userId)
+	if err != nil {
+		slog.Error("删除所有通知失败", "error", err)
+		utils.Fail(ctx, http.StatusInternalServerError, "删除失败")
+		return
+	}
+
+	utils.Success(ctx, nil)
+}
+
+// CreateNotification 创建通知（管理员接口）
+func (c *NotificationController) CreateNotification(ctx *gin.Context) {
+	var req domain.NotificationCreateRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		utils.Fail(ctx, http.StatusBadRequest, "参数错误")
+		return
+	}
+
+	err := c.notificationService.CreateNotification(&req)
+	if err != nil {
+		slog.Error("创建通知失败", "error", err)
+		utils.Fail(ctx, http.StatusInternalServerError, "创建通知失败")
+		return
+	}
+
+	utils.Success(ctx, nil)
+}
+
+// NotificationSSE Stream 实时通知 SSE 端点
+func (c *NotificationController) NotificationSSE(ctx *gin.Context) {
+	userId := ctx.GetInt("userId")
+	clientId := uuid.New().String()[:8]
+
+	ctx.Writer.Header().Set("Content-Type", "text/event-stream")
+	ctx.Writer.Header().Set("Cache-Control", "no-cache")
+	ctx.Writer.Header().Set("Connection", "keep-alive")
+	ctx.Writer.Header().Set("X-Accel-Buffering", "no")
+
+	client, err := c.sseBroker.Subscribe(userId, clientId)
+	if err != nil {
+		// 连接数超限：向前端推送 error 事件后关闭（前端可稍后重连）
+		fmt.Fprintf(ctx.Writer, "event: error\ndata: %s\n\n", err.Error())
+		ctx.Writer.Flush()
+		return
+	}
+	defer c.sseBroker.Unsubscribe(userId, clientId)
+
+	// Send initial heartbeat (SSE comment line)
+	fmt.Fprintf(ctx.Writer, ": connected\n\n")
+	ctx.Writer.Flush()
+
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case msg := <-client.Messages:
+			ctx.Writer.Write(msg)
+			ctx.Writer.Flush()
+		case <-ticker.C:
+			if validator, ok := ctx.Get("validateSession"); ok {
+				if err := validator.(func() error)(); err != nil {
+					return
+				}
+			}
+			fmt.Fprintf(ctx.Writer, ": heartbeat\n\n")
+			ctx.Writer.Flush()
+		case <-ctx.Request.Context().Done():
+			slog.Info("SSE stream closed by client", "userId", userId)
+			return
+		}
+	}
+}

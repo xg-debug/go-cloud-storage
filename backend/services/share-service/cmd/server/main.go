@@ -1,5 +1,5 @@
 package main
 
-import "go-cloud-storage/backend/services/runtime"
+import "go-cloud-storage/backend/services/share-service/internal/bootstrap"
 
-func main() { runtime.Main("share") }
+func main() { bootstrap.Main() }
