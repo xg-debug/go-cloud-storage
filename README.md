@@ -1,5 +1,4 @@
 <div align="center">
-  <img src="frontend/public/img/icons/android-chrome-192x192.png" width="88" alt="CloudBox logo">
   <h1>Go Cloud Storage</h1>
   <p><strong>CloudBox —— 一个面向 Web 的现代化私有云盘。</strong></p>
   <p>使用 Go、Vue 3 与 MinIO 构建，覆盖文件上传、在线预览、搜索、分享、回收站和实时通知。</p>
@@ -23,7 +22,7 @@
 
 ## 项目简介
 
-Go Cloud Storage 是一个前后端分离的私有云存储项目，产品界面名称为 **CloudBox**。它以桌面 Web 文件工作区为核心，后端负责认证、文件元数据、对象存储编排与权限校验，前端提供网格/列表浏览、详情面板、上传队列和预览体验。
+Go Cloud Storage 是一个前后端分离的私有云存储项目，产品界面名称为 **CloudBox**。它以桌面 Web 文件工作区为核心，后端由网关及认证、用户、文件、存储、分享、通知服务组成，前端提供网格/列表浏览、详情面板、上传队列和预览体验。
 
 项目适合用于学习完整的云盘业务链路、自托管实验以及在此基础上继续开发。目前仅维护 **Web 桌面端**，不包含移动端页面或移动端适配承诺。
 
@@ -61,24 +60,51 @@ Go Cloud Storage 是一个前后端分离的私有云存储项目，产品界面
 
 ## 架构
 
-当前开发分支已拆分为 Gin 网关、认证、用户、文件、存储、分享和通知七个独立进程，业务数据按四个数据库隔离，使用 RabbitMQ + 事务 Outbox 传递事件；暂不加入 AI 功能。拆分评估、组件完成状态、内部协议和启动步骤见 [微服务拆分说明](backend/services/README.md)。本地多进程部署使用 [Compose 配置](deploy/compose.yaml)，原单体启动方式仍可用。下图描述原单体模式。
+核心微服务拆分已合并到 `master`。七个进程可独立启动，业务数据由四个独立 schema 和数据库账号管理；开发环境默认共用一个 MySQL 实例。服务之间通过内部 HTTP 和 RabbitMQ 协作。
 
 ```mermaid
 flowchart LR
-    Web["Vue 3 Web"] -->|"同源 /api"| API["Gin API"]
-    API --> Service["Service 业务层"]
-    Service --> Repo["Repository 数据层"]
-    Repo --> MySQL[("MySQL")]
-    Service --> Redis[("Redis")]
-    Service --> MinIO[("MinIO")]
-    Service -. "可选：过期清理" .-> RabbitMQ[("RabbitMQ")]
-    API -->|"SSE"| Web
+    Web["Vue 3 Web"] -->|"同源 /api"| Gateway["Gin Gateway"]
+    Gateway --> Auth["认证服务"]
+    Gateway --> User["用户服务"]
+    Gateway --> File["文件服务"]
+    Gateway --> Share["分享服务"]
+    Gateway --> Notify["通知服务 / SSE"]
+    Auth -->|"凭据与会话校验"| User
+    Share -->|"文件与分享版本校验"| File
+    User --> Storage["存储服务"]
+    File --> Storage
+    Share --> Storage
+    Storage --> MinIO[("MinIO")]
+    User --> UserDB[("cloudbox_user")]
+    File --> FileDB[("cloudbox_file")]
+    Share --> ShareDB[("cloudbox_share")]
+    Notify --> NotifyDB[("cloudbox_notification")]
+    Auth --> Redis[("Redis")]
+    File --> Redis
+    Notify --> Redis
+    File -->|"事务 Outbox"| MQ[("RabbitMQ")]
+    Share -->|"事务 Outbox"| MQ
+    MQ --> Share
+    MQ --> Notify
 ```
 
-- **MySQL** 保存用户、文件、收藏、分享、回收站、配额与通知等业务数据。
-- **MinIO** 保存私有文件对象；预览、下载和分享通过受控接口或短期预签名 URL 访问。
-- **Redis** 保存刷新令牌、分片上传会话、限流状态和搜索历史。
-- **RabbitMQ** 可选；启用后用于回收站过期任务，关闭时自动降级为定时扫描。
+| 服务 | 职责与数据归属 |
+| --- | --- |
+| gateway | 公开 API 路由、请求 ID、流式代理；不暴露内部存储接口 |
+| auth-service | 登录、注册入口、刷新与退出、JWT 内省；使用 Redis 会话 |
+| user-service | 用户资料、密码、头像及密码重置；拥有用户库 |
+| file-service | 文件、目录、分片上传、下载、收藏、配额和回收站；拥有文件库 |
+| storage-service | MinIO 对象操作、分片、Range、缩略图和预签名 URL；不访问业务数据库 |
+| share-service | 分享链接、提取码、有效期与统计；拥有分享库 |
+| notification-service | 站内通知持久化及 SSE 推送；拥有通知库 |
+
+- **可靠事件**：业务数据与 Outbox 同事务提交，RabbitMQ 确认投递，消费者使用 Inbox 去重。
+- **文件生命周期**：删除递增分享版本，防止消息延迟导致旧链接复活；永久删除通过持久化任务重试物理对象清理。
+- **依赖**：微服务模式要求 Redis 和 RabbitMQ；Redis 保存会话、分片状态和搜索历史，并用于通知实例间分发。
+- **代码边界**：服务仍共用 Go 模块及部分业务实现。原单体入口保留，运行方式见 [微服务说明](backend/services/README.md)。
+
+本次不包含 AI、向量库、文件夹分享或完整文件版本历史。详细服务协议见 [微服务说明](backend/services/README.md)，旧数据迁移与回退要求见 [迁移指南](deploy/MIGRATION.md)。
 
 ## 技术栈
 
@@ -87,21 +113,21 @@ flowchart LR
 | Web | Vue 3、Vue Router 4、Vuex 4、Element Plus、Axios |
 | 内容与上传 | Marked、DOMPurify、SparkMD5 |
 | API | Go 1.25.6、Gin、GORM、Viper、slog |
-| 数据 | MySQL 8、Redis、MinIO、RabbitMQ（可选） |
-| 工程化 | Vue CLI 5、Go Modules、npm |
+| 数据 | MySQL 8、Redis、MinIO、RabbitMQ |
+| 工程化 | Vue CLI 5、Go Modules、npm、Docker Compose、GitHub Actions |
 
 ## 快速开始
 
 ### 环境要求
 
-| 依赖 | 建议版本 | 是否必需 |
-| --- | --- | --- |
-| Go | 与 `backend/go.mod` 一致（当前 1.25.6） | 是 |
-| Node.js | 20 或更高 | 是 |
-| MySQL | 8.0 或更高 | 是 |
-| MinIO | 兼容当前 MinIO Go SDK 的版本 | 是 |
-| Redis | 6.0 或更高 | 推荐；关闭后刷新令牌和分片上传不可用 |
-| RabbitMQ | 3.x | 否 |
+推荐通过 Docker Compose 启动后端及基础设施，在宿主机运行前端。
+
+| 依赖 | 用途 |
+| --- | --- |
+| Docker 与 Compose v2 | 构建七个后端服务，并运行 MySQL 8.0、Redis 7、RabbitMQ 3.13、MinIO |
+| Node.js 20 或更高、npm | 安装和运行 Vue 前端 |
+| Go 1.25.6 | 仅宿主机开发、测试或不使用容器构建时需要 |
+| Python 3 | 仅运行自动化集成测试和迁移演练时需要 |
 
 ### 1. 获取代码
 
@@ -110,51 +136,38 @@ git clone https://github.com/xg-debug/go-cloud-storage.git
 cd go-cloud-storage
 ```
 
-### 2. 初始化数据库
+### 2. 配置并启动微服务
 
 ```bash
-mysql -u root -p -e 'CREATE DATABASE IF NOT EXISTS `file-store` DEFAULT CHARACTER SET utf8mb4;'
-mysql -u root -p file-store < db.sql
+cp deploy/.env.example deploy/.env
 ```
 
-如需优化中文文件名搜索，可额外创建 ngram 全文索引：
-
-```sql
-ALTER TABLE `file` ADD FULLTEXT INDEX `ft_name` (`name`) WITH PARSER ngram;
-```
-
-### 3. 配置后端
+编辑 `deploy/.env`，替换所有 `replace-me-*` 占位值。为数据库、RabbitMQ 和 MinIO 设置独立密码；JWT、服务间调用和存储调用的密钥各自至少 32 字节，且互不相同。可使用 `openssl rand -hex 32` 生成随机值，RabbitMQ 密码须使用 URL-safe 字符。
 
 ```bash
-cp backend/conf/go-cloud-storage.dev.example.yaml backend/conf/go-cloud-storage.dev.yaml
+docker compose --env-file deploy/.env -f deploy/compose.yaml config --quiet
+docker compose --env-file deploy/.env -f deploy/compose.yaml up --build -d
+docker compose --env-file deploy/.env -f deploy/compose.yaml ps
 ```
 
-编辑复制后的配置文件，至少填写 MySQL、MinIO 与 JWT 配置。项目会在 MinIO 中自动检查并创建 Bucket；生产环境应使用随机密钥，并通过环境变量注入敏感值：
+Compose 在全新数据卷中创建四个数据库及独立账号，服务通过开发用 AutoMigrate 创建所属表。**已有数据必须先按 [迁移指南](deploy/MIGRATION.md) 备份并迁移，不要用包含 DROP TABLE 的 `db.sql` 升级现有数据库。**
 
-| 环境变量 | 用途 |
-| --- | --- |
-| `GCS_DB_PASSWORD` | MySQL 密码 |
-| `GCS_REDIS_PASSWORD` | Redis 密码 |
-| `GCS_MINIO_ACCESS_KEY` / `GCS_MINIO_SECRET_KEY` | MinIO 凭据 |
-| `GCS_JWT_SECRET` | JWT 签名密钥，至少 32 字节 |
-| `GCS_SMTP_PASSWORD` | SMTP 密码 |
-| `GCS_RABBITMQ_URL` | RabbitMQ 连接地址 |
+- 网关：`http://localhost:8081`。
+- MinIO S3：`http://localhost:9000`；控制台：`http://localhost:9001`。
+- MinIO 从固定官方源码提交构建并校验 SHA256，首次构建需要下载源码及依赖。
+- 前端通过短期签名 URL 访问私有对象。跨机器使用时，须将 `GCS_MINIO_PUBLIC_ENDPOINT` 改为浏览器可达地址。
+- Compose 默认使用 `172.30.0.0/24` 网段；若与本机网络冲突，修改网段时同步调整网关固定 IP 和可信代理配置。
+- `/healthz` 表示进程存活，不代表所有下游依赖可用。密码重置邮件需要另行配置 SMTP。
 
-完整字段及默认值见 [`backend/conf/go-cloud-storage.dev.example.yaml`](backend/conf/go-cloud-storage.dev.example.yaml)。
-
-### 4. 启动后端
-
-确认 MySQL、MinIO 以及配置中启用的 Redis/RabbitMQ 已运行，然后执行：
+停止服务并保留数据：
 
 ```bash
-cd backend
-go mod download
-go run ./cmd
+docker compose --env-file deploy/.env -f deploy/compose.yaml down
 ```
 
-API 默认监听 `http://localhost:8081`。
+原单体模式和不使用 Docker 的启动步骤见 [运行说明](backend/services/README.md)。
 
-### 5. 启动前端
+### 3. 启动前端
 
 打开另一个终端：
 
@@ -177,10 +190,14 @@ VUE_APP_DEV_API_TARGET=http://localhost:8081
 ```text
 go-cloud-storage/
 ├── backend/
-│   ├── cmd/                    # 服务入口
+│   ├── cmd/                    # 原单体与网关入口
+│   ├── services/               # 认证、用户、文件、存储、分享、通知独立入口
 │   ├── conf/                   # 无密钥配置模板与本地配置
 │   ├── infrastructure/         # MySQL、Redis、MinIO、RabbitMQ、邮件
 │   ├── internal/
+│   │   ├── distributed/        # 内部 RPC、身份校验和事件消费者
+│   │   ├── gateway/            # 网关路由与流式代理
+│   │   ├── ports/              # 存储、上传会话、事务与事件接口
 │   │   ├── controller/         # HTTP 控制器
 │   │   ├── middleware/         # 认证、CSRF、限流、Request ID
 │   │   ├── repositories/       # 数据访问与事务
@@ -199,8 +216,11 @@ go-cloud-storage/
 │       ├── store/              # Vuex 状态与上传队列
 │       └── views/              # 页面视图
 ├── image/                      # README 界面截图
-├── scripts/perf/               # 性能测试脚本
-├── db.sql                      # 脱敏后的数据库结构
+├── deploy/                     # Compose、镜像、配置模板、迁移与验收记录
+├── scripts/
+│   ├── integration/            # 七服务联调、Compose 验证和迁移演练
+│   └── perf/                   # 性能测试脚本
+├── db.sql                      # 单体全新建库结构，不能用于升级已有库
 └── README.md
 ```
 
@@ -218,7 +238,7 @@ go-cloud-storage/
 | 分享 | `/share` 管理接口，`/s/:token` 公开访问与下载 |
 | 通知 | `/notification` 管理接口与 `/notification/stream` SSE 流 |
 
-所有受保护接口均经过 JWT 认证、CSRF 校验与速率限制。公开分享接口按 IP 限流，并对提取码错误进行额外保护。
+浏览器通过网关的 `/api` 前缀访问上述接口；网关转发到所属服务。受保护接口校验会话，写操作进行 CSRF 校验；公开分享接口按 IP 限流，并对提取码错误进行额外保护。
 
 ## 安全说明
 
@@ -232,18 +252,27 @@ go-cloud-storage/
 
 ## 开发与验证
 
-```bash
-# 后端
-cd backend
-go test ./...
-go vet ./...
+在仓库根目录执行：
 
-# 前端
-cd frontend
-npm run build
+```bash
+# 后端测试与静态检查
+(cd backend && go test ./... && go vet ./...)
+
+# 前端测试与生产构建
+(cd frontend && npm ci && npm test && npm run build)
+
+# 七服务容器联调与隔离迁移演练，需要 Docker 和 Python 3
+python3 scripts/integration/microservices_smoke.py --containers --migration-rehearsal
+
+# 校验仓库原始 Compose 部署配置
+python3 scripts/integration/compose_deployment_smoke.py
 ```
 
-性能测试入口位于 [`scripts/perf/README.md`](scripts/perf/README.md)。提交变更时请保持配置模板无密钥，并为涉及事务、权限或文件生命周期的修改补充相应验证。
+集成脚本只操作其创建的临时项目和测试数据，结束后清理对应容器与卷。迁移演练覆盖逐行核对、业务恢复和反向复制，不代表真实生产数据迁移或旧应用回退验收。
+
+2026-10-14，合并 [PR #3](https://github.com/xg-debug/go-cloud-storage/pull/3) 前的 [Backend CI #42](https://github.com/xg-debug/go-cloud-storage/actions/runs/38521570380) 已通过后端测试、race、vet、宿主机联调、默认镜像构建、容器迁移演练及原始 Compose 验证。前端测试和生产构建已在本地通过。详细测试范围见 [验收记录](deploy/VERIFICATION.md)。
+
+**目前尚未部署线上环境。** 目标服务器的 HTTPS、监控告警、备份恢复、容量与压力测试、依赖安全更新及真实数据迁移仍需验收。性能测试入口位于 [scripts/perf/README.md](scripts/perf/README.md)。
 
 ## 参与贡献
 
