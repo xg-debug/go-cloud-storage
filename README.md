@@ -293,7 +293,7 @@ python3 scripts/integration/compose_deployment_smoke.py
 
 历史基线：2026-10-14，合并 [PR #3](https://github.com/xg-debug/go-cloud-storage/pull/3) 前的 [Backend CI #42](https://github.com/xg-debug/go-cloud-storage/actions/runs/38521570380) 已通过后端测试、race、vet、宿主机联调、默认镜像构建、容器迁移演练及原始 Compose 验证。前端测试和生产构建已在本地通过。详细测试范围见 [验收记录](deploy/VERIFICATION.md)。
 
-本次服务源码边界改造已通过本地后端测试、全量 race、vet、七服务容器联调和隔离迁移演练。本机 Docker Hub DNS 超时，容器验证使用缓存基础镜像重新编译当前代码；默认镜像构建与原始 Compose 验证结果见 [验收记录](deploy/VERIFICATION.md)。
+本次服务源码边界改造（代码提交 `2294627`）已通过 [Backend CI #45](https://github.com/xg-debug/go-cloud-storage/actions/runs/38572672730)：后端测试、全量 race、vet、宿主机联调、默认 Dockerfile 镜像构建、七服务容器迁移演练，以及原始 Compose 健康检查和业务验证全部通过。本地缓存镜像联调也已通过；本机 Docker Hub DNS 超时不影响上述远程默认构建验证结果。详细本地测试范围见 [验收记录](deploy/VERIFICATION.md)。
 
 **目前尚未部署线上环境。** 目标服务器的 HTTPS、监控告警、备份恢复、容量与压力测试、依赖安全更新及真实数据迁移仍需验收。性能测试入口位于 [scripts/perf/README.md](scripts/perf/README.md)。
 
