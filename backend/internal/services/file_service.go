@@ -4,8 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	miniosrv "go-cloud-storage/backend/infrastructure/minio"
 	"go-cloud-storage/backend/internal/models"
+	"go-cloud-storage/backend/internal/ports"
 	"go-cloud-storage/backend/internal/repositories"
 	"go-cloud-storage/backend/pkg/filetypes"
 	"go-cloud-storage/backend/pkg/utils"
@@ -139,11 +139,11 @@ type fileService struct {
 	redis            *redis.Client
 	fileRepo         repositories.FileRepository
 	storageQuotaRepo repositories.StorageQuotaRepository
-	shareRepo        repositories.ShareRepository
-	minio            *miniosrv.MinioService
+	shareRepo        ShareIndex
+	minio            ports.Storage
 }
 
-func NewFileService(db *gorm.DB, redis *redis.Client, repo repositories.FileRepository, storageQuotaRepo repositories.StorageQuotaRepository, shareRepo repositories.ShareRepository, minio *miniosrv.MinioService) FileService {
+func NewFileService(db *gorm.DB, redis *redis.Client, repo repositories.FileRepository, storageQuotaRepo repositories.StorageQuotaRepository, shareRepo ShareIndex, minio ports.Storage) FileService {
 	return &fileService{db: db, redis: redis, fileRepo: repo, storageQuotaRepo: storageQuotaRepo, shareRepo: shareRepo, minio: minio}
 }
 
@@ -188,8 +188,8 @@ func (s *fileService) GetFiles(ctx context.Context, userId int, parentId string,
 			Size:         file.Size,
 			SizeStr:      file.SizeStr,
 			Extension:    file.FileExtension,
-			CreatedAt:    file.CreatedAt.Format("2006-01-02 15:04:05"),
-			Modified:     file.UpdatedAt.Format("2006-01-02 15:04:05"),
+			CreatedAt:    file.CreatedAt.Format(time.RFC3339),
+			Modified:     file.UpdatedAt.Format(time.RFC3339),
 			FileURL:      fileURL,
 			ThumbnailURL: thumbURL,
 			FileCount:    folderCounts[file.Id],
@@ -282,7 +282,7 @@ func (s *fileService) Delete(fileId string, userId int) error {
 	}
 
 	return s.db.Transaction(func(tx *gorm.DB) error {
-		var owner models.User
+		var owner models.StorageQuota
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&owner, userId).Error; err != nil {
 			return err
 		}
@@ -401,7 +401,7 @@ func (s *fileService) GetRecentFiles(userId int, timeRange string) ([]*RecentFil
 			Extension:    f.FileExtension,
 			FileURL:      fileURL,
 			ThumbnailURL: thumbURL,
-			CreatedAt:    f.CreatedAt.Format("2006-01-02 15:04:05"),
+			CreatedAt:    f.CreatedAt.Format(time.RFC3339),
 			Modified:     f.UpdatedAt.Format("15:04"),
 		})
 	}
@@ -493,7 +493,7 @@ func (s *fileService) PreviewFile(userId int, fileId string) (*FilePreview, erro
 		CanPreview:       canPreview,
 		PreviewType:      previewType,
 		OfficePreviewURL: officePreviewURL,
-		Modified:         file.UpdatedAt.Format("2006-01-02 15:04:05"),
+		Modified:         file.UpdatedAt.Format(time.RFC3339),
 		FilePath:         filePath,
 	}, nil
 }
@@ -564,8 +564,8 @@ func (s *fileService) SearchFiles(userId int, keyword, parentId string, page, pa
 			Size:         file.Size,
 			SizeStr:      file.SizeStr,
 			Extension:    file.FileExtension,
-			CreatedAt:    file.CreatedAt.Format("2006-01-02 15:04:05"),
-			Modified:     file.UpdatedAt.Format("2006-01-02 15:04:05"),
+			CreatedAt:    file.CreatedAt.Format(time.RFC3339),
+			Modified:     file.UpdatedAt.Format(time.RFC3339),
 			FileURL:      fileURL,
 			ThumbnailURL: thumbURL,
 		})
@@ -727,8 +727,8 @@ func (s *fileService) GetDuplicateFiles(ctx context.Context, userId int) ([]Dupl
 				Size:      f.Size,
 				SizeStr:   f.SizeStr,
 				Extension: f.FileExtension,
-				CreatedAt: f.CreatedAt.Format("2006-01-02 15:04:05"),
-				Modified:  f.UpdatedAt.Format("2006-01-02 15:04:05"),
+				CreatedAt: f.CreatedAt.Format(time.RFC3339),
+				Modified:  f.UpdatedAt.Format(time.RFC3339),
 			})
 		}
 		wasted := files[0].Size * int64(len(files)-1)

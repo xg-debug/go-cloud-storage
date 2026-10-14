@@ -241,7 +241,8 @@ func (r *fileRepo) SoftDeleteFile(db *gorm.DB, userId int, fileId string) error 
 	return db.Model(&models.File{}).
 		Where("id = ? AND user_id = ?", fileId, userId).
 		Updates(map[string]interface{}{
-			"is_deleted": 1,
+			"is_deleted":    1,
+			"share_version": gorm.Expr("share_version + 1"),
 		}).Error
 }
 
@@ -268,7 +269,8 @@ func (r *fileRepo) SoftDeleteFolder(db *gorm.DB, userId int, folderId string) ([
 	err = db.Model(&models.File{}).
 		Where("id IN ?", ids).
 		Updates(map[string]interface{}{
-			"is_deleted": 1,
+			"is_deleted":    1,
+			"share_version": gorm.Expr("share_version + 1"),
 		}).Error
 	return ids, err
 }

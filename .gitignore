@@ -36,3 +36,7 @@ backend/main
 *.exe
 *.test
 *.out
+
+# Python integration-test caches
+__pycache__/
+*.py[cod]

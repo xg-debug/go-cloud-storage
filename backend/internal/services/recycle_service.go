@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"go-cloud-storage/backend/internal/models"
 	"go-cloud-storage/backend/internal/repositories"
@@ -77,7 +78,7 @@ func (s *recycleService) GetRecycleFiles(userId int, page, pageSize int) ([]map[
 			"name":        item.Name,
 			"isDir":       item.IsDir,
 			"size_str":    item.SizeStr,
-			"deletedDate": item.DeletedAt.Format("2006-01-02 15:04:05"),
+			"deletedDate": item.DeletedAt.Format(time.RFC3339),
 			"expireDays":  int(item.ExpireAt.Sub(item.DeletedAt).Hours() / 24),
 		})
 	}
@@ -125,7 +126,7 @@ func (s *recycleService) RestoreSelected(userId int, fileIds []string) error {
 // restoreItems 恢复回收站项目。文件夹会递归恢复整棵子树（子文件一并出回收站），
 // 避免子文件滞留回收站中被 7 天过期清理而丢失。
 func (s *recycleService) restoreItems(tx *gorm.DB, userId int, fileIds []string) error {
-	var owner models.User
+	var owner models.StorageQuota
 	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&owner, userId).Error; err != nil {
 		return err
 	}
@@ -148,8 +149,12 @@ func (s *recycleService) restoreItems(tx *gorm.DB, userId int, fileIds []string)
 				return err
 			}
 			if err == gorm.ErrRecordNotFound {
-				f.ParentId.String = owner.RootFolderId
-				if err := tx.Model(&f).Update("parent_id", owner.RootFolderId).Error; err != nil {
+				var root models.File
+				if err := tx.Where("user_id = ? AND name = ? AND is_dir = ? AND parent_id IS NULL AND is_deleted = ?", userId, "/", true, false).First(&root).Error; err != nil {
+					return err
+				}
+				f.ParentId.String = root.Id
+				if err := tx.Model(&f).Update("parent_id", root.Id).Error; err != nil {
 					return err
 				}
 			}

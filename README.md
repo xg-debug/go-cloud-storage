@@ -61,6 +61,8 @@ Go Cloud Storage 是一个前后端分离的私有云存储项目，产品界面
 
 ## 架构
 
+当前开发分支已拆分为 Gin 网关、认证、用户、文件、存储、分享和通知七个独立进程，业务数据按四个数据库隔离，使用 RabbitMQ + 事务 Outbox 传递事件；暂不加入 AI 功能。拆分评估、组件完成状态、内部协议和启动步骤见 [微服务拆分说明](backend/services/README.md)。本地多进程部署使用 [Compose 配置](deploy/compose.yaml)，原单体启动方式仍可用。下图描述原单体模式。
+
 ```mermaid
 flowchart LR
     Web["Vue 3 Web"] -->|"同源 /api"| API["Gin API"]

@@ -1,0 +1,235 @@
+services:
+  gateway:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      args: {TARGET: ./cmd/gateway}
+    networks:
+      default: {ipv4_address: 172.30.0.2}
+    environment:
+      GCS_GATEWAY_LISTEN: :8080
+      GCS_AUTH_URL: http://auth-service:8084
+      GCS_USER_URL: http://user-service:8085
+      GCS_FILE_URL: http://file-service:8086
+      GCS_SHARE_URL: http://share-service:8087
+      GCS_NOTIFICATION_URL: http://notification-service:8088
+    ports: ["127.0.0.1:8081:8080"]
+    depends_on:
+      auth-service: {condition: service_healthy}
+      user-service: {condition: service_healthy}
+      file-service: {condition: service_healthy}
+      share-service: {condition: service_healthy}
+      notification-service: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, wget, -q, --spider, http://127.0.0.1:8080/healthz]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+  auth-service:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      args: {TARGET: ./services/auth-service/cmd/server}
+    volumes: ["./services.example.yaml:/app/conf/go-cloud-storage.dev.yaml:ro"]
+    environment:
+      GCS_SERVER_PORT: 8084
+      GCS_SERVICE_TOKEN: ${GCS_SERVICE_TOKEN:?set service token}
+      GCS_AUTH_URL: http://auth-service:8084
+      GCS_USER_URL: http://user-service:8085
+      GCS_JWT_SECRET: ${GCS_JWT_SECRET:?set JWT secret}
+      GCS_REDIS_DB: 0
+    depends_on:
+      redis: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, wget, -q, --spider, http://127.0.0.1:8084/healthz]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+  user-service:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      args: {TARGET: ./services/user-service/cmd/server}
+    volumes: ["./services.example.yaml:/app/conf/go-cloud-storage.dev.yaml:ro"]
+    environment:
+      GCS_SERVER_PORT: 8085
+      GCS_SERVICE_TOKEN: ${GCS_SERVICE_TOKEN:?set service token}
+      GCS_AUTH_URL: http://auth-service:8084
+      GCS_JWT_SECRET: ${GCS_JWT_SECRET:?set JWT secret}
+      GCS_STORAGE_TOKEN: ${GCS_STORAGE_TOKEN:?set storage token}
+      GCS_DB_NAME: cloudbox_user
+      GCS_DB_USER: cloudbox_user
+      GCS_DB_PASSWORD: ${GCS_USER_DB_PASSWORD:?set database password}
+      GCS_AUTO_MIGRATE: 'true'
+    depends_on:
+      mysql: {condition: service_healthy}
+      storage-service: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, wget, -q, --spider, http://127.0.0.1:8085/healthz]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+  file-service:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      args: {TARGET: ./services/file-service/cmd/server}
+    volumes: ["./services.example.yaml:/app/conf/go-cloud-storage.dev.yaml:ro"]
+    environment:
+      GCS_SERVER_PORT: 8086
+      GCS_SERVICE_TOKEN: ${GCS_SERVICE_TOKEN:?set service token}
+      GCS_AUTH_URL: http://auth-service:8084
+      GCS_SHARE_URL: http://share-service:8087
+      GCS_STORAGE_TOKEN: ${GCS_STORAGE_TOKEN:?set storage token}
+      GCS_DB_NAME: cloudbox_file
+      GCS_DB_USER: cloudbox_file
+      GCS_DB_PASSWORD: ${GCS_FILE_DB_PASSWORD:?set database password}
+      GCS_AUTO_MIGRATE: 'true'
+      GCS_REDIS_DB: 1
+      GCS_RABBITMQ_URL: amqp://cloudbox:${RABBITMQ_PASSWORD:?set URL-safe RabbitMQ password}@rabbitmq:5672/
+    depends_on:
+      mysql: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      storage-service: {condition: service_healthy}
+      rabbitmq: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, wget, -q, --spider, http://127.0.0.1:8086/healthz]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+  share-service:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      args: {TARGET: ./services/share-service/cmd/server}
+    volumes: ["./services.example.yaml:/app/conf/go-cloud-storage.dev.yaml:ro"]
+    environment:
+      GCS_SERVER_PORT: 8087
+      GCS_SERVICE_TOKEN: ${GCS_SERVICE_TOKEN:?set service token}
+      GCS_AUTH_URL: http://auth-service:8084
+      GCS_FILE_URL: http://file-service:8086
+      GCS_STORAGE_TOKEN: ${GCS_STORAGE_TOKEN:?set storage token}
+      GCS_DB_NAME: cloudbox_share
+      GCS_DB_USER: cloudbox_share
+      GCS_DB_PASSWORD: ${GCS_SHARE_DB_PASSWORD:?set database password}
+      GCS_AUTO_MIGRATE: 'true'
+      GCS_RABBITMQ_URL: amqp://cloudbox:${RABBITMQ_PASSWORD:?set URL-safe RabbitMQ password}@rabbitmq:5672/
+    depends_on:
+      mysql: {condition: service_healthy}
+      storage-service: {condition: service_healthy}
+      rabbitmq: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, wget, -q, --spider, http://127.0.0.1:8087/healthz]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+  notification-service:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      args: {TARGET: ./services/notification-service/cmd/server}
+    volumes: ["./services.example.yaml:/app/conf/go-cloud-storage.dev.yaml:ro"]
+    environment:
+      GCS_SERVER_PORT: 8088
+      GCS_SERVICE_TOKEN: ${GCS_SERVICE_TOKEN:?set service token}
+      GCS_AUTH_URL: http://auth-service:8084
+      GCS_DB_NAME: cloudbox_notification
+      GCS_DB_USER: cloudbox_notification
+      GCS_DB_PASSWORD: ${GCS_NOTIFICATION_DB_PASSWORD:?set database password}
+      GCS_AUTO_MIGRATE: 'true'
+      GCS_REDIS_DB: 2
+      GCS_RABBITMQ_URL: amqp://cloudbox:${RABBITMQ_PASSWORD:?set URL-safe RabbitMQ password}@rabbitmq:5672/
+    depends_on:
+      mysql: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      rabbitmq: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, wget, -q, --spider, http://127.0.0.1:8088/healthz]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+  storage-service:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      args:
+        TARGET: ./services/storage-service/cmd/server
+    environment:
+      GCS_STORAGE_TOKEN: ${GCS_STORAGE_TOKEN:?set GCS_STORAGE_TOKEN}
+      GCS_MINIO_ENDPOINT: minio:9000
+      GCS_MINIO_PUBLIC_ENDPOINT: ${GCS_MINIO_PUBLIC_ENDPOINT:-localhost:9000}
+      GCS_MINIO_ACCESS_KEY: ${GCS_MINIO_ACCESS_KEY:?set GCS_MINIO_ACCESS_KEY}
+      GCS_MINIO_SECRET_KEY: ${GCS_MINIO_SECRET_KEY:?set GCS_MINIO_SECRET_KEY}
+      GCS_MINIO_BUCKET: go-cloud-storage
+      GCS_MINIO_REGION: us-east-1
+    depends_on:
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8082/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+  mysql:
+    build:
+      context: ..
+      dockerfile: deploy/mysql.Dockerfile
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set root password}
+      GCS_USER_DB_PASSWORD: ${GCS_USER_DB_PASSWORD:?set user db password}
+      GCS_FILE_DB_PASSWORD: ${GCS_FILE_DB_PASSWORD:?set file db password}
+      GCS_SHARE_DB_PASSWORD: ${GCS_SHARE_DB_PASSWORD:?set share db password}
+      GCS_NOTIFICATION_DB_PASSWORD: ${GCS_NOTIFICATION_DB_PASSWORD:?set notification db password}
+    volumes:
+      - services-mysql-data:/var/lib/mysql
+    healthcheck:
+      test: [CMD-SHELL, 'mysqladmin ping -h 127.0.0.1 --silent']
+      interval: 5s
+      timeout: 5s
+      retries: 30
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: cloudbox
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?set RabbitMQ password}
+    volumes: ["rabbitmq-data:/var/lib/rabbitmq"]
+    healthcheck:
+      test: [CMD, rabbitmq-diagnostics, -q, ping]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+  redis:
+    image: redis:7-alpine
+    command: [redis-server, --appendonly, 'yes']
+    volumes: ["redis-data:/data"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+  minio:
+    build:
+      context: ..
+      dockerfile: deploy/minio.Dockerfile
+    command: server /data --console-address :9001
+    environment:
+      MINIO_ROOT_USER: ${GCS_MINIO_ACCESS_KEY:?set GCS_MINIO_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${GCS_MINIO_SECRET_KEY:?set GCS_MINIO_SECRET_KEY}
+    ports: ["127.0.0.1:9000:9000", "127.0.0.1:9001:9001"]
+    volumes: ["minio-data:/data"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+volumes:
+  services-mysql-data:
+  redis-data:
+  minio-data:
+  rabbitmq-data:
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+          ip_range: 172.30.0.128/25

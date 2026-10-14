@@ -5,8 +5,14 @@ import (
 	"go-cloud-storage/backend/internal/models"
 	"go-cloud-storage/backend/internal/repositories"
 	"go-cloud-storage/backend/pkg/filetypes"
+	"gorm.io/gorm"
 	"math"
 )
+
+type ShareIndex interface {
+	CountSharedFiles(int) (int64, error)
+	DeleteBatch(*gorm.DB, []string) error
+}
 
 // StatsService 统计服务接口
 type StatsService interface {
@@ -16,11 +22,11 @@ type StatsService interface {
 type statsService struct {
 	fileRepo         repositories.FileRepository
 	storageQuotaRepo repositories.StorageQuotaRepository
-	shareRepo        repositories.ShareRepository
+	shareRepo        ShareIndex
 }
 
 // NewStatsService 创建统计服务实例
-func NewStatsService(fileRepo repositories.FileRepository, storageQuotaRepo repositories.StorageQuotaRepository, shareRepo repositories.ShareRepository) StatsService {
+func NewStatsService(fileRepo repositories.FileRepository, storageQuotaRepo repositories.StorageQuotaRepository, shareRepo ShareIndex) StatsService {
 	return &statsService{
 		fileRepo:         fileRepo,
 		storageQuotaRepo: storageQuotaRepo,
@@ -98,6 +104,9 @@ func (s *statsService) GetUserDashboardStats(userId int) (*models.UserDashboardS
 	folders--
 	// 查询共享文件的数量
 	sharedFiles, err = s.shareRepo.CountSharedFiles(userId)
+	if err != nil {
+		return nil, err
+	}
 
 	// 计算文件类型百分比和GB大小
 	var fileTypeStats []models.FileTypeStat
@@ -123,7 +132,6 @@ func (s *statsService) GetUserDashboardStats(userId int) (*models.UserDashboardS
 		FileTypeStats: fileTypeStats,
 	}, nil
 }
-
 
 func formatSize(bytes int64) string {
 	if bytes == 0 {

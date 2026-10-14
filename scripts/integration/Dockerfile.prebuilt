@@ -1,0 +1,7 @@
+# Local-test fallback when registry/compiler images are unavailable. The base
+# must be a previously built CloudBox runtime (ca-certificates, ffmpeg, UID 10001).
+ARG RUNTIME_IMAGE
+FROM ${RUNTIME_IMAGE}
+COPY --chown=10001:10001 service /app/service
+USER 10001
+ENTRYPOINT ["/app/service"]

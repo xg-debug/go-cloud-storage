@@ -1,0 +1,33 @@
+server:
+  port: 8081 # overridden per service by GCS_SERVER_PORT
+  env: prod
+  storagePath: /tmp/upload
+  publicBaseURL: http://localhost:8080
+  trustedProxies: [172.30.0.2]
+  allowedOrigins: [http://localhost:8080, http://127.0.0.1:8080]
+database:
+  host: mysql
+  port: 3306
+  user: required-via-env
+  dbname: required-via-env
+  maxOpenConns: 30
+  maxIdleConns: 10
+  connMaxLifetime: 1h
+  connMaxIdleTime: 10m
+  logLevel: warn
+redis:
+  enabled: true
+  host: redis
+  port: 6379
+  db: 0
+  poolSize: 20
+storageService:
+  url: http://storage-service:8082
+rabbitmq:
+  enabled: true
+  url: "" # GCS_RABBITMQ_URL required
+  scanIntervalSeconds: 60
+security:
+  maxFileSizeMB: 500
+  defaultQuotaGB: 10
+  rateLimitRPS: 50

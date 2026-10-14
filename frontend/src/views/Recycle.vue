@@ -26,7 +26,7 @@
           </el-table-column>
           <el-table-column label="名称" min-width="260" show-overflow-tooltip><template #default="{ row }"><span class="tbl-link">{{ row.name }}</span></template></el-table-column>
           <el-table-column label="大小" width="100"><template #default="{ row }">{{ row.size_str }}</template></el-table-column>
-          <el-table-column label="删除时间" width="170"><template #default="{ row }">{{ row.deletedDate }}</template></el-table-column>
+          <el-table-column label="删除时间" width="170"><template #default="{ row }">{{ formatDeletedDate(row.deletedDate) }}</template></el-table-column>
           <el-table-column label="剩余" width="90"><template #default="{ row }"><el-tag :type="row.expireDays <= 3 ? 'danger' : 'warning'" size="small" effect="light">{{ row.expireDays }}天</el-tag></template></el-table-column>
           <el-table-column label="操作" width="180" fixed="right">
             <template #default="{ row }">
@@ -76,6 +76,11 @@ const clearDialogVisible = ref(false)
 const deleteDialogVisible = ref(false)
 const deleteTarget = ref(null)
 const deleting = ref(false)
+
+function formatDeletedDate(value) {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? '未知' : date.toLocaleString('zh-CN', { hour12: false })
+}
 
 async function fetch() {
   try { const r = await loadSoftDeletedFiles({ page: currentPage.value, pageSize: pageSize.value }); trashItems.value = r.data || []; totalItems.value = r.total || 0 } catch { ElMessage.error('加载失败') }

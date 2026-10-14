@@ -126,3 +126,8 @@ security:
   maxFileSizeMB: 500           # 单文件上限
   rateLimitRPS: 50             # 每用户每秒请求数
   defaultQuotaGB: 10           # 新用户默认配额
+
+# 留空使用进程内 MinIO；配置后 API 不再需要 MinIO 凭据。
+storageService:
+  url: "" # 或 GCS_STORAGE_URL，例如 http://127.0.0.1:8082
+  token: "" # 通过 GCS_STORAGE_TOKEN 设置，至少 32 字节

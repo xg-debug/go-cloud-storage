@@ -6,13 +6,14 @@ import (
 
 // Notification 通知模型
 type Notification struct {
+	EventID   *string   `gorm:"size:64;uniqueIndex" json:"-"`
 	ID        uint      `json:"id" gorm:"primaryKey"`
 	UserID    uint      `json:"user_id" gorm:"not null;index"`
 	Title     string    `json:"title" gorm:"size:255;not null"`
 	Message   string    `json:"message" gorm:"type:text;not null"`
 	Type      string    `json:"type" gorm:"size:50;not null;default:'info'"` // info, success, warning, error
 	IsRead    bool      `json:"is_read" gorm:"default:false"`
-	Link      string    `json:"link" gorm:"size:500"`                        // 可选的跳转链接
+	Link      string    `json:"link" gorm:"size:500"` // 可选的跳转链接
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }

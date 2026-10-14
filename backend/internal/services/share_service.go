@@ -4,13 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	miniosrv "go-cloud-storage/backend/infrastructure/minio"
+	"go-cloud-storage/backend/internal/ports"
 	"log/slog"
 	"math"
 	"net/url"
 	"strings"
 	"time"
 
+	mysqlDriver "github.com/go-sql-driver/mysql"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
@@ -25,6 +26,12 @@ var (
 	ErrShareNotFound    = errors.New("分享不存在")
 )
 
+// ShareFileReader keeps metadata ownership with file-service.
+type ShareFileReader interface {
+	GetUserFileByID(int, string) (*models.File, error)
+	GetFileByIds([]string) ([]models.File, error)
+}
+
 type ShareService interface {
 	CreateShare(userId int, fileId string, expireDays int, extractionCode string) (*models.Share, error)
 	GetUserShares(userId int, page, pageSize int) ([]*ShareItem, int64, error)
@@ -38,15 +45,15 @@ type ShareService interface {
 type shareService struct {
 	notifier  ShareNotifier
 	shareRepo repositories.ShareRepository
-	fileRepo  repositories.FileRepository
-	minio     *miniosrv.MinioService
+	fileRepo  ShareFileReader
+	minio     ports.Storage
 }
 
 type ShareNotifier interface {
 	CreateFileShareNotification(uint, string, string) error
 }
 
-func NewShareService(shareRepo repositories.ShareRepository, fileRepo repositories.FileRepository, minio *miniosrv.MinioService, notifier ShareNotifier) ShareService {
+func NewShareService(shareRepo repositories.ShareRepository, fileRepo ShareFileReader, minio ports.Storage, notifier ShareNotifier) ShareService {
 	return &shareService{
 		notifier:  notifier,
 		shareRepo: shareRepo,
@@ -77,8 +84,10 @@ func (s *shareService) CreateShare(userId int, fileId string, expireDays int, ex
 	// 2. 检查是否已经分享过；已过期的旧分享作废后重建
 	isShared, existShare := s.shareRepo.IsShared(fileId)
 	if isShared {
-		if existShare.ExpireTime != nil && existShare.ExpireTime.Before(time.Now()) {
-			_ = s.shareRepo.Delete(nil, existShare.Id)
+		if existShare.FileVersion != file.ShareVersion || (existShare.ExpireTime != nil && existShare.ExpireTime.Before(time.Now())) {
+			if err := s.shareRepo.Delete(nil, existShare.Id); err != nil {
+				return nil, err
+			}
 		} else {
 			return existShare, nil
 		}
@@ -98,6 +107,7 @@ func (s *shareService) CreateShare(userId int, fileId string, expireDays int, ex
 	share := &models.Share{
 		UserId:         userId,
 		FileId:         fileId,
+		FileVersion:    file.ShareVersion,
 		ShareToken:     shareToken,
 		ExtractionCode: &extractionCode,
 		ExpireTime:     expireTime,
@@ -105,8 +115,21 @@ func (s *shareService) CreateShare(userId int, fileId string, expireDays int, ex
 		DownloadCount:  0,
 	}
 
-	created, err := s.shareRepo.CreateShare(share)
+	var created *models.Share
+	if repo, ok := s.shareRepo.(interface {
+		CreateShareAndEvent(*models.Share, string) (*models.Share, error)
+	}); ok {
+		created, err = repo.CreateShareAndEvent(share, file.Name)
+	} else {
+		created, err = s.shareRepo.CreateShare(share)
+	}
 	if err != nil {
+		var duplicate *mysqlDriver.MySQLError
+		if errors.As(err, &duplicate) && duplicate.Number == 1062 {
+			if ok, winner := s.shareRepo.IsShared(fileId); ok && winner.FileVersion == file.ShareVersion && (winner.ExpireTime == nil || winner.ExpireTime.After(time.Now())) {
+				return winner, nil
+			}
+		}
 		return nil, err
 	}
 	if s.notifier != nil {
@@ -158,10 +181,10 @@ func (s *shareService) GetUserShares(userId int, page, pageSize int) ([]*ShareIt
 		fileMap[f.Id] = f
 	}
 
-	var result []*ShareItem
+	result := make([]*ShareItem, 0, len(shares))
 	for _, share := range shares {
 		file, ok := fileMap[share.FileId]
-		if !ok || file.UserId != userId || file.IsDeleted {
+		if !ok || file.UserId != userId || file.IsDeleted || share.FileVersion != file.ShareVersion {
 			continue
 		}
 
@@ -231,7 +254,7 @@ func (s *shareService) GetShareDetail(userId int, shareId int) (*ShareDetail, er
 	}
 
 	file, err := s.fileRepo.GetUserFileByID(userId, share.FileId)
-	if err != nil {
+	if err != nil || file == nil || file.IsDeleted || file.ShareVersion != share.FileVersion {
 		return nil, errors.New("文件不存在")
 	}
 
@@ -295,7 +318,7 @@ func (s *shareService) AccessShare(shareToken string, inputCode string) (*ShareA
 	}
 
 	file, err := s.fileRepo.GetUserFileByID(share.UserId, share.FileId)
-	if err != nil {
+	if err != nil || file == nil || file.IsDeleted || file.ShareVersion != share.FileVersion {
 		return nil, errors.New("文件不存在")
 	}
 
@@ -368,7 +391,7 @@ func (s *shareService) DownloadSharedFile(shareToken string, inputCode string) (
 	}
 
 	file, err := s.fileRepo.GetUserFileByID(share.UserId, share.FileId)
-	if err != nil {
+	if err != nil || file == nil || file.IsDeleted || file.ShareVersion != share.FileVersion {
 		return "", errors.New("文件不存在")
 	}
 

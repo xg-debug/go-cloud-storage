@@ -47,6 +47,7 @@ CREATE TABLE `favorite` (
 
 DROP TABLE IF EXISTS `file`;
 CREATE TABLE `file` (
+  `share_version` bigint NOT NULL DEFAULT 0,
   `id` varchar(40) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL DEFAULT '' COMMENT 'UUID或OSS标识',
   `user_id` int NOT NULL COMMENT '用户ID',
   `name` varchar(255) COLLATE utf8mb4_general_ci NOT NULL COMMENT '原始文件名',
@@ -79,6 +80,8 @@ CREATE TABLE `file` (
 
 DROP TABLE IF EXISTS `notification`;
 CREATE TABLE `notification` (
+  `event_id` varchar(64) DEFAULT NULL,
+  UNIQUE KEY `idx_notification_event_id` (`event_id`),
   `id` bigint unsigned NOT NULL AUTO_INCREMENT,
   `user_id` int NOT NULL,
   `title` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
@@ -139,6 +142,7 @@ CREATE TABLE `recycle_bin` (
 
 DROP TABLE IF EXISTS `share`;
 CREATE TABLE `share` (
+  `file_version` bigint NOT NULL DEFAULT 0,
   `id` int NOT NULL AUTO_INCREMENT,
   `user_id` int NOT NULL COMMENT '分享者ID',
   `file_id` varchar(40) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL COMMENT '分享的文件/文件夹ID',
@@ -224,3 +228,13 @@ CREATE TABLE `user` (
 /*!40101 SET CHARACTER_SET_RESULTS=@OLD_CHARACTER_SET_RESULTS */;
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
+
+-- Durable physical deletion jobs, owned by file-service.
+CREATE TABLE IF NOT EXISTS `object_deletion` (
+ `id` varchar(64) NOT NULL PRIMARY KEY,
+ `object_key` varchar(1024) NOT NULL,
+ `attempts` int NOT NULL DEFAULT 0,
+ `next_attempt_at` datetime(3) NOT NULL,
+ `created_at` datetime(3) NULL,
+ KEY `idx_object_deletion_next_attempt_at` (`next_attempt_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

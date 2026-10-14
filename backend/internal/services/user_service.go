@@ -1,19 +1,22 @@
 package services
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"database/sql"
 	"errors"
 	"fmt"
-	"go-cloud-storage/backend/infrastructure/minio"
 	"go-cloud-storage/backend/internal/models"
 	"go-cloud-storage/backend/internal/models/vo"
+	"go-cloud-storage/backend/internal/ports"
 	"go-cloud-storage/backend/internal/repositories"
 	"go-cloud-storage/backend/pkg/utils"
+	"io"
 	"log/slog"
 	"math/rand"
 	"mime/multipart"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -35,11 +38,12 @@ type UserService interface {
 }
 
 type userService struct {
+	independent  bool
 	db           *gorm.DB
 	userRepo     repositories.UserRepository
 	fileRepo     repositories.FileRepository
 	quotaRepo    repositories.StorageQuotaRepository
-	minio        *minio.MinioService
+	minio        ports.Storage
 	emailService EmailSender
 	resetBaseURL string // 对外访问地址，用于生成密码重置链接
 }
@@ -49,8 +53,18 @@ type EmailSender interface {
 }
 
 func NewUserService(db *gorm.DB, userRepo repositories.UserRepository, fileRepo repositories.FileRepository,
-	quotaRepo repositories.StorageQuotaRepository, minio *minio.MinioService, emailService EmailSender, resetBaseURL string) UserService {
+	quotaRepo repositories.StorageQuotaRepository, minio ports.Storage, emailService EmailSender, resetBaseURL string) UserService {
 	return &userService{db: db, userRepo: userRepo, fileRepo: fileRepo, quotaRepo: quotaRepo, minio: minio, emailService: emailService, resetBaseURL: resetBaseURL}
+}
+
+// NewIndependentUserService owns identity data only. File provisioning is idempotent in file-service.
+type IdentityUserService interface {
+	UserService
+	RootFolderID(int) (string, error)
+}
+
+func NewIndependentUserService(db *gorm.DB, storage ports.Storage, email EmailSender, baseURL string) IdentityUserService {
+	return &userService{db: db, userRepo: repositories.NewUserRepository(db), minio: storage, emailService: email, resetBaseURL: baseURL, independent: true}
 }
 
 func (s *userService) AuthenticateUser(account, password string) (*models.User, error) {
@@ -68,10 +82,15 @@ func (s *userService) AuthenticateUser(account, password string) (*models.User, 
 	return user, nil
 }
 
+var ErrSessionInvalid = errors.New("登录已失效，请重新登录")
+
 func (s *userService) ValidateSession(userId int, version string) error {
 	user, err := s.userRepo.GetUserInfoById(userId)
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
 	if err != nil || user == nil || version == "" || !hmac.Equal([]byte(version), []byte(utils.CredentialVersion(user.Password))) {
-		return errors.New("登录已失效，请重新登录")
+		return ErrSessionInvalid
 	}
 	return nil
 }
@@ -105,6 +124,10 @@ func (s *userService) RegisterUser(email, pwd, pwdConfirm string) error {
 		RegisterTime: time.Now(),
 	}
 
+	if s.independent {
+		user.RootFolderId = utils.NewUUID()
+		return s.db.Create(&user).Error
+	}
 	return s.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(&user).Error; err != nil {
 			return errors.New("注册失败")
@@ -154,7 +177,7 @@ func (s *userService) GetProfile(userId int) (*vo.UserProfileResponse, error) {
 	// 私有桶下头像也需要预签名 URL（24h 有效，每次请求重新生成）
 	avatar := user.Avatar
 	if s.minio != nil {
-		avatar = s.minio.PresignAvatarURL(context.Background(), user.Avatar, 24*time.Hour)
+		avatar = s.minio.PresignStoredObjectURL(context.Background(), user.Avatar, 24*time.Hour)
 	}
 	profile := &vo.UserProfileResponse{
 		Id:       user.Id,
@@ -168,7 +191,7 @@ func (s *userService) GetProfile(userId int) (*vo.UserProfileResponse, error) {
 		}(),
 		Avatar:       avatar,
 		OpenId:       user.OpenId,
-		RegisterTime: user.RegisterTime.Format("2006-01-02 15:04:05"),
+		RegisterTime: user.RegisterTime.Format(time.RFC3339),
 		RootFolderId: user.RootFolderId,
 	}
 	return profile, nil
@@ -302,17 +325,37 @@ func validatePassword(pwd string) error {
 }
 
 func (s *userService) UploadAvatar(ctx context.Context, userId int, file multipart.File, header *multipart.FileHeader) (string, error) {
-	// 上传OSS
-	avatarURL, err := s.minio.UploadAvatarFromStream(ctx, file, userId, header)
+	// Validate at the application boundary; the storage service only sees objects.
+	if header == nil || header.Size > 5*1024*1024 {
+		return "", errors.New("头像大小不能超过5MB")
+	}
+	ext := strings.ToLower(filepath.Ext(header.Filename))
+	if ext != ".jpg" && ext != ".jpeg" && ext != ".png" && ext != ".webp" {
+		return "", errors.New("不支持的头像格式")
+	}
+	data, err := io.ReadAll(io.LimitReader(file, 5*1024*1024+1))
 	if err != nil {
 		return "", err
+	}
+	if len(data) > 5*1024*1024 {
+		return "", errors.New("头像大小不能超过5MB")
+	}
+	avatarKey := fmt.Sprintf("avatars/%d%s", userId, ext)
+	_, err = s.minio.PutObjectStream(ctx, avatarKey, bytes.NewReader(data), int64(len(data)), header.Header.Get("Content-Type"))
+
+	if err != nil {
+		return "", err
+	}
+	avatarURL := s.minio.GenerateObjectURL(avatarKey)
+	if avatarURL == "" {
+		return "", errors.New("生成头像地址失败")
 	}
 	// 更新数据库
 	if err = s.userRepo.UpdateAvatarURL(userId, avatarURL); err != nil {
 		return "", fmt.Errorf("更新用户头像失败: %w", err)
 	}
 	// 私有桶下返回预签名 URL 供前端立即展示
-	return s.minio.PresignAvatarURL(ctx, avatarURL, 24*time.Hour), nil
+	return s.minio.PresignStoredObjectURL(ctx, avatarURL, 24*time.Hour), nil
 }
 
 // generateUsername 生成用户名
@@ -320,4 +363,12 @@ func generateUsername(email string) string {
 	prefix := strings.Split(email, "@")[0]
 	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 	return fmt.Sprintf("User_%s%04d", prefix, rng.Intn(10000))
+}
+
+func (s *userService) RootFolderID(userID int) (string, error) {
+	user, err := s.userRepo.GetUserInfoById(userID)
+	if err != nil {
+		return "", err
+	}
+	return user.RootFolderId, nil
 }

@@ -17,7 +17,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
-	"github.com/minio/minio-go/v7"
+	"go-cloud-storage/backend/internal/ports"
 	"gorm.io/gorm"
 )
 
@@ -88,9 +88,16 @@ func (s *fileService) UploadFile(ctx context.Context, r io.Reader, userId int, f
 	}
 
 	// 上传文件至 MinIO
-	uploadFile, err := s.minio.UploadFromStream(ctx, userId, r, fileName, fileSize, fileHash, parentId)
+	object, err := s.minio.UploadFromStream(ctx, userId, r, fileName, fileSize, fileHash, parentId)
 	if err != nil {
 		return nil, fmt.Errorf("MinIO 上传失败: %w", err)
+	}
+
+	uploadFile := &models.File{
+		Id: utils.NewUUID(), UserId: userId, Name: fileName, Size: object.Size,
+		SizeStr: utils.FormatFileSize(object.Size), FileExtension: strings.ToLower(strings.TrimPrefix(filepath.Ext(fileName), ".")),
+		OssObjectKey: object.ObjectKey, FileHash: fileHash, ParentId: nullableParentID(parentId),
+		CreatedAt: time.Now(), UpdatedAt: time.Now(), FileURL: object.URL, ThumbnailURL: object.ThumbnailURL,
 	}
 
 	// 事务处理：入库 + 扣减配额
@@ -133,9 +140,9 @@ func (s *fileService) InitChunkUpload(ctx context.Context, userId int, fileName,
 	// 分片参数强校验：防止恶意客户端用极小分片制造海量 Redis 字段（内存 DoS），
 	// 或超过 MinIO 单次 Multipart Upload 的 10000 片上限。
 	const (
-		minChunkSize int64 = 1 * 1024 * 1024      // 1MB
-		maxChunkSize int64 = 50 * 1024 * 1024     // 50MB
-		maxChunks          = 10000                // MinIO/S3 硬上限
+		minChunkSize int64 = 1 * 1024 * 1024  // 1MB
+		maxChunkSize int64 = 50 * 1024 * 1024 // 50MB
+		maxChunks          = 10000            // MinIO/S3 硬上限
 	)
 	if chunkSize < minChunkSize {
 		return nil, fmt.Errorf("分片大小过小（最小 %dMB）", minChunkSize/1024/1024)
@@ -439,7 +446,7 @@ func (s *fileService) MergeChunks(ctx context.Context, userId int, fileHash, fil
 		return nil, errors.New("该目录下已有同名的文件")
 	}
 
-	var completeParts []minio.CompletePart
+	var completeParts []ports.CompletedPart
 	seenParts := make(map[int]bool, totalChunks)
 	var uploadedSize int64
 	for k, v := range allFields {
@@ -455,7 +462,7 @@ func (s *fileService) MergeChunks(ctx context.Context, userId int, fileHash, fil
 			if partSize, sizeErr := strconv.ParseInt(allFields[strconv.Itoa(idx)+"_size"], 10, 64); sizeErr == nil {
 				uploadedSize += partSize
 			}
-			completeParts = append(completeParts, minio.CompletePart{
+			completeParts = append(completeParts, ports.CompletedPart{
 				PartNumber: idx + 1,
 				ETag:       v,
 			})
@@ -479,7 +486,7 @@ func (s *fileService) MergeChunks(ctx context.Context, userId int, fileHash, fil
 	})
 
 	// 2.调用 MinIO 合并
-	fileURL, thumbnailURL, err := s.minio.CompleteMultipartUpload(ctx, objectKey, uploadId, completeParts)
+	object, err := s.minio.CompleteMultipartUpload(ctx, objectKey, uploadId, completeParts)
 	if err != nil {
 		return nil, fmt.Errorf("OSS 合并失败: %w", err)
 	}
@@ -512,8 +519,8 @@ func (s *fileService) MergeChunks(ctx context.Context, userId int, fileHash, fil
 		ParentId:      nullableParentID(parentId),
 		OssObjectKey:  objectKey,
 		FileHash:      fileHash,
-		FileURL:       fileURL,
-		ThumbnailURL:  thumbnailURL,
+		FileURL:       object.URL,
+		ThumbnailURL:  object.ThumbnailURL,
 		Size:          fileSize,
 		SizeStr:       utils.FormatFileSize(fileSize),
 		FileExtension: ext,

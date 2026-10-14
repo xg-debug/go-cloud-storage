@@ -73,7 +73,7 @@ func (s favoriteService) GetFavorites(userId, page, pageSize int) ([]dto.Favorit
 			SizeStr:   file.SizeStr,
 			Extension: file.FileExtension,
 			FileURL:   fileURL,
-			CreatedAt: f.CreatedAt.Format("2006-01-02 15:04:05"),
+			CreatedAt: f.CreatedAt.Format(time.RFC3339),
 		})
 	}
 
