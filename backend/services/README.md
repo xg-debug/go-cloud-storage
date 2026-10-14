@@ -9,7 +9,7 @@
 | gateway | Gin 路由、请求 ID、流式代理、清除伪造身份头 | 无业务数据库；仅代理公开路由 |
 | auth-service | 登录、注册入口、刷新、退出、JWT 内省 | Redis DB 0；通过内部 RPC 访问用户服务 |
 | user-service | 用户、密码、头像、密码重置 | `cloudbox_user`：user、password_reset_token；远程存储 |
-| file-service | 文件元数据、目录、上传/分片、下载、收藏、配额、回收站 | `cloudbox_file`：file、favorite、storage_quota、recycle_bin、event_outbox；Redis DB 1；远程存储 |
+| file-service | 文件元数据、目录、上传/分片、下载、收藏、配额、回收站 | `cloudbox_file`：file、favorite、storage_quota、recycle_bin、object_deletion、event_outbox；Redis DB 1；远程存储 |
 | storage-service | 对象、分片、Range、复制删除、缩略图、预签名 URL | MinIO；不连接业务数据库或 Redis |
 | share-service | 分享链接、提取码、有效期、统计 | `cloudbox_share`：share、event_outbox、event_inbox；文件 RPC、远程存储 |
 | notification-service | 站内通知、SSE 推送 | `cloudbox_notification`：notification、event_inbox；Redis DB 2 |
@@ -38,7 +38,20 @@ flowchart LR
     Notification --> Redis[Redis PubSub / SSE]
 ```
 
-现阶段共用 `backend/go.mod`、业务模型及部分实现，启动装配按服务选择依赖，不加载其他服务的数据库。`services/*/cmd/server` 是独立入口，`services/runtime` 负责装配，`internal/distributed` 定义内部 RPC 与消费处理，`infrastructure/eventing` 实现可靠事件。原 `cmd/main.go` 单体入口仍可使用。
+## 源码与依赖边界
+
+六个服务分别位于 `backend/services/<name>-service/`，网关位于 `backend/gateway/`。每个服务拥有 `cmd/server` 入口及自己的 `internal` 实现：
+
+- `bootstrap`：只装配本服务依赖，迁移本服务所属表，启动本服务后台任务。
+- `application` / `domain`：所属业务与模型，不与其他服务共享 ORM 实体。
+- `adapters`：所属数据库仓储、远程客户端及消息消费者；文件服务另有私有 `ports`。
+- `transport`：所属公开与内部 HTTP 接口。认证服务没有业务库模型，存储服务没有用户/文件元数据模型。
+
+`backend/pkg/contracts` 定义 HTTP 数据协议；`pkg/ports` 定义通用对象存储、事务和事件接口；`pkg/platform` 提供连接、事务上下文、Outbox/Inbox 与 RabbitMQ 基础设施。公共包不导入任何服务实现。`go test ./architecture` 检查跨服务导入和协议中的 ORM 标签，Go 的 `internal` 规则同时在编译期阻止越界访问。
+
+仍共用 `backend/go.mod`，便于统一依赖版本；每个入口单独构建，镜像不链接其他服务的业务包。没有共享的业务 `internal/services`、模型、仓储或按角色切换的 `services/runtime`。
+
+原单体入口、进程内事件实现、未启用的阿里云适配器与过渡 `compose.monolith.yaml` 已退役。旧版本代码和部署文件可从提交 `69527fe` 获取；真正的数据回退仍需执行[迁移与回退流程](../../deploy/MIGRATION.md)。本次整理不改变四个数据库的表结构与既有 API 路径，已有拆分库不需要重新搬迁数据。
 
 ## 事件与一致性
 
@@ -72,7 +85,7 @@ docker compose --env-file deploy/.env -f deploy/compose.yaml up --build -d
 
 迁移已有数据前阅读 [迁移与回退说明](../../deploy/MIGRATION.md)。不要对已有数据库执行包含 DROP TABLE 的根目录 `db.sql`。
 
-不使用 Docker 时，每个进程分别配置 `go-cloud-storage.dev.yaml`（参考 `deploy/services.example.yaml`），按 Compose 同名环境变量设置数据库、服务 URL 和令牌，在 `backend` 目录运行 `go run ./services/<name>-service/cmd/server`；网关运行 `go run ./cmd/gateway`。需事先启动 MySQL、Redis、RabbitMQ、MinIO。原单体 + 远程存储过渡拓扑保留在 `deploy/compose.monolith.yaml`；切换数据后不能直接回退写入旧库。
+不使用 Docker 时，每个进程分别配置 `go-cloud-storage.dev.yaml`（参考 `deploy/services.example.yaml`），按 Compose 同名环境变量设置数据库、服务 URL 和令牌，在 `backend` 目录运行 `go run ./services/<name>-service/cmd/server`；网关运行 `go run ./gateway/cmd/server`。需事先启动 MySQL、Redis、RabbitMQ、MinIO。每个服务只启动自己的入口；切换数据后不能直接回退写入旧库。
 
 ## 内部接口
 
@@ -86,7 +99,7 @@ docker compose --env-file deploy/.env -f deploy/compose.yaml up --build -d
 cd backend
 go test ./...
 go vet ./...
-go test -race ./internal/distributed ./infrastructure/eventing ./internal/gateway ./services/storage-service/internal/transport ./infrastructure/minio
+go test -race ./...
 cd ..
 python3 scripts/integration/microservices_smoke.py
 # 同样业务检查，改为构建并启动七个应用容器
@@ -97,9 +110,9 @@ python3 scripts/integration/compose_deployment_smoke.py
 
 集成脚本构建七个本机 Go 进程，使用独立临时 Docker 项目启动真实 MySQL/Redis/RabbitMQ/MinIO，并在结束后清理自己的容器和卷。覆盖注册登录、上传、Range、分享、通知、消费者重启补消费、删除恢复后的分享失效、数据库账号隔离、密码修改撤销会话；不修改现有业务数据。失败诊断保存在忽略目录 `backend/tmp/microservices-smoke/`。支持 `GCS_TEST_MYSQL_IMAGE`、`GCS_TEST_REDIS_IMAGE`、`GCS_TEST_RABBITMQ_IMAGE`、`GCS_TEST_MINIO_IMAGE` 覆盖镜像。
 
-2026-10-08 已完成七个应用镜像构建与真实容器联调，使用默认 MySQL 8.0、Redis 7、RabbitMQ 3.13 以及固定官方源码构建的 MinIO。覆盖分片跨进程重启续传、完整下载哈希、消息队列停机补发、存储失败配额不变、认证/数据库故障恢复、会话撤销与跨时区时间格式。此前 Docker Hub EOF 和旧 MinIO 镜像不可拉取的阻塞已解决。CI 包含本机进程和应用容器两种模式；未提交到远端前，本次只能确认本地运行结果。
+2026-10-08 已完成七个应用镜像构建与真实容器联调，使用默认 MySQL 8.0、Redis 7、RabbitMQ 3.13 以及固定官方源码构建的 MinIO。覆盖分片跨进程重启续传、完整下载哈希、消息队列停机补发、存储失败配额不变、认证/数据库故障恢复、会话撤销与跨时区时间格式。此前 Docker Hub EOF 和旧 MinIO 镜像不可拉取的阻塞已解决。CI 包含本机进程和应用容器两种模式；历史结果与本次代码边界改造的验证分开记录。
 
-浏览器验证和已知上线缺口见 [验收记录](../../deploy/VERIFICATION.md)。这不是生产发布验收：仍需旧数据迁移演练、目标服务器配置、压力测试、备份监控、依赖安全更新以及生产存储版本维护方案。文件夹分享、完整文件版本历史等原项目未有功能未在本次额外实现。
+浏览器验证和已知上线缺口见 [验收记录](../../deploy/VERIFICATION.md)。这不是生产发布验收：已完成临时数据迁移演练，仍需真实历史数据验证、目标服务器配置、压力测试、备份监控、依赖安全更新以及生产存储版本维护方案。文件夹分享、完整文件版本历史等原项目未有功能未在本次额外实现。
 
 
 本地离线镜像回退测试：当 Docker Hub 不可达，可以设置 `GCS_TEST_MYSQL_IMAGE`、`GCS_TEST_MINIO_IMAGE` 指向已有镜像，并使用 `--containers --local-runtime-image <已构建的CloudBox运行时镜像>`。脚本按镜像架构交叉编译当前代码，构建并运行七个应用容器；这覆盖容器运行行为，不代替默认 Dockerfile 从远端获取构建依赖的验证。追加 `--migration-rehearsal` 可执行临时数据迁移与反向复制演练。

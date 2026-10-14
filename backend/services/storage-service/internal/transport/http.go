@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"go-cloud-storage/backend/infrastructure/storagehttp"
-	"go-cloud-storage/backend/internal/ports"
+	ports "go-cloud-storage/backend/pkg/ports"
+	storagehttp "go-cloud-storage/backend/pkg/storagehttp"
 )
 
 // NewHandler exposes only object operations. It has no access to MySQL, Redis,

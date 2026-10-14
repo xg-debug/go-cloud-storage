@@ -149,7 +149,7 @@ def main():
         try:
             print('Preparing container integration...' if containers else 'Building seven service binaries...',flush=True)
             for role in ([] if containers and not args.local_runtime_image else ROLES):
-                target = './cmd/gateway' if role=='gateway' else f'./services/{role}-service/cmd/server'
+                target = './gateway/cmd/server' if role=='gateway' else f'./services/{role}-service/cmd/server'
                 build_env = env.copy()
                 if args.local_runtime_image: build_env.update(GOOS='linux',GOARCH=build_arch,CGO_ENABLED='0')
                 subprocess.run(['go','build','-o',str(tmp/role),target],cwd=ROOT/'backend',env=build_env,check=True)
@@ -198,7 +198,7 @@ def main():
                               GCS_STORAGE_LISTEN=f':{ports["storage"]}', GCS_GATEWAY_LISTEN=f':{ports["gateway"]}')
                     for peer in ['auth','user','file','share','notification']:
                         se['GCS_'+peer.upper()+'_URL'] = f'http://{peer}:{ports[peer]}'
-                    target = './cmd/gateway' if role == 'gateway' else f'./services/{role}-service/cmd/server'
+                    target = './gateway/cmd/server' if role == 'gateway' else f'./services/{role}-service/cmd/server'
                     services[role] = {'build': {'context': str(ROOT), 'dockerfile': 'deploy/Dockerfile', 'args': {'TARGET': target}},
                                       'environment': se, 'ports': [f'127.0.0.1:{ports[role]}:{ports[role]}'],
                                       'volumes': [f'{file}:/app/conf/go-cloud-storage.dev.yaml:ro']}

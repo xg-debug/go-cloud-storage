@@ -13,10 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"go-cloud-storage/backend/infrastructure/storagehttp"
-	"go-cloud-storage/backend/internal/models"
-	"go-cloud-storage/backend/internal/ports"
-	"go-cloud-storage/backend/internal/services"
+	ports "go-cloud-storage/backend/pkg/ports"
+	storagehttp "go-cloud-storage/backend/pkg/storagehttp"
 	"go-cloud-storage/backend/services/storage-service/internal/transport"
 )
 
@@ -306,94 +304,5 @@ func TestClientCancellationAndNoCredentialRedirect(t *testing.T) {
 	cancel()
 	if _, err := client.GetObjectInfo(ctx, "file"); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancellation lost: %v", err)
-	}
-}
-
-type fileRepository struct {
-	ports.UploadFileRepository
-	file *models.File
-	fail bool
-}
-
-func (r *fileRepository) CheckDuplicateName(context.Context, int, string, string) (bool, error) {
-	return false, nil
-}
-func (r *fileRepository) FindByHash(context.Context, int, string) (*models.File, error) {
-	return nil, nil
-}
-func (r *fileRepository) Create(ctx context.Context, f *models.File) error {
-	if r.fail {
-		return errors.New("database unavailable")
-	}
-	r.file = f
-	return nil
-}
-func (r *fileRepository) GetUserFile(ctx context.Context, userID int, id string) (*models.File, error) {
-	if r.file != nil && r.file.UserId == userID && r.file.Id == id {
-		return r.file, nil
-	}
-	return nil, nil
-}
-
-type quota struct{ used int64 }
-
-func (q *quota) GetAvailableSpace(context.Context, int) (int64, error)     { return 1024, nil }
-func (q *quota) AddUsedSpace(ctx context.Context, user int, n int64) error { q.used += n; return nil }
-
-type transaction struct{}
-
-func (transaction) WithinTransaction(ctx context.Context, fn func(context.Context) error) error {
-	return fn(ctx)
-}
-
-type sessions struct{ ports.UploadSessionStore }
-type events struct{ items []ports.Event }
-
-func (e *events) Publish(ctx context.Context, event ports.Event) error {
-	e.items = append(e.items, event)
-	return nil
-}
-
-func TestUploadApplicationThroughRemoteStorage(t *testing.T) {
-	store := newStorage()
-	store.thumbnail = make(chan struct{})
-	client, _ := setup(t, store)
-	files := &fileRepository{}
-	q := &quota{}
-	bus := &events{}
-	app := services.NewUploadApplication(files, q, transaction{}, sessions{}, client, bus)
-	file, err := app.UploadFile(context.Background(), strings.NewReader("payload"), 7, "a.txt", 7, "hash", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	select {
-	case <-store.thumbnail:
-	case <-time.After(time.Second):
-		t.Fatal("thumbnail call not received")
-	}
-	if files.file != file || q.used != 7 || len(bus.items) != 1 || bus.items[0].Type != "file.uploaded.v1" {
-		t.Fatal("metadata/quota/event missing")
-	}
-	download := services.NewDownloadApplication(files, client)
-	r, _, size, err := download.DownloadRange(context.Background(), 7, file.Id, 0, 6)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if size != 7 || read(t, r) != "payload" {
-		t.Fatal("download mismatch")
-	}
-	if _, _, _, err = download.DownloadRange(context.Background(), 8, file.Id, 0, 6); err == nil {
-		t.Fatal("another user accessed file")
-	}
-	// Database failure compensates the object and must not emit a success event.
-	files.fail = true
-	if _, err = app.UploadFile(context.Background(), strings.NewReader("bad"), 7, "b.txt", 3, "other", ""); err == nil {
-		t.Fatal("database failure ignored")
-	}
-	store.mu.Lock()
-	count := len(store.objects)
-	store.mu.Unlock()
-	if count != 1 || len(bus.items) != 1 || q.used != 7 {
-		t.Fatal("compensation/event invariant failed")
 	}
 }

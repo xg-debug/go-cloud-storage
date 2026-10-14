@@ -3,7 +3,7 @@ WORKDIR /src
 COPY backend/go.mod backend/go.sum ./
 RUN go mod download
 COPY backend/ ./
-ARG TARGET=./cmd
+ARG TARGET=./gateway/cmd/server
 RUN CGO_ENABLED=0 go build -trimpath -o /service ${TARGET}
 
 FROM alpine:3.22

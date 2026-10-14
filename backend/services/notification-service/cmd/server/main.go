@@ -1,5 +1,5 @@
 package main
 
-import "go-cloud-storage/backend/services/runtime"
+import "go-cloud-storage/backend/services/notification-service/internal/bootstrap"
 
-func main() { runtime.Main("notification") }
+func main() { bootstrap.Main() }
