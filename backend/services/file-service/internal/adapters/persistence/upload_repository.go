@@ -124,3 +124,14 @@ func (r *GormUploadQuotaRepository) AddUsedSpace(ctx context.Context, userID int
 
 var _ fileports.UploadFileRepository = (*GormUploadFileRepository)(nil)
 var _ fileports.UploadQuotaRepository = (*GormUploadQuotaRepository)(nil)
+
+// LockUser uses the same first lock as delete, restore and purge. The caller must
+// hold a transaction so parent validation and metadata commit cannot race deletion.
+func (r *GormUploadQuotaRepository) LockUser(ctx context.Context, userID int) error {
+	tx := transaction.TransactionDB(ctx, nil)
+	if tx == nil {
+		return errors.New("upload owner lock requires transaction")
+	}
+	var quota domain.StorageQuota
+	return tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("user_id = ?", userID).First(&quota).Error
+}

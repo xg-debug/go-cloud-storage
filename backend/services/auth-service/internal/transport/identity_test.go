@@ -60,11 +60,13 @@ func TestIdentityHTTPChainAndRevocation(t *testing.T) {
 		t.Fatal("credential version lost")
 	}
 	authRouter := gin.New()
-	RegisterAuthInternal(authRouter, testToken, remote)
+	sessions := &memorySessions{}
+	sessions.start(context.Background(), 7, "session", "refresh", time.Hour)
+	RegisterAuthInternal(authRouter, testToken, remote, sessions)
 	authServer := httptest.NewServer(authRouter)
 	defer authServer.Close()
 	authClient, _ := rpc.NewClient(authServer.URL, testToken)
-	token, err := utils.GenerateAccessToken(7, time.Minute, users.version)
+	token, err := utils.GenerateAccessToken(7, time.Minute, users.version, "session")
 	if err != nil {
 		t.Fatal(err)
 	}

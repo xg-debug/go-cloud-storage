@@ -18,6 +18,7 @@ type UploadFileRepository interface {
 
 // UploadQuotaRepository is the minimal quota boundary required by uploads.
 type UploadQuotaRepository interface {
+	LockUser(ctx context.Context, userID int) error
 	GetAvailableSpace(ctx context.Context, userID int) (int64, error)
 	AddUsedSpace(ctx context.Context, userID int, delta int64) error
 }

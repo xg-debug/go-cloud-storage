@@ -13,10 +13,11 @@ var (
 
 // UploadPartState is the storage-neutral state persisted for one uploaded part.
 type UploadPartState struct {
-	Index int
-	ETag  string
-	Hash  string
-	Size  int64
+	UploadID string
+	Index    int
+	ETag     string
+	Hash     string
+	Size     int64
 }
 
 // UploadSession is the application representation of a resumable upload.
@@ -53,10 +54,10 @@ type UploadSessionStore interface {
 	Save(ctx context.Context, session *UploadSession) error
 	SavePart(ctx context.Context, userID int, fileHash string, part UploadPartState) error
 	Refresh(ctx context.Context, userID int, fileHash string) error
-	Delete(ctx context.Context, userID int, fileHash string) error
+	Delete(ctx context.Context, userID int, fileHash string, uploadID string) error
 
-	AcquireMergeLock(ctx context.Context, userID int, fileHash string, ttl time.Duration) (bool, error)
-	ReleaseMergeLock(ctx context.Context, userID int, fileHash string) error
+	AcquireMergeLock(ctx context.Context, userID int, fileHash string, owner string, ttl time.Duration) (bool, error)
+	ReleaseMergeLock(ctx context.Context, userID int, fileHash string, owner string) error
 
 	ListExpired(ctx context.Context, before time.Time, limit int64) ([]UploadSessionRef, error)
 }

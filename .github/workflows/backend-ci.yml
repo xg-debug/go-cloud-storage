@@ -24,6 +24,12 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+    env:
+      GCS_TEST_REDIS_ADDR: 127.0.0.1:6379
     defaults:
       run:
         working-directory: backend

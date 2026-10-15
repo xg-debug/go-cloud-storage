@@ -2,17 +2,14 @@ package transport
 
 import (
 	"errors"
-	"fmt"
-	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/go-redis/redis/v8"
 
+	authrpc "go-cloud-storage/backend/pkg/auth"
 	contracts "go-cloud-storage/backend/pkg/contracts"
 	middleware "go-cloud-storage/backend/pkg/httpmiddleware"
-	cache "go-cloud-storage/backend/pkg/platform/cache"
 	"go-cloud-storage/backend/pkg/utils"
 )
 
@@ -24,10 +21,11 @@ type LoginUsers interface {
 
 type LoginController struct {
 	userService LoginUsers
+	sessions    sessionStore
 }
 
 func NewLoginController(service LoginUsers) *LoginController {
-	return &LoginController{userService: service}
+	return &LoginController{userService: service, sessions: redisSessions{}}
 }
 
 type LoginRequest struct {
@@ -75,28 +73,21 @@ func (c *LoginController) Login(ctx *gin.Context) {
 		refreshTokenExpire = 24 * time.Hour // 默认刷新有效期24小时
 	}
 
+	sid := utils.NewUUID()
 	// 生成JWT Token
-	accessToken, err := utils.GenerateAccessToken(user.Id, 2*time.Hour, version)
+	accessToken, err := utils.GenerateAccessToken(user.Id, 2*time.Hour, version, sid)
 	if err != nil {
 		utils.Fail(ctx, http.StatusInternalServerError, "生成访问令牌失败")
 		return
 	}
-	refreshToken, err := utils.GenerateRefreshToken(user.Id, refreshTokenExpire, version)
+	refreshToken, err := utils.GenerateRefreshToken(user.Id, refreshTokenExpire, version, sid)
 	if err != nil {
 		utils.Fail(ctx, http.StatusInternalServerError, "生成刷新令牌失败")
 		return
 	}
 
-	// 存入redis
-	rdb := cache.GetClient()
-	refreshKey := fmt.Sprintf("user:%d:refresh_token", user.Id)
-
-	// 仅存储刷新令牌，访问令牌无需存储（无状态JWT）
-	if rdb == nil {
-		// Redis 不可用时降级：签发令牌但跳过持久化（刷新接口将因无法校验而拒绝）
-		slog.Warn("redis unavailable, refresh token persistence skipped", "userId", user.Id)
-	} else if err = rdb.Set(ctx.Request.Context(), refreshKey, refreshToken, refreshTokenExpire).Err(); err != nil {
-		utils.Fail(ctx, http.StatusInternalServerError, "刷新令牌存储失败")
+	if err = c.sessions.start(ctx.Request.Context(), user.Id, sid, refreshToken, refreshTokenExpire); err != nil {
+		ctx.JSON(503, gin.H{"code": 503, "message": "会话服务暂不可用"})
 		return
 	}
 
@@ -129,23 +120,17 @@ func (c *LoginController) RefreshToken(ctx *gin.Context) {
 		utils.Fail(ctx, http.StatusUnauthorized, "登录已失效，请重新登录")
 		return
 	}
-	rdb := cache.GetClient()
-	if rdb == nil {
-		ctx.JSON(http.StatusServiceUnavailable, gin.H{"code": 503, "message": "会话服务暂不可用"})
-		return
-	}
-	refreshKey := fmt.Sprintf("user:%d:refresh_token", claims.UserId)
-	storedToken, err := rdb.Get(ctx.Request.Context(), refreshKey).Result()
-	if err != nil && !errors.Is(err, redis.Nil) {
-		ctx.JSON(http.StatusServiceUnavailable, gin.H{"code": 503, "message": "会话服务暂不可用"})
-		return
-	}
-	if errors.Is(err, redis.Nil) || storedToken != refreshToken {
-		utils.Fail(ctx, http.StatusUnauthorized, "RefreshToken已失效")
+	if err = c.sessions.validate(ctx.Request.Context(), claims.UserId, claims.SessionID, refreshToken); err != nil {
+		if errors.Is(err, contracts.ErrSessionInvalid) {
+			middleware.ClearAuthCookies(ctx)
+			utils.Fail(ctx, 401, "RefreshToken已失效")
+		} else {
+			ctx.JSON(503, gin.H{"code": 503, "message": "会话服务暂不可用"})
+		}
 		return
 	}
 	// 生成新的 访问令牌（始终2小时）
-	newToken, err := utils.GenerateAccessToken(claims.UserId, 2*time.Hour, claims.CredentialVersion)
+	newToken, err := utils.GenerateAccessToken(claims.UserId, 2*time.Hour, claims.CredentialVersion, claims.SessionID)
 	if err != nil {
 		utils.Fail(ctx, http.StatusInternalServerError, "生成新令牌失败")
 		return
@@ -172,13 +157,19 @@ func (c *LoginController) Register(ctx *gin.Context) {
 }
 
 func (c *LoginController) Logout(ctx *gin.Context) {
-	userId := ctx.GetInt("userId")
-	// 删除刷新令牌
-	refreshKey := fmt.Sprintf("user:%d:refresh_token", userId)
-	if rdb := cache.GetClient(); rdb != nil {
-		if err := rdb.Del(ctx.Request.Context(), refreshKey).Err(); err != nil {
-			slog.Error("删除refresh token缓存失败", "error", err)
-		}
+	token, err := authrpc.AccessToken(ctx.Request)
+	if err != nil {
+		ctx.Status(401)
+		return
+	}
+	claims, err := utils.ParseTokenWithType(token, "access")
+	if err != nil || claims.UserId != ctx.GetInt("userId") {
+		ctx.Status(401)
+		return
+	}
+	if err = c.sessions.revoke(ctx.Request.Context(), claims.UserId, claims.SessionID); err != nil {
+		ctx.JSON(503, gin.H{"code": 503, "message": "会话服务暂不可用，请重试退出"})
+		return
 	}
 	middleware.ClearAuthCookies(ctx)
 	utils.Success(ctx, gin.H{"message": "退出成功"})

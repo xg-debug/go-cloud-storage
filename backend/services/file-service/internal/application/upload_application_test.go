@@ -2,7 +2,9 @@ package application
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -111,7 +113,7 @@ func (f *fakeSessionStore) Save(_ context.Context, s *fileports.UploadSession) e
 }
 func (f *fakeSessionStore) SavePart(_ context.Context, userID int, hash string, part fileports.UploadPartState) error {
 	s, ok := f.sessions[sessionMapKey(userID, hash)]
-	if !ok {
+	if !ok || s.UploadID != part.UploadID {
 		return fileports.ErrUploadSessionNotFound
 	}
 	if s.Parts == nil {
@@ -122,16 +124,19 @@ func (f *fakeSessionStore) SavePart(_ context.Context, userID int, hash string, 
 	return nil
 }
 func (f *fakeSessionStore) Refresh(context.Context, int, string) error { return nil }
-func (f *fakeSessionStore) Delete(_ context.Context, userID int, hash string) error {
+func (f *fakeSessionStore) Delete(_ context.Context, userID int, hash string, uploadID string) error {
+	if current := f.sessions[sessionMapKey(userID, hash)]; current != nil && current.UploadID != uploadID {
+		return nil
+	}
 	delete(f.sessions, sessionMapKey(userID, hash))
 	f.deleteCalls++
 	return nil
 }
-func (f *fakeSessionStore) AcquireMergeLock(context.Context, int, string, time.Duration) (bool, error) {
+func (f *fakeSessionStore) AcquireMergeLock(context.Context, int, string, string, time.Duration) (bool, error) {
 	f.lockCalls++
 	return f.lockResult, f.lockErr
 }
-func (f *fakeSessionStore) ReleaseMergeLock(context.Context, int, string) error {
+func (f *fakeSessionStore) ReleaseMergeLock(context.Context, int, string, string) error {
 	f.releaseCalls++
 	return nil
 }
@@ -254,7 +259,7 @@ func TestUploadApplicationInstantUploadReusesExistingObject(t *testing.T) {
 	events := &fakeEventBus{}
 	app := newUploadTestApp(files, quotas, tx, sessions, storage, events)
 
-	file, err := app.UploadFile(context.Background(), strings.NewReader("ignored"), 1, "paper.pdf", 128, "hash", "")
+	file, err := app.UploadFile(context.Background(), strings.NewReader(strings.Repeat("x", 128)), 1, "paper.pdf", 128, payloadHash(strings.Repeat("x", 128)), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -281,7 +286,7 @@ func TestUploadApplicationPersistenceFailureCleansObject(t *testing.T) {
 	storage := &fakeStorage{uploadObject: &ports.StoredObject{ObjectKey: "objects/new", Size: 100}}
 	app := newUploadTestApp(files, quotas, tx, sessions, storage, &fakeEventBus{})
 
-	_, err := app.UploadFile(context.Background(), strings.NewReader("data"), 1, "new.pdf", 100, "hash", "")
+	_, err := app.UploadFile(context.Background(), strings.NewReader(strings.Repeat("x", 100)), 1, "new.pdf", 100, payloadHash(strings.Repeat("x", 100)), "")
 	if err == nil {
 		t.Fatal("expected persistence failure")
 	}
@@ -359,7 +364,7 @@ func TestMergeChunksRespectsDistributedLock(t *testing.T) {
 	app := newUploadTestApp(&fakeUploadFileRepo{}, &fakeUploadQuotaRepo{}, &fakeTxManager{}, sessions, &fakeStorage{}, &fakeEventBus{})
 
 	_, err := app.MergeChunks(context.Background(), 1, "hash", "a.pdf", "", 1, 1, 1)
-	if err == nil || !strings.Contains(err.Error(), "合并正在进行中") {
+	if err == nil || !strings.Contains(err.Error(), "上传任务正在处理中") {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -412,8 +417,12 @@ func TestInstantUploadRejectsSourcePurgedAfterLookup(t *testing.T) {
 	quota := &fakeUploadQuotaRepo{available: 1024}
 	events := &fakeEventBus{}
 	app := newUploadTestApp(files, quota, &fakeTxManager{}, newFakeSessionStore(), &fakeStorage{}, events)
-	_, err := app.UploadFile(context.Background(), strings.NewReader("ignored"), 1, "copy.txt", 128, "hash", "")
+	_, err := app.UploadFile(context.Background(), strings.NewReader(strings.Repeat("x", 128)), 1, "copy.txt", 128, payloadHash(strings.Repeat("x", 128)), "")
 	if err == nil || len(files.created) != 0 || quota.added != 0 || len(events.events) != 0 {
 		t.Fatal("stale object reference persisted")
 	}
 }
+
+func (q *fakeUploadQuotaRepo) LockUser(context.Context, int) error { return nil }
+
+func payloadHash(s string) string { return fmt.Sprintf("%x", sha256.Sum256([]byte(s))) }

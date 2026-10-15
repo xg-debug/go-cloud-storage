@@ -348,15 +348,24 @@ func (s *shareService) AccessShare(shareToken string, inputCode string) (*ShareA
 		slog.Error("更新访问计数失败", "error", err, "shareId", share.Id)
 	}
 
-	// 私有桶：一律返回短期预签名 URL，绝不外泄永久直链（分享取消/过期后 URL 自动失效）
+	// Signed URLs expire no later than the remaining share lifetime. Previously
+	// issued URLs cannot be revoked immediately when a share is cancelled.
+	previewTTL, err := shareURLTTL(share.ExpireTime, presignedFileURLTTL)
+	if err != nil {
+		return nil, err
+	}
+	thumbTTL, err := shareURLTTL(share.ExpireTime, presignedThumbURLTTL)
+	if err != nil {
+		return nil, err
+	}
 	previewURL := ""
 	thumbURL := ""
 	if !file.IsDir && file.OssObjectKey != "" && s.minio != nil {
-		if u, err := s.minio.PresignedGetPreviewURL(context.Background(), file.OssObjectKey, presignedFileURLTTL); err == nil {
+		if u, err := s.minio.PresignedGetPreviewURL(context.Background(), file.OssObjectKey, previewTTL); err == nil {
 			previewURL = u
 		}
 		if file.ThumbnailURL != "" && file.ThumbnailURL != file.FileURL {
-			thumbURL = s.minio.PresignStoredObjectURL(context.Background(), file.ThumbnailURL, presignedThumbURLTTL)
+			thumbURL = s.minio.PresignStoredObjectURL(context.Background(), file.ThumbnailURL, thumbTTL)
 		}
 	}
 	officePreviewURL := buildShareOfficePreviewURL(previewURL)
@@ -401,7 +410,11 @@ func (s *shareService) DownloadSharedFile(shareToken string, inputCode string) (
 	}
 
 	if s.minio != nil {
-		return s.minio.PresignedDownloadURL(context.Background(), file.OssObjectKey, file.Name, 10*time.Minute)
+		ttl, err := shareURLTTL(share.ExpireTime, 10*time.Minute)
+		if err != nil {
+			return "", err
+		}
+		return s.minio.PresignedDownloadURL(context.Background(), file.OssObjectKey, file.Name, ttl)
 	}
 	return file.FileURL, nil
 }
@@ -453,3 +466,17 @@ const (
 	presignedFileURLTTL  = 30 * time.Minute
 	presignedThumbURLTTL = 24 * time.Hour
 )
+
+func shareURLTTL(expires *time.Time, maximum time.Duration) (time.Duration, error) {
+	ttl := maximum
+	if expires != nil {
+		remaining := time.Until(*expires).Truncate(time.Second)
+		if remaining < ttl {
+			ttl = remaining
+		}
+	}
+	if ttl < time.Second {
+		return 0, ErrShareExpired
+	}
+	return ttl, nil
+}

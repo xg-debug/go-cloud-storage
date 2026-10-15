@@ -21,6 +21,7 @@ type SSEClient struct {
 
 type SSEBroker struct {
 	mu      sync.RWMutex
+	total   int
 	clients map[int]map[string]*SSEClient // userId -> clientId -> client
 }
 
@@ -34,17 +35,21 @@ func NewSSEBroker() *SSEBroker {
 func (b *SSEBroker) Subscribe(userId int, clientId string) (*SSEClient, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if len(b.clients) >= maxSSEClientsTotal {
+	if b.total >= maxSSEClientsTotal {
 		return nil, errors.New("SSE 连接数已达全局上限")
 	}
 	if len(b.clients[userId]) >= maxSSEClientsPerUser {
 		return nil, errors.New("该用户的 SSE 连接数已达上限")
+	}
+	if _, exists := b.clients[userId][clientId]; exists {
+		return nil, errors.New("SSE client already registered")
 	}
 	client := &SSEClient{ID: userId, Messages: make(chan []byte, 64)}
 	if b.clients[userId] == nil {
 		b.clients[userId] = make(map[string]*SSEClient)
 	}
 	b.clients[userId][clientId] = client
+	b.total++
 	slog.Info("SSE client connected", "userId", userId, "clientId", clientId)
 	return client, nil
 }
@@ -53,7 +58,10 @@ func (b *SSEBroker) Unsubscribe(userId int, clientId string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.clients[userId] != nil {
-		delete(b.clients[userId], clientId)
+		if _, exists := b.clients[userId][clientId]; exists {
+			delete(b.clients[userId], clientId)
+			b.total--
+		}
 		if len(b.clients[userId]) == 0 {
 			delete(b.clients, userId)
 		}
