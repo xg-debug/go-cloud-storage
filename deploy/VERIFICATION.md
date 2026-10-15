@@ -116,3 +116,5 @@ python3 scripts/integration/microservices_smoke.py \
 - 本次源码使用缓存运行时重新编译并构建七个应用容器，`microservices_smoke.py --containers --local-runtime-image cloudbox-compose-verify-storage-service:latest --migration-rehearsal` 通过。包含错误哈希不入库/不扣配额、退出后的旧令牌在各服务被拒绝、Redis 中断时退出不谎报成功，以及原有业务、依赖恢复与迁移往返检查。
 - 新增目录删除竞态、旧合并不删新任务、初始化/取消遵守锁、清理重新检查过期时间、签名期限和 SSE 容量回归。未修改前端、未重跑浏览器验收；没有线上环境，无生产发布或真实数据迁移。
 - 本轮本地容器使用缓存基础镜像，不等同于默认 Dockerfile 的远程依赖下载与完整构建验证；远程 CI 结果另行记录。
+
+- 远程结果：修复提交 `9af608a` 的 [Backend CI #49](https://github.com/xg-debug/go-cloud-storage/actions/runs/38686958428) 全部通过，包含真实 Redis 单元/竞态检查、vet、宿主机联调、默认 Dockerfile 构建、容器迁移演练和原始 Compose 业务验证；[PR #6](https://github.com/xg-debug/go-cloud-storage/pull/6) 已合并为 `49c98cc`。
