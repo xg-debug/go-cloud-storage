@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"sync"
@@ -209,7 +210,7 @@ func TestUploadApplicationStorageCompensation(t *testing.T) {
 	q := &quota{}
 	bus := &events{}
 	app := application.NewUploadApplication(files, q, transaction{}, sessions{}, client, bus)
-	file, err := app.UploadFile(context.Background(), strings.NewReader("payload"), 7, "a.txt", 7, "hash", "")
+	file, err := app.UploadFile(context.Background(), strings.NewReader("payload"), 7, "a.txt", 7, payloadHash("payload"), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,7 +235,7 @@ func TestUploadApplicationStorageCompensation(t *testing.T) {
 	}
 	// Database failure compensates the object and must not emit a success event.
 	files.fail = true
-	if _, err = app.UploadFile(context.Background(), strings.NewReader("bad"), 7, "b.txt", 3, "other", ""); err == nil {
+	if _, err = app.UploadFile(context.Background(), strings.NewReader("bad"), 7, "b.txt", 3, payloadHash("bad"), ""); err == nil {
 		t.Fatal("database failure ignored")
 	}
 	store.mu.Lock()
@@ -244,3 +245,7 @@ func TestUploadApplicationStorageCompensation(t *testing.T) {
 		t.Fatal("compensation/event invariant failed")
 	}
 }
+
+func (q *quota) LockUser(context.Context, int) error { return nil }
+
+func payloadHash(s string) string { return fmt.Sprintf("%x", sha256.Sum256([]byte(s))) }

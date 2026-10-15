@@ -40,6 +40,7 @@ func InitJWTSecret(cfgSecret string) {
 }
 
 type Claims struct {
+	SessionID         string `json:"sid,omitempty"`
 	CredentialVersion string `json:"cv,omitempty"`
 	UserId            int    `json:"userId"`
 	Type              string `json:"type"` // token类型：access/refresh
@@ -47,13 +48,13 @@ type Claims struct {
 }
 
 // GenerateAccessToken 生成访问令牌（短期有效）
-func GenerateAccessToken(userId int, expireTime time.Duration, version string) (string, error) {
-	return generateToken(userId, "access", expireTime, version)
+func GenerateAccessToken(userId int, expireTime time.Duration, version string, sessionIDs ...string) (string, error) {
+	return generateToken(userId, "access", expireTime, version, sessionIDs...)
 }
 
 // GenerateRefreshToken 生成刷新令牌（长期有效）
-func GenerateRefreshToken(userId int, expireTime time.Duration, version string) (string, error) {
-	return generateToken(userId, "refresh", expireTime, version)
+func GenerateRefreshToken(userId int, expireTime time.Duration, version string, sessionIDs ...string) (string, error) {
+	return generateToken(userId, "refresh", expireTime, version, sessionIDs...)
 }
 
 // CredentialVersion binds sessions to the password without exposing its bcrypt hash.
@@ -64,7 +65,7 @@ func CredentialVersion(passwordHash string) string {
 }
 
 // GenerateToken 通用生成 JWT Token
-func generateToken(userId int, tokenType string, expireTime time.Duration, version string) (string, error) {
+func generateToken(userId int, tokenType string, expireTime time.Duration, version string, sessionIDs ...string) (string, error) {
 	claims := &Claims{
 		CredentialVersion: version,
 		UserId:            userId,
@@ -74,6 +75,9 @@ func generateToken(userId int, tokenType string, expireTime time.Duration, versi
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 			Issuer:    "go-cloud-storage", // 签发者
 		},
+	}
+	if len(sessionIDs) > 0 {
+		claims.SessionID = sessionIDs[0]
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString(JWTSecret)

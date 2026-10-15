@@ -229,6 +229,12 @@ def main():
             created = datetime.fromisoformat(row['created_at'].replace('Z','+00:00'))
             assert created.tzinfo is not None and abs((datetime.now(timezone.utc)-created).total_seconds()) < 60, 'timestamp lost timezone'
 
+            print('Checking forged upload hash leaves quota and metadata unchanged...',flush=True)
+            used_before = sql('cloudbox_file','SELECT SUM(used) FROM storage_quota').stdout.strip()
+            browser.multipart('/api/file/upload',b'forged body','forged.txt','file',{'fileHash':hashlib.sha256(payload).hexdigest(),'parentId':root},business_code=500)
+            assert sql('cloudbox_file','SELECT SUM(used) FROM storage_quota').stdout.strip()==used_before
+            assert sql('cloudbox_file',"SELECT COUNT(*) FROM file WHERE name='forged.txt'").stdout.strip()=='0'
+
             print('Checking favorites and database uniqueness...',flush=True)
             for _ in range(2): browser.call('/api/favorite/'+fid,method='POST')
             favorites = browser.call('/api/favorite')
@@ -334,6 +340,20 @@ def main():
                     migrated.upload(b'new write after migration',root,'post-migration.txt')
                 rehearse(sql,stop,start,ROLES,verify_migration)
                 browser.call('/api/login',{'account':'smoke@example.test','password':'TestPassword123!'})
+            print('Checking logout revokes copied access and refresh tokens...',flush=True)
+            copied_access = next(c.value for c in browser.cookies if c.name=='access_token')
+            copied_refresh = next(c.value for c in browser.cookies if c.name=='refresh_token')
+            browser.call('/api/logout',method='POST')
+            for path in ['/api/me','/api/user/quota','/api/share','/api/notification']:
+                browser.call(path,headers={'Authorization':'Bearer '+copied_access},expect=401)
+            browser.call('/api/refresh-token',method='POST',headers={'Cookie':'refresh_token='+copied_refresh},business_code=401)
+            browser.call('/api/login',{'account':'smoke@example.test','password':'TestPassword123!'})
+            print('Checking Redis outage fails logout without clearing cookies...',flush=True)
+            compose('stop','redis')
+            browser.call('/api/logout',method='POST',expect=503)
+            assert any(c.name=='access_token' for c in browser.cookies)
+            compose('start','redis')
+            wait(lambda: browser.call('/api/me')['rootFolderId']==root)
             print('Checking password change revokes sessions in every service...',flush=True)
             old = next(c.value for c in browser.cookies if c.name=='access_token')
             browser.call('/api/user/password',{'oldPassword':'TestPassword123!','newPassword':'ChangedPassword456!'},method='PUT')

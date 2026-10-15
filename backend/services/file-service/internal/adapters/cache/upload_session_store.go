@@ -86,14 +86,24 @@ func (s *RedisUploadSessionStore) SavePart(ctx context.Context, userID int, file
 		return fileports.ErrUploadSessionUnavailable
 	}
 	key := uploadSessionKey(userID, fileHash)
-	if err := s.client.HSet(ctx, key,
-		strconv.Itoa(part.Index), part.ETag,
-		strconv.Itoa(part.Index)+"_hash", part.Hash,
-		strconv.Itoa(part.Index)+"_size", strconv.FormatInt(part.Size, 10),
-	).Err(); err != nil {
+	active, metadata := s.activeTTL, s.metadataTTL
+	if active <= 0 {
+		active = 24 * time.Hour
+	}
+	if metadata <= 0 {
+		metadata = 48 * time.Hour
+	}
+	expires := time.Now().Add(active).Unix()
+	n, err := s.client.Eval(ctx, `if redis.call('HGET',KEYS[1],'id') ~= ARGV[1] then return 0 end
+ redis.call('HSET',KEYS[1],ARGV[2],ARGV[3],ARGV[2]..'_hash',ARGV[4],ARGV[2]..'_size',ARGV[5],'expiresAt',ARGV[6])
+ redis.call('PEXPIRE',KEYS[1],ARGV[7]);redis.call('ZADD',KEYS[2],ARGV[6],KEYS[1]);return 1`, []string{key, uploadSessionSet}, part.UploadID, part.Index, part.ETag, part.Hash, part.Size, expires, metadata.Milliseconds()).Int()
+	if err != nil {
 		return err
 	}
-	return s.Refresh(ctx, userID, fileHash)
+	if n != 1 {
+		return fileports.ErrUploadSessionNotFound
+	}
+	return nil
 }
 
 func (s *RedisUploadSessionStore) Refresh(ctx context.Context, userID int, fileHash string) error {
@@ -117,30 +127,28 @@ func (s *RedisUploadSessionStore) Refresh(ctx context.Context, userID int, fileH
 	return err
 }
 
-func (s *RedisUploadSessionStore) Delete(ctx context.Context, userID int, fileHash string) error {
+func (s *RedisUploadSessionStore) Delete(ctx context.Context, userID int, fileHash string, uploadID string) error {
 	if !s.Available() {
 		return fileports.ErrUploadSessionUnavailable
 	}
 	key := uploadSessionKey(userID, fileHash)
-	pipe := s.client.TxPipeline()
-	pipe.Del(ctx, key)
-	pipe.ZRem(ctx, uploadSessionSet, key)
-	_, err := pipe.Exec(ctx)
-	return err
+	return s.client.Eval(ctx, `local id=redis.call('HGET',KEYS[1],'id')
+ if id and id ~= ARGV[1] then return 0 end
+ redis.call('DEL',KEYS[1]);redis.call('ZREM',KEYS[2],KEYS[1]);return 1`, []string{key, uploadSessionSet}, uploadID).Err()
 }
 
-func (s *RedisUploadSessionStore) AcquireMergeLock(ctx context.Context, userID int, fileHash string, ttl time.Duration) (bool, error) {
+func (s *RedisUploadSessionStore) AcquireMergeLock(ctx context.Context, userID int, fileHash string, owner string, ttl time.Duration) (bool, error) {
 	if !s.Available() {
 		return false, fileports.ErrUploadSessionUnavailable
 	}
-	return s.client.SetNX(ctx, uploadSessionLockKey(userID, fileHash), "1", ttl).Result()
+	return s.client.SetNX(ctx, uploadSessionLockKey(userID, fileHash), owner, ttl).Result()
 }
 
-func (s *RedisUploadSessionStore) ReleaseMergeLock(ctx context.Context, userID int, fileHash string) error {
+func (s *RedisUploadSessionStore) ReleaseMergeLock(ctx context.Context, userID int, fileHash string, owner string) error {
 	if !s.Available() {
 		return fileports.ErrUploadSessionUnavailable
 	}
-	return s.client.Del(ctx, uploadSessionLockKey(userID, fileHash)).Err()
+	return s.client.Eval(ctx, `if redis.call('GET',KEYS[1]) == ARGV[1] then return redis.call('DEL',KEYS[1]) end return 0`, []string{uploadSessionLockKey(userID, fileHash)}, owner).Err()
 }
 
 func (s *RedisUploadSessionStore) ListExpired(ctx context.Context, before time.Time, limit int64) ([]fileports.UploadSessionRef, error) {

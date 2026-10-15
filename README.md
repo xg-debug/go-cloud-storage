@@ -104,6 +104,10 @@ flowchart LR
 - **依赖**：微服务模式要求 Redis 和 RabbitMQ；Redis 保存会话、分片状态和搜索历史，并用于通知实例间分发。
 - **代码边界**：每个服务的业务、模型、仓储、HTTP 接口与启动装配位于自己的 `internal/`，Go 编译器禁止跨服务导入。共用一个 `go.mod`，公共包只包含协议、通用端口与基础设施，不包含共享业务模型。`backend/architecture` 的测试持续检查依赖边界。
 
+认证使用 Redis 保存每个账号的当前会话 ID；重新登录会替换旧会话，退出会同时撤销 Access/Refresh Token。Redis 不可用时认证失败关闭，返回 503，不清除客户端 Cookie。升级到会话 ID 版本后，旧令牌需要重新登录；更新时应同步替换所有认证服务和文件服务实例，避免旧实例继续使用旧的撤销或分片清理规则。
+
+分享下载、预览及缩略图的签名时长限制在分享剩余有效期以内。取消分享会阻止新签名，但已发出的对象存储直链仍可用至其签名到期。SSE 每个服务实例最多 5000 条连接、每用户最多 8 条连接。
+
 本次不包含 AI、向量库、文件夹分享或完整文件版本历史。详细服务协议见 [微服务说明](backend/services/README.md)，旧数据迁移与回退要求见 [迁移指南](deploy/MIGRATION.md)。
 
 ## 技术栈
@@ -279,6 +283,9 @@ backend/services/file-service/
 # 后端测试与静态检查
 (cd backend && go test ./... && go test -race ./... && go vet ./...)
 
+# 可选：针对独立测试 Redis 执行真实会话与锁回归；CI 自动提供 Redis
+(cd backend && GCS_TEST_REDIS_ADDR=127.0.0.1:16389 go test ./services/auth-service/internal/transport ./services/file-service/internal/adapters/cache)
+
 # 前端测试与生产构建
 (cd frontend && npm ci && npm test && npm run build)
 
@@ -294,6 +301,8 @@ python3 scripts/integration/compose_deployment_smoke.py
 历史基线：2026-10-14，合并 [PR #3](https://github.com/xg-debug/go-cloud-storage/pull/3) 前的 [Backend CI #42](https://github.com/xg-debug/go-cloud-storage/actions/runs/38521570380) 已通过后端测试、race、vet、宿主机联调、默认镜像构建、容器迁移演练及原始 Compose 验证。前端测试和生产构建已在本地通过。详细测试范围见 [验收记录](deploy/VERIFICATION.md)。
 
 本次服务源码边界改造（代码提交 `2294627`）已通过 [Backend CI #45](https://github.com/xg-debug/go-cloud-storage/actions/runs/38572672730)：后端测试、全量 race、vet、宿主机联调、默认 Dockerfile 镜像构建、七服务容器迁移演练，以及原始 Compose 健康检查和业务验证全部通过。本地缓存镜像联调也已通过；本机 Docker Hub DNS 超时不影响上述远程默认构建验证结果。详细本地测试范围见 [验收记录](deploy/VERIFICATION.md)。
+
+2026-10-15 的服务审计修复已通过本地全量 race、vet、真实 Redis 回归、七服务容器联调和隔离迁移演练。覆盖上传目录并发删除、SHA256 校验、退出撤销、分片会话归属、分享签名期限和 SSE 总连接限制；使用缓存基础镜像重新编译构建当前源码，未重新进行前端浏览器验收。详见 [验收记录](deploy/VERIFICATION.md)。
 
 **目前尚未部署线上环境。** 目标服务器的 HTTPS、监控告警、备份恢复、容量与压力测试、依赖安全更新及真实数据迁移仍需验收。性能测试入口位于 [scripts/perf/README.md](scripts/perf/README.md)。
 

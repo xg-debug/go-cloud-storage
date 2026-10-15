@@ -1,7 +1,9 @@
 package application
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -88,6 +90,21 @@ func NewUploadApplication(
 }
 
 func (s *uploadApplication) UploadFile(ctx context.Context, r io.Reader, userID int, fileName string, fileSize int64, fileHash, parentID string) (*domain.File, error) {
+	// Normal uploads are capped at 10 MiB. Verify bytes before trusting the hash
+	// for either metadata or deduplication, including requests that hit an existing object.
+	data, err := io.ReadAll(io.LimitReader(r, (10<<20)+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > 10<<20 || int64(len(data)) != fileSize {
+		return nil, errors.New("普通上传大小校验失败")
+	}
+	actual := fmt.Sprintf("%x", sha256.Sum256(data))
+	if !strings.EqualFold(actual, fileHash) {
+		return nil, errors.New("文件内容与SHA256不一致")
+	}
+	fileHash = actual
+	r = bytes.NewReader(data)
 	fileName = strings.TrimSpace(fileName)
 	if err := validateFileName(fileName); err != nil {
 		return nil, err
@@ -221,6 +238,11 @@ func (s *uploadApplication) InitChunkUpload(ctx context.Context, input InitChunk
 		return nil, errors.New("存储空间不足，请升级存储配额")
 	}
 
+	ctx, release, err := s.lockSession(ctx, input.UserID, input.FileHash)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	createSession := func() (*fileports.UploadSession, error) {
 		objectKey := s.storage.GenerateObjectKey(input.UserID, input.ParentID, fileName)
 		uploadID, initErr := s.storage.InitiateMultipartUpload(ctx, objectKey)
@@ -260,7 +282,7 @@ func (s *uploadApplication) InitChunkUpload(ctx context.Context, input InitChunk
 		}
 		if session.Expired(time.Now()) {
 			_ = s.storage.AbortMultipartUpload(cleanupContext(ctx), session.ObjectKey, session.UploadID)
-			_ = s.sessions.Delete(cleanupContext(ctx), input.UserID, input.FileHash)
+			_ = s.sessions.Delete(cleanupContext(ctx), input.UserID, input.FileHash, session.UploadID)
 			session, err = createSession()
 			if err != nil {
 				return nil, err
@@ -310,7 +332,7 @@ func (s *uploadApplication) UploadChunk(ctx context.Context, userID int, fileHas
 	}
 	if session.Expired(time.Now()) {
 		_ = s.storage.AbortMultipartUpload(cleanupContext(ctx), session.ObjectKey, session.UploadID)
-		_ = s.sessions.Delete(cleanupContext(ctx), userID, fileHash)
+		_ = s.sessions.Delete(cleanupContext(ctx), userID, fileHash, session.UploadID)
 		return errors.New("上传任务已过期，请重新初始化")
 	}
 	if chunkIndex < 0 || chunkIndex >= session.TotalChunks {
@@ -330,10 +352,11 @@ func (s *uploadApplication) UploadChunk(ctx context.Context, userID int, fileHas
 		return fmt.Errorf("对象存储分片上传失败: %w", err)
 	}
 	return s.sessions.SavePart(ctx, userID, fileHash, fileports.UploadPartState{
-		Index: chunkIndex,
-		ETag:  part.ETag,
-		Hash:  computedHash,
-		Size:  chunkSize,
+		UploadID: session.UploadID,
+		Index:    chunkIndex,
+		ETag:     part.ETag,
+		Hash:     computedHash,
+		Size:     chunkSize,
 	})
 }
 
@@ -349,13 +372,11 @@ func (s *uploadApplication) MergeChunks(ctx context.Context, userID int, fileHas
 		return nil, err
 	}
 
-	locked, err := s.sessions.AcquireMergeLock(ctx, userID, fileHash, applicationMergeLockTTL)
-	if err != nil || !locked {
-		return nil, errors.New("合并正在进行中，请稍后重试")
+	ctx, release, err := s.lockSession(ctx, userID, fileHash)
+	if err != nil {
+		return nil, err
 	}
-	defer func() {
-		_ = s.sessions.ReleaseMergeLock(cleanupContext(ctx), userID, fileHash)
-	}()
+	defer release()
 
 	session, err := s.sessions.Get(ctx, userID, fileHash)
 	if errors.Is(err, fileports.ErrUploadSessionNotFound) {
@@ -369,7 +390,7 @@ func (s *uploadApplication) MergeChunks(ctx context.Context, userID int, fileHas
 	}
 	if session.Expired(time.Now()) {
 		_ = s.storage.AbortMultipartUpload(cleanupContext(ctx), session.ObjectKey, session.UploadID)
-		_ = s.sessions.Delete(cleanupContext(ctx), userID, fileHash)
+		_ = s.sessions.Delete(cleanupContext(ctx), userID, fileHash, session.UploadID)
 		return nil, errors.New("上传任务已过期，请重新初始化")
 	}
 	if session.FileName != "" && session.FileName != fileName {
@@ -458,12 +479,12 @@ func (s *uploadApplication) MergeChunks(ctx context.Context, userID int, fileHas
 	}
 	if err := s.persistUploadedFile(ctx, file); err != nil {
 		s.cleanupObject(ctx, session.ObjectKey)
-		_ = s.sessions.Delete(cleanupContext(ctx), userID, fileHash)
+		_ = s.sessions.Delete(cleanupContext(ctx), userID, fileHash, session.UploadID)
 		return nil, err
 	}
 
 	s.generateThumbnailAsync(file.Id, file.OssObjectKey)
-	_ = s.sessions.Delete(ctx, userID, fileHash)
+	_ = s.sessions.Delete(ctx, userID, fileHash, sessionID(session))
 	s.publishFileUploaded(ctx, file)
 	return file, nil
 }
@@ -472,6 +493,11 @@ func (s *uploadApplication) CancelChunkUpload(ctx context.Context, userID int, f
 	if !s.sessions.Available() {
 		return fileports.ErrUploadSessionUnavailable
 	}
+	ctx, release, err := s.lockSession(ctx, userID, fileHash)
+	if err != nil {
+		return err
+	}
+	defer release()
 	session, err := s.sessions.Get(ctx, userID, fileHash)
 	if err != nil && !errors.Is(err, fileports.ErrUploadSessionNotFound) {
 		return err
@@ -479,7 +505,7 @@ func (s *uploadApplication) CancelChunkUpload(ctx context.Context, userID int, f
 	if session != nil && session.UploadID != "" && session.ObjectKey != "" {
 		_ = s.storage.AbortMultipartUpload(cleanupContext(ctx), session.ObjectKey, session.UploadID)
 	}
-	if err := s.sessions.Delete(ctx, userID, fileHash); err != nil && !errors.Is(err, fileports.ErrUploadSessionNotFound) {
+	if err := s.sessions.Delete(ctx, userID, fileHash, sessionID(session)); err != nil && !errors.Is(err, fileports.ErrUploadSessionNotFound) {
 		return err
 	}
 	return nil
@@ -531,29 +557,18 @@ func (s *uploadApplication) cleanupExpiredChunkUploads(ctx context.Context, limi
 		return
 	}
 	for _, ref := range refs {
-		session, getErr := s.sessions.Get(ctx, ref.UserID, ref.FileHash)
-		if errors.Is(getErr, fileports.ErrUploadSessionNotFound) {
-			_ = s.sessions.Delete(ctx, ref.UserID, ref.FileHash)
-			continue
-		}
-		if getErr != nil {
-			slog.Error("load expired chunk upload session failed", "userId", ref.UserID, "fileHash", ref.FileHash, "error", getErr)
-			continue
-		}
-		if session.UploadID != "" && session.ObjectKey != "" {
-			if abortErr := s.storage.AbortMultipartUpload(ctx, session.ObjectKey, session.UploadID); abortErr != nil {
-				slog.Error("abort expired chunk upload failed", "objectKey", session.ObjectKey, "error", abortErr)
-				continue
-			}
-		}
-		if deleteErr := s.sessions.Delete(ctx, ref.UserID, ref.FileHash); deleteErr != nil {
-			slog.Error("delete expired chunk upload session failed", "userId", ref.UserID, "fileHash", ref.FileHash, "error", deleteErr)
-		}
+		s.cleanupExpiredSession(ctx, ref)
 	}
 }
 
 func (s *uploadApplication) persistUploadedFile(ctx context.Context, file *domain.File, sourceIDs ...string) error {
 	return s.tx.WithinTransaction(ctx, func(txCtx context.Context) error {
+		if err := s.quotas.LockUser(txCtx, file.UserId); err != nil {
+			return err
+		}
+		if err := s.ensureTargetFolder(txCtx, file.UserId, nullToString(file.ParentId)); err != nil {
+			return err
+		}
 		if len(sourceIDs) > 0 {
 			// Lock and recheck the dedup source in this transaction: a stale
 			// lookup must not resurrect a reference after permanent deletion.
@@ -692,3 +707,46 @@ func cleanupContext(ctx context.Context) context.Context {
 }
 
 var _ UploadApplication = (*uploadApplication)(nil)
+
+func sessionID(s *fileports.UploadSession) string {
+	if s == nil {
+		return ""
+	}
+	return s.UploadID
+}
+
+// Operations are bounded to less than the lease lifetime. Owner tokens prevent
+// an expired request from releasing a subsequent request's lock.
+func (s *uploadApplication) lockSession(ctx context.Context, userID int, hash string) (context.Context, func(), error) {
+	owner := utils.NewUUID()
+	locked, err := s.sessions.AcquireMergeLock(ctx, userID, hash, owner, applicationMergeLockTTL)
+	if err != nil {
+		return ctx, nil, err
+	}
+	if !locked {
+		return ctx, nil, errors.New("上传任务正在处理中，请稍后重试")
+	}
+	bounded, cancel := context.WithTimeout(ctx, applicationMergeLockTTL/2)
+	return bounded, func() { cancel(); _ = s.sessions.ReleaseMergeLock(cleanupContext(ctx), userID, hash, owner) }, nil
+}
+func (s *uploadApplication) cleanupExpiredSession(ctx context.Context, ref fileports.UploadSessionRef) {
+	ctx, release, err := s.lockSession(ctx, ref.UserID, ref.FileHash)
+	if err != nil {
+		return
+	}
+	defer release()
+	session, err := s.sessions.Get(ctx, ref.UserID, ref.FileHash)
+	if errors.Is(err, fileports.ErrUploadSessionNotFound) {
+		_ = s.sessions.Delete(ctx, ref.UserID, ref.FileHash, "")
+		return
+	}
+	if err != nil || !session.Expired(time.Now()) {
+		return
+	}
+	if session.UploadID != "" && session.ObjectKey != "" {
+		if err = s.storage.AbortMultipartUpload(ctx, session.ObjectKey, session.UploadID); err != nil {
+			return
+		}
+	}
+	_ = s.sessions.Delete(ctx, ref.UserID, ref.FileHash, session.UploadID)
+}
