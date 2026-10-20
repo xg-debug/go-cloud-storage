@@ -25,6 +25,9 @@ func makeProxy(upstream string) (*httputil.ReverseProxy, error) {
 		return nil, errors.New("gateway upstream must be an http(s) origin")
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
+	// Keep concurrent service calls reusable instead of churning TCP ports.
+	transport.MaxIdleConns = 256
+	transport.MaxIdleConnsPerHost = 128
 	transport.ResponseHeaderTimeout = 5 * time.Minute
 	proxy := &httputil.ReverseProxy{
 		Transport: transport, FlushInterval: -1,

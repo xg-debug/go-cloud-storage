@@ -84,7 +84,9 @@ def main():
     parser.add_argument('--hold-file', type=Path, help='Write local connection info and keep test environment alive until this file is removed (max 30 minutes)')
     parser.add_argument('--migration-rehearsal', action='store_true', help='Exercise legacy schema import and reverse copy in this disposable project')
     parser.add_argument('--local-runtime-image', help='With --containers: cross-compile locally and use an existing CloudBox runtime image without fetching compiler images')
+    parser.add_argument('--rate-limit-rps',type=int,default=1000,help='Per-user limit in this disposable environment; 0 disables it for capacity tests')
     args = parser.parse_args()
+    if args.rate_limit_rps<0: parser.error('--rate-limit-rps must be nonnegative')
     if args.local_runtime_image and not args.containers: parser.error('--local-runtime-image requires --containers')
     containers = args.containers
     with tempfile.TemporaryDirectory(prefix='cloudbox-smoke-') as directory:
@@ -170,7 +172,7 @@ def main():
                        'redis':{'enabled':True,'host':'127.0.0.1','port':ports['redis'],'db':{'auth':0,'file':1,'notification':2}.get(role,3)},
                        'storageService':{'url':f'http://127.0.0.1:{ports["storage"]}','token':password},
                        'rabbitmq':{'url':f'amqp://cloudbox:{password}@127.0.0.1:{ports["rabbitmq"]}/'},
-                       'jwt':{'secret':password},'security':{'defaultQuotaGB':1,'maxFileSizeMB':50,'rateLimitRPS':1000}}
+                       'jwt':{'secret':password},'security':{'defaultQuotaGB':1,'maxFileSizeMB':50,'rateLimitRPS':args.rate_limit_rps}}
                 file = configdir/'go-cloud-storage.dev.yaml'
                 file.write_text(json.dumps(cfg)); file.chmod(0o600)
                 se = {k:v for k,v in os.environ.items() if not k.startswith('GCS_') and k!='JWT_SECRET'}
@@ -361,7 +363,7 @@ def main():
                 browser.call(path,headers={'Authorization':'Bearer '+old},expect=401)
             print('PASS: seven services, isolated databases, chunks/direct download, durable events, dependency recovery and session revocation.',flush=True)
             if args.hold_file:
-                args.hold_file.write_text(json.dumps({'gateway':browser.origin,'project':base[3]}))
+                args.hold_file.write_text(json.dumps({'gateway':browser.origin,'project':base[3],'rate_limit_rps':args.rate_limit_rps}))
                 args.hold_file.chmod(0o600)
                 print(f'Environment ready for browser testing: {args.hold_file}',flush=True)
                 deadline = time.monotonic()+1800

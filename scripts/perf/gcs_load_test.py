@@ -20,9 +20,11 @@ MIB = 1024 * 1024
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Go Cloud Storage upload/download load tester")
-    parser.add_argument("--base-url", default=os.getenv("GCS_BASE_URL", "http://localhost:8081"))
+    parser.add_argument("--base-url", default=os.getenv("GCS_BASE_URL", "http://localhost:8081/api"))
     parser.add_argument("--token", default=os.getenv("GCS_TOKEN", ""))
     parser.add_argument("--mode", required=True, choices=[
+        "identity",
+        "file-list",
         "download-info",
         "download-direct",
         "download-range",
@@ -37,10 +39,15 @@ def parse_args():
     parser.add_argument("--chunk-size", type=int, default=int(os.getenv("GCS_CHUNK_SIZE", str(10 * MIB))))
     parser.add_argument("--chunk-concurrency", type=int, default=int(os.getenv("GCS_CHUNK_CONCURRENCY", "3")))
     parser.add_argument("--range-size", type=int, default=int(os.getenv("GCS_RANGE_SIZE", str(MIB))))
+    parser.add_argument("--duration", type=float, default=0, help="Closed-loop run duration in seconds; overrides request count")
     parser.add_argument("--no-randomize-upload", action="store_true")
     parser.add_argument("--monitor", default=os.getenv("GCS_MONITOR", "main,go-cloud-storage,minio,mysqld,redis-server"))
     parser.add_argument("--monitor-interval", type=float, default=float(os.getenv("GCS_MONITOR_INTERVAL", "1.0")))
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.requests < 1 or args.concurrency < 1 or args.duration < 0:
+        parser.error("requests/concurrency must be positive; duration must be nonnegative")
+    args.base_url = args.base_url.rstrip('/')
+    return args
 
 
 def auth_headers(token):
@@ -63,6 +70,15 @@ def request_json(method, url, token="", payload=None, timeout=300):
         if obj.get("code") != 200:
             raise RuntimeError(obj.get("message") or "request failed")
         return obj.get("data"), len(body)
+
+
+def request_multipart_json(url, token, headers, body):
+    request = urllib.request.Request(url, data=body, headers={**auth_headers(token), **headers}, method="POST")
+    with urllib.request.urlopen(request, timeout=300) as response:
+        data = json.loads(response.read())
+        if data.get("code") != 200:
+            raise RuntimeError(f"business_code={data.get('code')}: {data.get('message', 'request failed')}")
+        return data.get("data")
 
 
 def request_bytes(method, url, token="", headers=None, data=None, timeout=300):
@@ -134,30 +150,34 @@ def run_download_direct(args, _idx, direct_url):
 
 
 def run_download_range(args, idx):
-    start = (idx * args.range_size) % max(args.range_size, 1)
+    start = 0  # Fixed first range, explicitly reported as a hot-object workload.
     end = start + args.range_size - 1
     headers = {"Range": f"bytes={start}-{end}"}
     _status, byte_count = request_bytes("GET", f"{args.base_url}/file/download/{args.file_id}", args.token, headers=headers)
+    if _status != 206 or byte_count != args.range_size:
+        raise RuntimeError(f"Range mismatch: status={_status}, bytes={byte_count}")
     return byte_count, None
 
 
 def run_upload_normal(args, idx, base_content):
     content = upload_content(base_content, not args.no_randomize_upload, idx)
     file_hash = hashlib.sha256(content).hexdigest()
-    filename = f"bench-{idx}-{uuid.uuid4().hex}.bin"
+    filename = f"bench-{idx}-{uuid.uuid4().hex}.txt"
     body, content_type = multipart_body({
         "parentId": args.parent_id,
         "fileHash": file_hash,
     }, "file", filename, content)
     headers = {"Content-Type": content_type, "Content-Length": str(len(body))}
-    _status, response_bytes = request_bytes("POST", f"{args.base_url}/file/upload", args.token, headers=headers, data=body)
-    return len(content), response_bytes
+    result = request_multipart_json(f"{args.base_url}/file/upload", args.token, headers, body)
+    if not result or not result.get("id"):
+        raise RuntimeError("upload response missing file id")
+    return len(content), result
 
 
 def run_upload_chunked(args, idx, base_content):
     content = upload_content(base_content, not args.no_randomize_upload, idx)
     file_hash = hashlib.sha256(content).hexdigest()
-    filename = f"bench-chunked-{idx}-{uuid.uuid4().hex}.bin"
+    filename = f"bench-chunked-{idx}-{uuid.uuid4().hex}.txt"
     total_chunks = (len(content) + args.chunk_size - 1) // args.chunk_size
     init_payload = {
         "fileName": filename,
@@ -178,9 +198,10 @@ def run_upload_chunked(args, idx, base_content):
         body, content_type = multipart_body({
             "fileHash": file_hash,
             "chunkIndex": chunk_index,
+            "chunkHash": hashlib.sha256(chunk).hexdigest(),
         }, "chunk", f"{filename}.part{chunk_index}", chunk)
         headers = {"Content-Type": content_type, "Content-Length": str(len(body))}
-        request_bytes("POST", f"{args.base_url}/file/chunk/upload", args.token, headers=headers, data=body)
+        request_multipart_json(f"{args.base_url}/file/chunk/upload", args.token, headers, body)
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.chunk_concurrency) as pool:
         list(pool.map(put_part, range(total_chunks)))
@@ -285,6 +306,8 @@ def main():
     sampler.start()
 
     latencies = []
+    success_latencies = []
+    error_counts = {}
     errors = 0
     bytes_total = 0
     started = time.perf_counter()
@@ -294,7 +317,11 @@ def main():
         nonlocal errors, bytes_total
         t0 = time.perf_counter()
         try:
-            if args.mode == "download-info":
+            if args.mode == "identity":
+                _, byte_count = request_json("GET", f"{args.base_url}/me", args.token)
+            elif args.mode == "file-list":
+                _, byte_count = request_json("POST", f"{args.base_url}/file/list", args.token, {"parentId":args.parent_id,"page":1,"pageSize":20})
+            elif args.mode == "download-info":
                 byte_count, _ = run_download_info(args, idx)
             elif args.mode == "download-direct":
                 byte_count, _ = run_download_direct(args, idx, direct_url)
@@ -310,24 +337,46 @@ def main():
         except Exception as exc:
             byte_count = 0
             ok = False
-            print(f"request {idx} failed: {exc}", file=sys.stderr)
+            # Do not include exception URLs: presigned URLs carry credentials.
+            error_key = f"HTTP_{exc.code}" if isinstance(exc, urllib.error.HTTPError) else type(exc).__name__ + ": " + str(exc).split("http")[0][:160]
         elapsed = time.perf_counter() - t0
         with lock:
             latencies.append(elapsed)
             bytes_total += byte_count
             if not ok:
                 errors += 1
+                error_counts[error_key] = error_counts.get(error_key, 0) + 1
+            else:
+                success_latencies.append(elapsed)
 
+    counter = 0
+    deadline = started + args.duration
+    def worker():
+        nonlocal counter
+        while True:
+            with lock:
+                if (args.duration and time.perf_counter() >= deadline) or (not args.duration and counter >= args.requests):
+                    return
+                idx = counter
+                counter += 1
+            one(idx)
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.concurrency) as pool:
-        list(pool.map(one, range(args.requests)))
+        list(pool.map(lambda _: worker(), range(args.concurrency)))
 
     total_elapsed = time.perf_counter() - started
     sampler.stop()
 
-    success = args.requests - errors
+    attempts = len(latencies)
+    success = attempts - errors
     result = {
         "mode": args.mode,
-        "requests": args.requests,
+        "requests": attempts,
+        "requested_duration_seconds": args.duration,
+        "workload": "closed-loop; fresh urllib HTTP connection per request",
+        "qps_unit": "completed file operations/s" if args.mode == "upload-chunked" else "successful requests/s",
+        "error_rate": errors / attempts if attempts else 0,
+        "error_counts": error_counts,
+        "attempt_qps": attempts / total_elapsed if total_elapsed else 0,
         "success": success,
         "errors": errors,
         "concurrency": args.concurrency,
@@ -341,6 +390,11 @@ def main():
             "p95": percentile(latencies, 95) * 1000,
             "p99": percentile(latencies, 99) * 1000,
             "max": max(latencies) * 1000 if latencies else 0,
+        },
+        "success_latency_ms": {
+            "p50": percentile(success_latencies, 50) * 1000,
+            "p95": percentile(success_latencies, 95) * 1000,
+            "p99": percentile(success_latencies, 99) * 1000,
         },
         "process_monitor": sampler.summary(),
     }

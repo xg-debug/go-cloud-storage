@@ -10,12 +10,14 @@ on:
       - 'backend/**'
       - 'deploy/**'
       - 'scripts/integration/**'
+      - 'scripts/perf/*.py'
       - '.github/workflows/backend-ci.yml'
   pull_request:
     paths:
       - 'backend/**'
       - 'deploy/**'
       - 'scripts/integration/**'
+      - 'scripts/perf/*.py'
       - '.github/workflows/backend-ci.yml'
 
 permissions:
@@ -42,6 +44,9 @@ jobs:
         with:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
+
+      - name: Load tool accounting regression
+        run: python3 -m unittest discover -s ../scripts/perf -p 'test_*.py'
 
       - name: Go test
         run: go test ./...
