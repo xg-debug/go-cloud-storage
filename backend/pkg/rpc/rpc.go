@@ -45,7 +45,10 @@ func NewClient(address, token string) (*Client, error) {
 	if len(token) < 32 {
 		return nil, errors.New("service token requires at least 32 bytes")
 	}
-	return &Client{URL: strings.TrimRight(address, "/"), Token: token, HTTP: &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.MaxIdleConns = 256
+	transport.MaxIdleConnsPerHost = 128
+	return &Client{URL: strings.TrimRight(address, "/"), Token: token, HTTP: &http.Client{Transport: transport, Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
 }
 func (c *Client) Call(ctx context.Context, op string, input, output any) error {
 	data, err := json.Marshal(input)

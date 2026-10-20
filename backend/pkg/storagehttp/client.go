@@ -32,6 +32,9 @@ func NewClient(endpoint, token string) (*Client, error) {
 		return nil, errors.New("storage service token must contain at least 32 bytes")
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
+	// Keep concurrent service calls reusable instead of churning TCP ports.
+	transport.MaxIdleConns = 256
+	transport.MaxIdleConnsPerHost = 128
 	transport.ResponseHeaderTimeout = 5 * time.Minute
 	return &Client{endpoint: strings.TrimRight(endpoint, "/"), token: token, http: &http.Client{
 		Transport: transport, Timeout: 30 * time.Minute,
