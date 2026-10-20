@@ -304,7 +304,7 @@ python3 scripts/integration/compose_deployment_smoke.py
 
 2026-10-15 的服务审计修复已通过本地全量 race、vet、真实 Redis 回归、七服务容器联调和隔离迁移演练。覆盖上传目录并发删除、SHA256 校验、退出撤销、分片会话归属、分享签名期限和 SSE 总连接限制；使用缓存基础镜像重新编译构建当前源码，未重新进行前端浏览器验收。修复提交 `9af608a` 的 [Backend CI #49](https://github.com/xg-debug/go-cloud-storage/actions/runs/38686958428) 也已全部通过，覆盖默认 Dockerfile 构建及原始 Compose 验证，并已通过 [PR #6](https://github.com/xg-debug/go-cloud-storage/pull/6) 合并到 `master`。详见 [验收记录](deploy/VERIFICATION.md)。
 
-**目前尚未部署线上环境。** 目标服务器的 HTTPS、监控告警、备份恢复、容量与压力测试、依赖安全更新及真实数据迁移仍需验收。性能测试入口位于 [scripts/perf/README.md](scripts/perf/README.md)。
+**目前尚未部署线上环境。** 目标服务器的 HTTPS、监控告警、备份恢复、容量与压力测试、依赖安全更新及真实数据迁移仍需验收。本地压测工具、指标口径与结果入口见 [scripts/perf/README.md](scripts/perf/README.md)，功能建议见 [后续功能优先级](scripts/perf/FEATURE_PRIORITIES.md)。
 
 ## 参与贡献
 

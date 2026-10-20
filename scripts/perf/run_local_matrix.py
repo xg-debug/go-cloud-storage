@@ -25,7 +25,17 @@ def main():
     parser.add_argument('--ready-file',type=Path,required=True)
     parser.add_argument('--output',type=Path,required=True)
     parser.add_argument('--read-duration',type=float,default=10)
+    parser.add_argument('--read-modes',default='identity,file-list,download-info,download-range,download-direct')
+    parser.add_argument('--read-concurrency',default='1,5,10,20,50')
+    parser.add_argument('--read-rounds',type=int,default=2)
+    parser.add_argument('--skip-writes',action='store_true')
+    parser.add_argument('--steady-mode',default='download-info')
+    parser.add_argument('--steady-concurrency',type=int,default=20)
+    parser.add_argument('--steady-duration',type=float,default=60)
     args=parser.parse_args()
+    modes=args.read_modes.split(',');levels=[int(v) for v in args.read_concurrency.split(',')]
+    if not modes or not set(modes)<=set(['identity','file-list','download-info','download-range','download-direct']):parser.error('unsupported read mode')
+    if min(levels)<1 or args.read_duration<=0 or args.read_rounds<1:parser.error('positive concurrency, duration and rounds required')
     ready=json.loads(args.ready_file.read_text())
     if not ready['gateway'].startswith('http://127.0.0.1:') or not ready['project'].startswith('cloudbox-smoke-'):
         raise ValueError('Only the disposable local smoke environment is accepted')
@@ -48,6 +58,7 @@ def main():
         'os':platform.platform(),'python':platform.python_version(),'host_cpu_count':os.cpu_count(),
         'docker':{k:docker.get(k) for k in ['ServerVersion','NCPU','MemTotal','Architecture']},
         'topology':'7 application containers + MySQL/Redis/RabbitMQ/MinIO on same host as generator',
+        'database_pools':ready.get('database_pools',{'all':{'max_open':10,'max_idle':3}}),'read_modes':modes,'read_concurrency':levels,'read_duration':args.read_duration,'read_rounds':args.read_rounds,'skip_writes':args.skip_writes,
         'users':1,'rate_limit_rps':ready.get('rate_limit_rps',1000),'quota_gib':1,'file_bytes':MIB,
         'method':'Closed loop, fresh urllib HTTP connections, hot fixed 1MiB object/range; two read rounds; unique upload bytes; chunk QPS counts complete files.'}
     (args.output/'environment.json').write_text(json.dumps(environment,indent=2))
@@ -74,20 +85,20 @@ def main():
         result=json.loads(output.getvalue());result.update(case=case,round=round_id,client_cpu_percent=(time.process_time()-cpu)/result['elapsed_seconds']*100)
         return result
     try:
-        for mode in ['identity','file-list','download-info','download-range','download-direct']:
+        for mode in modes:
             run(mode,1,requests=10)
-            for round_id in [1,2]:
+            for round_id in range(1,args.read_rounds+1):
                 # Reverse second round to expose order/thermal effects.
-                for concurrency in ([1,5,10,20,50] if round_id==1 else [50,20,10,5,1]):
+                for concurrency in (levels if round_id%2 else list(reversed(levels))):
                     result=run(mode,concurrency,duration=args.read_duration,round_id=round_id)
                     results.append(result);(args.output/'results.json').write_text(json.dumps(results,indent=2))
                     print(f"{result['case']}: QPS={result['qps']:.2f} P95={result['latency_ms']['p95']:.1f}ms errors={result['errors']}/{result['requests']}",flush=True)
-        for mode,levels,count in [('upload-normal',[1,5,10,20],64),('upload-chunked',[1,3,5],8)]:
-            for concurrency in levels:
+        for mode,write_levels,count in ([] if args.skip_writes else [('upload-normal',[1,5,10,20],64),('upload-chunked',[1,3,5],8)]):
+            for concurrency in write_levels:
                 result=run(mode,concurrency,requests=count,round_id=1);results.append(result)
                 (args.output/'results.json').write_text(json.dumps(results,indent=2))
                 print(f"{result['case']}: QPS={result['qps']:.2f} P95={result['latency_ms']['p95']:.1f}ms errors={result['errors']}/{result['requests']}",flush=True)
-        result=run('download-info',20,duration=60,round_id=3);results.append(result)
+        result=run(args.steady_mode,args.steady_concurrency,duration=args.steady_duration,round_id=args.read_rounds+1);results.append(result)
         (args.output/'results.json').write_text(json.dumps(results,indent=2))
         print('PASS: matrix completed; inspect errors rather than treating completion as zero-error acceptance.',flush=True)
     finally:

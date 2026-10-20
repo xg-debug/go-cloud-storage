@@ -124,7 +124,7 @@ func (s *userService) RegisterUser(email, pwd, pwdConfirm string) error {
 func (s *userService) GetProfile(userId int) (*vo.UserProfileResponse, error) {
 	user, err := s.userRepo.GetUserInfoById(userId)
 	if err != nil {
-		return nil, errors.New("获取当前用户信息失败")
+		return nil, fmt.Errorf("获取当前用户信息失败: %w", err)
 	}
 	// 私有桶下头像也需要预签名 URL（24h 有效，每次请求重新生成）
 	avatar := user.Avatar

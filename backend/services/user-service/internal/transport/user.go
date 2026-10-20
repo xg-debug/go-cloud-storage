@@ -1,6 +1,8 @@
 package transport
 
 import (
+	"errors"
+	"gorm.io/gorm"
 	"log/slog"
 	"net/http"
 
@@ -37,7 +39,12 @@ func (c *UserController) GetProfile(ctx *gin.Context) {
 	userId := ctx.GetInt("userId")
 	profile, err := c.userService.GetProfile(userId)
 	if err != nil {
-		utils.Fail(ctx, http.StatusNotFound, "用户不存在")
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			utils.Fail(ctx, http.StatusNotFound, "用户不存在")
+		} else {
+			slog.Error("读取用户信息失败", "userId", userId, "error", err)
+			ctx.JSON(http.StatusServiceUnavailable, gin.H{"code": 503, "message": "用户服务暂不可用，请稍后重试"})
+		}
 		return
 	}
 	utils.Success(ctx, profile)
